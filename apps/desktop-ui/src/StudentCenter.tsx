@@ -35,6 +35,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { AppearanceSettings } from "./components/AppearanceSettings";
 import { AppLogo } from "./components/AppLogo";
 import { OnboardingExperience } from "./components/OnboardingExperience";
 import {
@@ -139,6 +140,7 @@ import {
   updateClassMeeting,
   updateCourse,
   updateInstructor,
+  updateAccent,
   updateAppearance,
   updateLocalTask,
   updateNotificationSettings,
@@ -175,6 +177,7 @@ import {
 } from "./native";
 
 type Modal =
+  | "settings"
   | "search"
   | "import"
   | "review"
@@ -1103,10 +1106,18 @@ export function StudentCenter() {
         <div className="sidebar-foot">
           <button
             className="nav-item"
+            aria-label="Settings"
+            onClick={() => setModal("settings")}
+          >
+            <Settings />
+            <span>Settings</span>
+          </button>
+          <button
+            className="nav-item"
             aria-label="App lock"
             onClick={openSecurity}
           >
-            <Settings />
+            <LockKeyhole />
             <span>App lock</span>
           </button>
           <button
@@ -1930,6 +1941,30 @@ export function StudentCenter() {
               Build a realistic plan
             </button>
           </div>
+        </Modal>
+      )}
+      {modal === "settings" && (
+        <Modal
+          title="Settings"
+          subtitle="Appearance is stored in your encrypted profile and applies immediately."
+          close={() => setModal(null)}
+        >
+          <AppearanceSettings
+            theme={appearance}
+            accent={accent}
+            onTheme={(next) => {
+              setAppearance(next);
+              applyAppearance(next, accent);
+              void updateAppearance(next).catch((value) =>
+                setError(String(value)),
+              );
+            }}
+            onAccent={(next) => {
+              setAccent(next);
+              applyAppearance(appearance, next);
+              void updateAccent(next).catch((value) => setError(String(value)));
+            }}
+          />
         </Modal>
       )}
       {modal === "search" && (
