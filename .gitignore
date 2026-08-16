@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -12,8 +12,9 @@
 
 # testing
 /coverage
+/logs/
 
-# next.js
+# retired web build output
 /.next/
 /.vinext/
 /out/
@@ -39,4 +40,10 @@ yarn-error.log*
 /outputs/
 /work/
 *.tsbuildinfo
-/src-tauri/target/
+/apps/desktop-ui/dist/
+/apps/desktop/src-tauri/target/
+/apps/desktop/src-tauri/resources/ocr/windows-x64/
+/apps/desktop/src-tauri/resources/ocr/macos-arm64/
+/.tmp-ocr-inspect/
+/.ocr-vcpkg/
+/.ocr-vcpkg-cache/

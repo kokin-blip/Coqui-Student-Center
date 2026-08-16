@@ -1,53 +1,42 @@
 {
   "name": "coqui-student-center",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "private": true,
+  "description": "Local-first Student Center desktop application",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @student-center/desktop-ui",
+    "build": "npm run build --workspace @student-center/desktop-ui",
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test:ocr && npm run test --workspaces --if-present && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "test:ocr": "node --test scripts/test/*.test.mjs",
+    "test:desktop:e2e": "wdio run e2e/wdio.conf.mjs",
+    "release:checksums": "node scripts/write-release-checksums.mjs",
+    "institutions:generate": "node scripts/generate-institution-directory.mjs",
+    "ocr:prepare": "node scripts/prepare-ocr-runtime.mjs",
+    "ocr:verify": "node scripts/verify-ocr-runtime.mjs",
+    "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
+    "desktop:build": "tauri build --config apps/desktop/src-tauri/tauri.conf.json",
+    "cloud:dev": "npm run dev --workspace @student-center/cloud-api"
+  },
   "engines": {
     "node": ">=22.13.0"
   },
-  "scripts": {
-    "dev": "cross-env WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "build": "cross-env WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "cross-env WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && tsx --test tests/planner.test.ts tests/rendered-html.test.mjs",
-    "check": "tsc --noEmit",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern src-tauri/target",
-    "db:generate": "drizzle-kit generate"
-  },
-  "dependencies": {
-    "drizzle-orm": "0.45.2",
-    "lucide-react": "^1.31.0",
-    "react": "19.2.6",
-    "react-dom": "19.2.6"
-  },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
-    "@eslint/js": "9.39.4",
-    "@next/eslint-plugin-next": "16.2.6",
-    "@tailwindcss/postcss": "4.2.1",
     "@tauri-apps/cli": "^2.11.4",
-    "@types/node": "22.19.19",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
-    "cross-env": "^10.1.0",
-    "drizzle-kit": "0.31.10",
-    "eslint": "9.39.4",
-    "eslint-plugin-jsx-a11y": "6.10.2",
-    "eslint-plugin-react": "7.37.5",
-    "eslint-plugin-react-hooks": "7.1.1",
-    "globals": "16.4.0",
-    "react-server-dom-webpack": "19.2.6",
-    "tailwindcss": "4.2.1",
-    "tsx": "^4.23.12",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.59.3",
-    "vinext": "1.0.0-beta.2",
-    "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "@wdio/cli": "^9.30.1",
+    "@wdio/local-runner": "^9.30.1",
+    "@wdio/mocha-framework": "^9.30.1",
+    "@wdio/spec-reporter": "^9.30.1",
+    "@wdio/tauri-plugin": "^1.3.0",
+    "@wdio/tauri-service": "^1.3.0",
+    "typescript": "5.9.3"
   },
-  "type": "module"
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
 }

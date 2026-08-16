@@ -1,22 +1,82 @@
-name: CI
+name: Desktop CI
 on: [push, pull_request]
+
 jobs:
-  test:
+  contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - run: npm run build
+      - run: npm run check --workspaces --if-present
+      - run: npm run test --workspaces --if-present
+      - run: npm run test:ocr
+      - run: npm run ocr:verify -- --target=windows-x64
+      - run: npm run ocr:verify -- --target=macos-arm64
+
   desktop:
-    strategy: { fail-fast: false, matrix: { platform: [windows-latest, macos-latest] } }
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: --bundles nsis
+            ocr_target: windows-x64
+            vcpkg_triplet: x64-windows-static
+            rust_target: ""
+            e2e_args: ""
+            e2e_binary: apps/desktop/src-tauri/target/release/student-center.exe
+          - platform: macos-15
+            args: --target aarch64-apple-darwin --bundles dmg
+            ocr_target: macos-arm64
+            vcpkg_triplet: arm64-osx-static
+            rust_target: aarch64-apple-darwin
+            e2e_args: --target aarch64-apple-darwin
+            e2e_binary: apps/desktop/src-tauri/target/aarch64-apple-darwin/release/student-center
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
       - run: npm ci
-      - run: npm run desktop:build -- --no-bundle
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/student-center-vcpkg-cache
+          key: ocr-vcpkg-${{ matrix.platform }}-${{ matrix.vcpkg_triplet }}-aae277acf4e7
+      - name: Build pinned static Tesseract runtime
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/student-center-vcpkg-cache
+        run: node scripts/build-tesseract-vcpkg.mjs --root=${{ runner.temp }}/student-center-vcpkg --triplet=${{ matrix.vcpkg_triplet }}
+      - name: Prepare verified OCR resources
+        run: npm run ocr:prepare -- --target=${{ matrix.ocr_target }} --tesseract-root=${{ runner.temp }}/student-center-vcpkg/installed/${{ matrix.vcpkg_triplet }}
+      - name: Enforce OCR release gate
+        run: npm run ocr:verify -- --target=${{ matrix.ocr_target }} --require-ready
+      - name: Test native app with prepared OCR runtime
+        env:
+          STUDENT_CENTER_OCR_RUNTIME: apps/desktop/src-tauri/resources/ocr/${{ matrix.ocr_target }}
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Build test-only embedded WebDriver binary
+        env:
+          VITE_WDIO: "true"
+        run: npm run desktop:build -- --config apps/desktop/src-tauri/tauri.wdio.conf.json --features wdio --no-bundle ${{ matrix.e2e_args }}
+      - name: Smoke native IPC and honest first run
+        env:
+          STUDENT_CENTER_E2E_BINARY: ${{ matrix.e2e_binary }}
+        run: npm run test:desktop:e2e
+      - run: npm run desktop:build -- ${{ matrix.args }}
+      - run: npm run release:checksums
+      - uses: actions/upload-artifact@v4
+        with:
+          name: student-center-${{ matrix.platform }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.sha256
+            apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.sha256
+            apps/desktop/src-tauri/resources/ocr/${{ matrix.ocr_target }}/runtime-lock.json
+            apps/desktop/src-tauri/resources/ocr/${{ matrix.ocr_target }}/THIRD_PARTY_NOTICES.txt
