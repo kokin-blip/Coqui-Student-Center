@@ -1,5 +1,14 @@
 name: Desktop CI
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run is wasted spend on a private repo, where macOS bills at a
+# 10x minute multiplier and Windows at 2x.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   contracts:
@@ -16,7 +25,15 @@ jobs:
       - run: npm run ocr:verify -- --target=windows-x64
       - run: npm run ocr:verify -- --target=macos-arm64
 
+  # Two from-source Tesseract builds plus two native packaging runs. Restricted
+  # to pull requests, the default branch, and manual dispatch: running this on
+  # every push to every branch is what exhausted the Actions quota.
   desktop:
+    needs: contracts
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +60,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
       - run: npm ci
       - uses: actions/cache@v4
         with:
