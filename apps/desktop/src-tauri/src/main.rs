@@ -1109,6 +1109,9 @@ fn canonical_entity_snapshot(
         "course" => ("courses", "id"),
         "commitment" => ("commitments", "id"),
         "academic_term" => ("academic_terms", "id"),
+        "instructor" => ("instructors", "id"),
+        "class_meeting_series" => ("class_meeting_series", "id"),
+        "academic_calendar_event" => ("academic_calendar_events", "id"),
         "student_profile" => ("student_profiles", "id"),
         "planning_preferences" => ("planning_preferences", "profile_id"),
         "availability_rule" => ("availability_rules", "id"),
@@ -3855,6 +3858,9 @@ fn canonical_table(entity_type: &str) -> Option<(&'static str, &'static str)> {
         "course" => Some(("courses", "id")),
         "commitment" => Some(("commitments", "id")),
         "academic_term" => Some(("academic_terms", "id")),
+        "instructor" => Some(("instructors", "id")),
+        "class_meeting_series" => Some(("class_meeting_series", "id")),
+        "academic_calendar_event" => Some(("academic_calendar_events", "id")),
         "student_profile" => Some(("student_profiles", "id")),
         "planning_preferences" => Some(("planning_preferences", "profile_id")),
         "availability_rule" => Some(("availability_rules", "id")),
@@ -8263,6 +8269,224 @@ mod tests {
         };
         assert_eq!(title(&left), "Device B title");
         assert_eq!(title(&right), "Device B title");
+    }
+
+    // canonical_table silently skips anything it does not map, which is correct
+    // for derived local-only state but meant that three shipped entity types
+    // replicated as nothing at all. Every replicable type must be classified
+    // deliberately, not by omission.
+    #[test]
+    fn every_canonical_entity_type_is_either_replicated_or_explicitly_local() {
+        const LOCAL_ONLY: [&str; 6] = [
+            "plan",
+            "plan_block",
+            "document",
+            "reminder",
+            "notification_preferences",
+            "integration_connection",
+        ];
+        // Every entity type canonical_entity_snapshot can produce a payload for.
+        const SNAPSHOTTABLE: [&str; 20] = [
+            "task",
+            "assignment",
+            "exam",
+            "course",
+            "commitment",
+            "academic_term",
+            "instructor",
+            "class_meeting_series",
+            "academic_calendar_event",
+            "student_profile",
+            "planning_preferences",
+            "availability_rule",
+            "import_candidate",
+            "source_conflict",
+            "plan",
+            "plan_block",
+            "document",
+            "reminder",
+            "notification_preferences",
+            "integration_connection",
+        ];
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("classify.db"), &random_key()).unwrap();
+        let tables = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<std::result::Result<std::collections::HashSet<_>, _>>()
+            .unwrap();
+        for entity_type in SNAPSHOTTABLE {
+            match canonical_table(entity_type) {
+                Some((table, _)) => {
+                    assert!(
+                        !LOCAL_ONLY.contains(&entity_type),
+                        "{entity_type} is both replicated and marked local-only"
+                    );
+                    assert!(
+                        tables.contains(table),
+                        "{entity_type} maps to missing table {table}"
+                    );
+                }
+                None => assert!(
+                    LOCAL_ONLY.contains(&entity_type),
+                    "{entity_type} would be dropped on apply without being declared local-only"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn schedule_entities_record_snapshots_and_converge_on_a_second_device() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn =
+            open_database(&directory.path().join("schedule-sync.db"), &random_key()).unwrap();
+        complete_test_onboarding(&mut conn);
+        enqueue_initial_workspace_mutations(&conn).unwrap();
+        let course_id = conn
+            .query_row("SELECT id FROM courses LIMIT 1", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap();
+        let term_id = conn
+            .query_row("SELECT id FROM academic_terms LIMIT 1", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap();
+
+        let instructor_id = profile::create_instructor(
+            &conn,
+            &profile::InstructorInput {
+                course_id: course_id.clone(),
+                name: "Dr. Rivera".into(),
+                email: "rivera@example.edu".into(),
+                office_location: "COOR 3140".into(),
+                office_hours: "Tue 10:00-12:00".into(),
+                expected_version: None,
+            },
+        )
+        .unwrap();
+        mutation(&conn, "instructor", &instructor_id, "created", "{}").unwrap();
+
+        let meeting_id = profile::create_class_meeting(
+            &conn,
+            &profile::ClassMeetingSeriesInput {
+                course_id: course_id.clone(),
+                term_id: term_id.clone(),
+                timezone: "Etc/UTC".into(),
+                weekdays: vec![1, 3],
+                starts_at_local: "09:00".into(),
+                ends_at_local: "10:15".into(),
+                component: "lecture".into(),
+                location: "COOR 170".into(),
+                instructor_id: Some(instructor_id.clone()),
+                expected_version: None,
+            },
+        )
+        .unwrap();
+        mutation(&conn, "class_meeting_series", &meeting_id, "created", "{}").unwrap();
+
+        let event_id = profile::create_academic_event(
+            &conn,
+            &profile::AcademicCalendarEventInput {
+                term_id: Some(term_id),
+                title: "Fall break".into(),
+                starts_on: "2026-10-12".into(),
+                ends_on: "2026-10-13".into(),
+                all_day: true,
+                no_class: true,
+                source: "user".into(),
+                expected_version: None,
+            },
+        )
+        .unwrap();
+        mutation(&conn, "academic_calendar_event", &event_id, "created", "{}").unwrap();
+
+        // A missing snapshot is silently recorded as a tombstone, which would
+        // replicate a create as a delete.
+        for (entity_type, entity_id) in [
+            ("instructor", &instructor_id),
+            ("class_meeting_series", &meeting_id),
+            ("academic_calendar_event", &event_id),
+        ] {
+            let (tombstone, payload) = conn
+                .query_row(
+                    "SELECT tombstone,payload FROM mutations WHERE entity_type=?1 AND entity_id=?2",
+                    params![entity_type, entity_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap();
+            assert_eq!(tombstone, 0, "{entity_type} was recorded as a tombstone");
+            let payload: CanonicalMutationV2 = serde_json::from_str(&payload).unwrap();
+            assert!(
+                payload.snapshot.is_some(),
+                "{entity_type} carried no canonical snapshot"
+            );
+        }
+
+        // Replay onto a second device and assert the rows actually land. The
+        // term and course come first because the schedule tables reference
+        // them; a real pull applies mutations in the same logical order.
+        let replica_root = tempfile::tempdir().unwrap();
+        let replica =
+            open_database(&replica_root.path().join("replica.db"), &random_key()).unwrap();
+        let account_id = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let device_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let mut statement = conn
+            .prepare("SELECT entity_type,entity_id,operation,payload FROM mutations WHERE entity_type IN ('academic_term','course','instructor','class_meeting_series','academic_calendar_event') ORDER BY hlc")
+            .unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 5);
+        for (index, (entity_type, entity_id, operation, payload)) in rows.into_iter().enumerate() {
+            let envelope = sync_transport::EncryptedMutation {
+                mutation_id: Uuid::new_v4(),
+                account_id,
+                device_id,
+                logical_timestamp: format!("178670000000{index}-000000000{index}-{device_id}"),
+                entity_id: Uuid::parse_str(&entity_id).unwrap(),
+                entity_type,
+                nonce: "N".repeat(32),
+                ciphertext: "C".repeat(64),
+                schema_version: 2,
+                tombstone: false,
+            };
+            let decrypted = sync_transport::DecryptedMutation { operation, payload };
+            apply_canonical_mutation(&replica, &envelope, &decrypted).unwrap();
+        }
+        let count = |table: &str, id: &str| {
+            replica
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE id=?1"),
+                    params![id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(count("instructors", &instructor_id), 1);
+        assert_eq!(count("class_meeting_series", &meeting_id), 1);
+        assert_eq!(count("academic_calendar_events", &event_id), 1);
+        assert_eq!(
+            replica
+                .query_row(
+                    "SELECT name FROM instructors WHERE id=?1",
+                    params![instructor_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "Dr. Rivera"
+        );
     }
 
     #[test]
