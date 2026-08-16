@@ -77,4 +77,31 @@ describe("stylesheets", () => {
       expect(sheet).not.toMatch(/prefers-color-scheme/);
     }
   });
+
+  // A hardcoded colour cannot follow the theme, so it renders a light-palette
+  // value on a dark surface. The brand mark and the onboarding splash are
+  // deliberately fixed and are allowed.
+  test("colour comes from tokens, not literals", () => {
+    const allowed = /^\.(logo-|coqui-|onboarding-story|setup-steps|local-promise)/;
+    for (const sheet of stylesheets) {
+      const offenders: string[] = [];
+      for (const block of sheet.split("}")) {
+        const [selector = "", body = ""] = block.split("{");
+        if (!body || allowed.test(selector.trim())) continue;
+        if (/#[0-9a-fA-F]{3,8}\b/.test(body)) {
+          offenders.push(`${selector.trim().slice(0, 60)} →${body.trim().slice(0, 60)}`);
+        }
+      }
+      expect(offenders, offenders.join("\n")).toHaveLength(0);
+    }
+  });
+
+  test("text stays at or above the 12px floor", () => {
+    for (const sheet of stylesheets) {
+      const tooSmall = [...sheet.matchAll(/font-size:\s*(\d+)px/g)]
+        .map(([, size]) => Number(size))
+        .filter((size) => size < 12);
+      expect(tooSmall, `font sizes below 12px: ${tooSmall}`).toHaveLength(0);
+    }
+  });
 });
