@@ -5,6 +5,7 @@ import {
   Brain,
   CalendarDays,
   Check,
+  TriangleAlert,
   ChevronRight,
   CircleAlert,
   ExternalLink,
@@ -472,6 +473,14 @@ export function StudentCenter() {
       data?.blocks
         .filter((b) => !b.completed)
         .reduce((sum, b) => sum + minutesBetween(b.startsAt, b.endsAt), 0) ?? 0,
+    [data],
+  );
+  const studyBlocks = useMemo(
+    () => data?.blocks.filter((block) => block.kind === "study").length ?? 0,
+    [data],
+  );
+  const classBlocks = useMemo(
+    () => data?.blocks.filter((block) => block.kind === "class").length ?? 0,
     [data],
   );
   const reminderBlocks = useMemo(
@@ -1263,30 +1272,54 @@ export function StudentCenter() {
                 </div>
               </section>
               <aside className="capacity">
-                <p>Today’s capacity</p>
-                <div>
-                  <strong>
-                    {Math.floor(remaining / 60)}h {remaining % 60}m
-                  </strong>
-                  <span>remaining</span>
-                </div>
-                <div className="meter">
-                  <i
-                    style={{
-                      width: `${Math.min(100, (remaining / 360) * 100)}%`,
-                    }}
-                  />
-                </div>
-                <dl>
-                  <div>
-                    <dt>{data.blocks.filter((b) => b.completed).length}</dt>
-                    <dd>completed</dd>
+                <p>Capacity</p>
+                {data.blocks.length === 0 ? (
+                  // Zero statistics against an empty plan say nothing; tell the
+                  // student what would make the number meaningful instead.
+                  <div className="capacity-empty">
+                    <strong>No schedule yet</strong>
+                    <span>
+                      Add tasks or classes and Coqui will work out today’s
+                      capacity.
+                    </span>
                   </div>
-                  <div>
-                    <dt>{data.conflicts.length}</dt>
-                    <dd>conflicts</dd>
-                  </div>
-                </dl>
+                ) : (
+                  <>
+                    <div>
+                      <strong>
+                        {Math.floor(remaining / 60)}h {remaining % 60}m
+                      </strong>
+                      <span>available today</span>
+                    </div>
+                    <div className="meter">
+                      <i
+                        style={{
+                          width: `${Math.min(100, (remaining / 360) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <ul className="capacity-facts">
+                      <li>
+                        <ListChecks aria-hidden="true" />
+                        {studyBlocks} {studyBlocks === 1 ? "task" : "tasks"}
+                      </li>
+                      <li>
+                        <CalendarDays aria-hidden="true" />
+                        {classBlocks} {classBlocks === 1 ? "class" : "classes"}
+                      </li>
+                      <li className={data.conflicts.length ? "warn" : ""}>
+                        {data.conflicts.length ? (
+                          <TriangleAlert aria-hidden="true" />
+                        ) : (
+                          <Check aria-hidden="true" />
+                        )}
+                        {data.conflicts.length
+                          ? `${data.conflicts.length} ${data.conflicts.length === 1 ? "conflict" : "conflicts"}`
+                          : "No conflicts"}
+                      </li>
+                    </ul>
+                  </>
+                )}
               </aside>
             </div>
             <div className="section-head">

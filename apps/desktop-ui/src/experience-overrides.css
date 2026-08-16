@@ -181,7 +181,237 @@ body {
 .record-icon.exam { background: color-mix(in srgb, var(--amber) 18%, var(--surface)); color: var(--amber); }
 .editor-divider { height: 1px; margin: 24px 0; background: var(--line); }
 .section-empty-copy { margin: 0; padding: 12px; border-radius: 12px; color: var(--muted); background: var(--surface-soft); font-size: 10px; }
-.next-card .alternatives { color: rgba(255, 255, 255, .82) !important; font-size: 12px !important; line-height: 1.45; }
+/* ------------------------------------------------------ next best action -- */
+/*
+ * Was a saturated teal gradient card with white text and a decorative ring,
+ * which made the single most-read element on the screen the loudest thing on
+ * it. It is a normal raised surface now; the accent appears only on the
+ * eyebrow icon, the left indicator, and the primary button.
+ */
+
+.next-card {
+  position: relative;
+  padding: var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  background: var(--bg-surface-raised);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.next-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+}
+
+/* The decorative ring. */
+.next-card::after { content: none; }
+
+.next-top span {
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.next-top span svg { color: var(--accent); }
+
+.next-top b {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+
+.next-card h2 {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: 24px;
+  font-weight: 650;
+  line-height: var(--leading-tight);
+  letter-spacing: -0.02em;
+}
+
+.next-card p {
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}
+
+.next-card .alternatives {
+  color: var(--text-muted);
+  font-size: var(--text-secondary-size);
+  line-height: var(--leading-normal);
+}
+
+.reason-row span {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-meta);
+}
+
+.next-actions { margin-top: var(--space-5); }
+
+/* --------------------------------------------------------------- buttons -- */
+/*
+ * .primary and .ghost were designed to sit on the teal card: a white button
+ * and a white-outlined one. Both were invisible on a normal surface.
+ */
+
+.primary,
+.ghost,
+.solid,
+.outline {
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-secondary-size);
+  font-weight: 600;
+  transition:
+    background-color var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+.primary,
+.solid {
+  color: var(--accent-text);
+  background: var(--accent);
+  border: 1px solid transparent;
+}
+
+.primary:hover:not(:disabled),
+.solid:hover:not(:disabled) { background: var(--accent-hover); }
+
+.outline {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+}
+
+.outline:hover:not(:disabled) { background: var(--bg-surface-hover); }
+
+.ghost {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.ghost:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover);
+}
+
+.primary:disabled,
+.solid:disabled,
+.outline:disabled,
+.ghost:disabled { opacity: 0.5; }
+
+.text-button.danger { color: var(--danger); }
+
+/* Focus has to stay visible on every surface. */
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* -------------------------------------------------------------- capacity -- */
+
+.capacity {
+  padding: var(--space-5);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.capacity > p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.capacity strong {
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.capacity > div span {
+  color: var(--text-secondary);
+  font-size: var(--text-secondary-size);
+}
+
+.capacity .meter {
+  height: 6px;
+  margin: var(--space-4) 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface-hover);
+  overflow: hidden;
+}
+
+.capacity .meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.capacity-empty {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.capacity-empty strong {
+  font-size: var(--text-card-title);
+  font-weight: 600;
+}
+
+.capacity-empty span {
+  color: var(--text-secondary);
+  font-size: var(--text-secondary-size);
+  line-height: var(--leading-normal);
+}
+
+/* Status carries an icon and a word, never colour alone. */
+.capacity-facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capacity-facts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-secondary-size);
+}
+
+.capacity-facts svg {
+  width: 16px;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.capacity-facts li.warn { color: var(--warning); }
+.capacity-facts li.warn svg { color: var(--warning); }
 .course-detail-editors { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 .course-detail-editors .inline-editor { margin-top: 0; }
 /* These were pinned to [data-theme="dark"] and to a prefers-color-scheme
