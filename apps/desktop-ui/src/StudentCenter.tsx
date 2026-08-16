@@ -10,7 +10,6 @@ import {
   ExternalLink,
   FileLock2,
   FileUp,
-  GraduationCap,
   HardDrive,
   Home,
   LayoutGrid,
@@ -51,7 +50,6 @@ import {
   AccountStatus,
   AcademicCalendarEventInput,
   addTask,
-  AppBootstrap,
   approveCandidates,
   BackupPreview,
   CalendarAgenda,
@@ -60,7 +58,6 @@ import {
   checkForUpdates,
   CommitmentEditorInput,
   CommitmentRecord,
-  completeOnboarding,
   connectCanvas,
   CourseInput,
   CourseRecord,
@@ -94,6 +91,7 @@ import {
   getAccountStatus,
   getCalendarAgenda,
   getDocumentEvidence,
+  getDashboard,
   getLocalWorkspace,
   getUpdateStatus,
   initialize,
@@ -107,7 +105,6 @@ import {
   lockApp,
   listDocuments,
   NavigationTarget,
-  OnboardingDraft,
   OnboardingState,
   PreferenceInput,
   previewEncryptedBackup,
@@ -116,10 +113,8 @@ import {
   replan,
   requestEmailCode,
   requestManagedAi,
-  resolveDemoCleanup,
   resolveSourceConflict,
   restoreEncryptedBackup,
-  saveOnboardingDraft,
   SecurityStatus,
   selectAndImport,
   selectBackupFile,
@@ -192,6 +187,12 @@ type Modal =
   | "delete-profile"
   | "recovery"
   | null;
+const greeting = () => {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+};
 const formatTime = (iso: string) =>
   new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(
     new Date(iso),
@@ -1171,7 +1172,9 @@ export function StudentCenter() {
                     day: "numeric",
                   }).format(new Date())}
                 </p>
-                <h1>Good morning, {data.studentName.split(" ")[0]}.</h1>
+                <h1>
+                  {greeting()}, {data.studentName.split(" ")[0]}.
+                </h1>
                 <p>
                   Your plan is stored locally and ready, even without internet.
                 </p>
@@ -1470,6 +1473,13 @@ export function StudentCenter() {
         >
           <CalendarDays />
           Timetable
+        </button>
+        <button
+          className={view === "assignments" ? "active" : ""}
+          onClick={() => setView("assignments")}
+        >
+          <ListChecks />
+          Assignments
         </button>
         <button onClick={() => setModal("import")}>
           <FileLock2 />
@@ -3167,8 +3177,9 @@ function WorkspaceView({
         availability: next.availability,
       });
     if (mode === "timetable") setAgenda(await getCalendarAgenda());
-    const bootstrap = await initialize();
-    if (bootstrap.dashboard) onDashboard(bootstrap.dashboard);
+    // This runs only after a workspace mutation, so onboarding is already
+    // complete and the lighter dashboard fetch is enough.
+    onDashboard(await getDashboard());
   };
   const act = async (operation: () => Promise<WorkspaceSnapshot>) => {
     setBusy(true);
@@ -4534,592 +4545,6 @@ type LegacyOnboardingState = OnboardingState & {
   demoReviewRequired: boolean;
   demoCandidates: Array<{ id: string; title: string; detail: string }>;
 };
-
-function LegacyOnboardingWizard({
-  state,
-  onState,
-  onComplete,
-}: {
-  state: LegacyOnboardingState;
-  onState: (state: OnboardingState) => void;
-  onComplete: (result: AppBootstrap) => void;
-}) {
-  const [draft, setDraft] = useState<OnboardingDraft>(state.draft);
-  const [step, setStep] = useState(0);
-  const [selectedDemo, setSelectedDemo] = useState<string[]>(
-    state.demoCandidates.map((item) => item.id),
-  );
-  const [timezoneConfirmed, setTimezoneConfirmed] = useState(false);
-  const [importAfter, setImportAfter] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const update = <K extends keyof OnboardingDraft>(
-    key: K,
-    value: OnboardingDraft[K],
-  ) => setDraft((current) => ({ ...current, [key]: value }));
-  const persist = async (nextStep: number) => {
-    setBusy(true);
-    setError("");
-    try {
-      const next = await saveOnboardingDraft(draft);
-      onState(next);
-      setStep(nextStep);
-    } catch (next) {
-      setError(String(next));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const reviewDemo = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const next = await resolveDemoCleanup(selectedDemo);
-      onState(next);
-      setDraft(next.draft);
-    } catch (next) {
-      setError(String(next));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const finish = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      let result = await completeOnboarding(draft);
-      if (importAfter && result.dashboard) {
-        const imported = await selectAndImport();
-        if (imported) result = { ...result, dashboard: imported };
-      }
-      onComplete(result);
-    } catch (next) {
-      setError(String(next));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const toggleDay = (weekday: number, enabled: boolean) =>
-    update(
-      "availability",
-      enabled
-        ? [
-            ...draft.availability,
-            { weekday, startsAtLocal: "08:00", endsAtLocal: "21:00" },
-          ].sort((a, b) => a.weekday - b.weekday)
-        : draft.availability.filter((rule) => rule.weekday !== weekday),
-    );
-  const updateDay = (
-    weekday: number,
-    key: "startsAtLocal" | "endsAtLocal",
-    value: string,
-  ) =>
-    update(
-      "availability",
-      draft.availability.map((rule) =>
-        rule.weekday === weekday ? { ...rule, [key]: value } : rule,
-      ),
-    );
-  const addCommitment = () =>
-    update("commitments", [
-      ...draft.commitments,
-      {
-        title: "",
-        startsAt: "",
-        endsAt: "",
-        kind: "class",
-        location: "",
-        travelBeforeMinutes: draft.defaultCommuteMinutes,
-        travelAfterMinutes: draft.defaultCommuteMinutes,
-      },
-    ]);
-  const updateCommitment = (
-    index: number,
-    key: string,
-    value: string | number,
-  ) =>
-    update(
-      "commitments",
-      draft.commitments.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, [key]: value } : item,
-      ),
-    );
-  if (state.demoReviewRequired)
-    return (
-      <div className="onboarding-shell">
-        <section className="onboarding-card">
-          <span className="brand-mark">
-            <GraduationCap />
-          </span>
-          <p className="eyebrow">One-time upgrade review</p>
-          <h1>Choose what to do with the old examples</h1>
-          <p className="onboarding-lead">
-            We found exact, untouched records from the previous demo. Nothing is
-            removed unless you select it and confirm.
-          </p>
-          {error && (
-            <div className="alert">
-              <CircleAlert />
-              <span>{error}</span>
-            </div>
-          )}
-          <div className="demo-review">
-            {state.demoCandidates.map((item) => (
-              <label key={item.id}>
-                <input
-                  type="checkbox"
-                  checked={selectedDemo.includes(item.id)}
-                  onChange={(event) =>
-                    setSelectedDemo((current) =>
-                      event.target.checked
-                        ? [...current, item.id]
-                        : current.filter((id) => id !== item.id),
-                    )
-                  }
-                />
-                <span>
-                  <strong>{item.title}</strong>
-                  <small>{item.detail}</small>
-                </span>
-              </label>
-            ))}
-          </div>
-          <div className="onboarding-actions">
-            <button
-              className="outline"
-              disabled={busy}
-              onClick={() => {
-                setSelectedDemo([]);
-                void reviewDemo();
-              }}
-            >
-              Keep every record
-            </button>
-            <button className="solid" disabled={busy} onClick={reviewDemo}>
-              Remove {selectedDemo.length} selected example
-              {selectedDemo.length === 1 ? "" : "s"}
-            </button>
-          </div>
-        </section>
-      </div>
-    );
-  return (
-    <div className="onboarding-shell">
-      <section className="onboarding-card wide">
-        <header className="onboarding-header">
-          <div>
-            <span className="brand-mark">
-              <GraduationCap />
-            </span>
-            <p className="eyebrow">Private local setup</p>
-            <h1>
-              {
-                [
-                  "Welcome to Student Center",
-                  "Your local profile",
-                  "Your active term",
-                  "Your realistic week",
-                  "Travel and fixed time",
-                  "Ready to build your first plan",
-                ][step]
-              }
-            </h1>
-          </div>
-          <span className="step-count">{step + 1} / 6</span>
-        </header>
-        <div className="step-meter">
-          <i style={{ width: `${((step + 1) / 6) * 100}%` }} />
-        </div>
-        {error && (
-          <div className="alert">
-            <CircleAlert />
-            <span>{error}</span>
-          </div>
-        )}
-        {step === 0 && (
-          <div className="onboarding-copy">
-            <ShieldCheck />
-            <div>
-              <strong>
-                Your planner works without an account or internet.
-              </strong>
-              <p>
-                Your profile, plans, and imported documents are encrypted on
-                this computer. Optional sync and AI can be configured later.
-              </p>
-            </div>
-          </div>
-        )}
-        {step === 1 && (
-          <div className="form-grid">
-            <label className="field">
-              Your name
-              <input
-                autoFocus
-                value={draft.name}
-                onChange={(event) => update("name", event.target.value)}
-                placeholder="Your name"
-              />
-            </label>
-            <label className="field">
-              IANA timezone
-              <input
-                value={draft.timezone}
-                onChange={(event) => {
-                  update("timezone", event.target.value);
-                  setTimezoneConfirmed(false);
-                }}
-                list="timezones"
-                placeholder="America/Phoenix"
-              />
-              <datalist id="timezones">
-                <option value="America/Phoenix" />
-                <option value="America/Los_Angeles" />
-                <option value="America/Denver" />
-                <option value="America/Chicago" />
-                <option value="America/New_York" />
-                <option value="Pacific/Honolulu" />
-              </datalist>
-            </label>
-            <label className="setting-toggle full">
-              <input
-                type="checkbox"
-                checked={timezoneConfirmed}
-                onChange={(event) => setTimezoneConfirmed(event.target.checked)}
-              />
-              <span>
-                <strong>Confirm {draft.timezone || "this timezone"}</strong>
-                <small>
-                  Dates, reminders, and daylight-saving changes use this
-                  timezone.
-                </small>
-              </span>
-            </label>
-          </div>
-        )}
-        {step === 2 && (
-          <div className="form-grid">
-            <label className="field">
-              Term name
-              <input
-                value={draft.termName}
-                onChange={(event) => update("termName", event.target.value)}
-                placeholder="Fall 2026"
-              />
-            </label>
-            <label className="field">
-              Course code
-              <input
-                value={draft.courseCode}
-                onChange={(event) => update("courseCode", event.target.value)}
-                placeholder="MAT 142"
-              />
-            </label>
-            <label className="field">
-              Term begins
-              <input
-                type="date"
-                value={draft.termStartsOn}
-                onChange={(event) => update("termStartsOn", event.target.value)}
-              />
-            </label>
-            <label className="field">
-              Term ends
-              <input
-                type="date"
-                value={draft.termEndsOn}
-                onChange={(event) => update("termEndsOn", event.target.value)}
-              />
-            </label>
-            <label className="field full">
-              First course
-              <input
-                value={draft.courseTitle}
-                onChange={(event) => update("courseTitle", event.target.value)}
-                placeholder="College Mathematics"
-              />
-            </label>
-          </div>
-        )}
-        {step === 3 && (
-          <>
-            <div className="form-grid compact">
-              <label className="field">
-                Sleep begins
-                <input
-                  type="time"
-                  value={draft.sleepStart}
-                  onChange={(event) => update("sleepStart", event.target.value)}
-                />
-              </label>
-              <label className="field">
-                Sleep ends
-                <input
-                  type="time"
-                  value={draft.sleepEnd}
-                  onChange={(event) => update("sleepEnd", event.target.value)}
-                />
-              </label>
-              <label className="field">
-                Maximum focus session
-                <input
-                  type="number"
-                  min="15"
-                  max="240"
-                  step="5"
-                  value={draft.maxSessionMinutes}
-                  onChange={(event) =>
-                    update("maxSessionMinutes", Number(event.target.value))
-                  }
-                />
-              </label>
-              <label className="field">
-                Break between sessions
-                <input
-                  type="number"
-                  min="0"
-                  max="60"
-                  step="5"
-                  value={draft.breakMinutes}
-                  onChange={(event) =>
-                    update("breakMinutes", Number(event.target.value))
-                  }
-                />
-              </label>
-            </div>
-            <fieldset className="availability">
-              <legend>Weekly planning availability</legend>
-              {weekdays.map((name, weekday) => {
-                const rule = draft.availability.find(
-                  (item) => item.weekday === weekday,
-                );
-                return (
-                  <div key={name}>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(rule)}
-                        onChange={(event) =>
-                          toggleDay(weekday, event.target.checked)
-                        }
-                      />
-                      <span>{name}</span>
-                    </label>
-                    <input
-                      aria-label={`${name} starts`}
-                      type="time"
-                      disabled={!rule}
-                      value={rule?.startsAtLocal ?? "08:00"}
-                      onChange={(event) =>
-                        updateDay(weekday, "startsAtLocal", event.target.value)
-                      }
-                    />
-                    <span>to</span>
-                    <input
-                      aria-label={`${name} ends`}
-                      type="time"
-                      disabled={!rule}
-                      value={rule?.endsAtLocal ?? "21:00"}
-                      onChange={(event) =>
-                        updateDay(weekday, "endsAtLocal", event.target.value)
-                      }
-                    />
-                  </div>
-                );
-              })}
-            </fieldset>
-          </>
-        )}
-        {step === 4 && (
-          <>
-            <div className="form-grid compact">
-              <label className="field">
-                Default commute (minutes)
-                <input
-                  type="number"
-                  min="0"
-                  max="240"
-                  step="5"
-                  value={draft.defaultCommuteMinutes}
-                  onChange={(event) =>
-                    update("defaultCommuteMinutes", Number(event.target.value))
-                  }
-                />
-              </label>
-              <label className="field">
-                Transition buffer (minutes)
-                <input
-                  type="number"
-                  min="0"
-                  max="120"
-                  step="5"
-                  value={draft.transitionMinutes}
-                  onChange={(event) =>
-                    update("transitionMinutes", Number(event.target.value))
-                  }
-                />
-              </label>
-            </div>
-            <div className="commitment-head">
-              <div>
-                <strong>Fixed commitments</strong>
-                <small>Classes, work, appointments, or protected time.</small>
-              </div>
-              <button className="outline" onClick={addCommitment}>
-                <Plus /> Add commitment
-              </button>
-            </div>
-            <div className="commitment-list">
-              {draft.commitments.map((item, index) => (
-                <article key={index}>
-                  <label className="field full">
-                    Title
-                    <input
-                      value={item.title}
-                      onChange={(event) =>
-                        updateCommitment(index, "title", event.target.value)
-                      }
-                      placeholder="Biology lecture"
-                    />
-                  </label>
-                  <label className="field">
-                    Starts
-                    <input
-                      type="datetime-local"
-                      value={
-                        item.startsAt
-                          ? new Date(item.startsAt).toISOString().slice(0, 16)
-                          : ""
-                      }
-                      onChange={(event) =>
-                        updateCommitment(
-                          index,
-                          "startsAt",
-                          event.target.value
-                            ? new Date(event.target.value).toISOString()
-                            : "",
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    Ends
-                    <input
-                      type="datetime-local"
-                      value={
-                        item.endsAt
-                          ? new Date(item.endsAt).toISOString().slice(0, 16)
-                          : ""
-                      }
-                      onChange={(event) =>
-                        updateCommitment(
-                          index,
-                          "endsAt",
-                          event.target.value
-                            ? new Date(event.target.value).toISOString()
-                            : "",
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    Location
-                    <input
-                      value={item.location}
-                      onChange={(event) =>
-                        updateCommitment(index, "location", event.target.value)
-                      }
-                      placeholder="Science building"
-                    />
-                  </label>
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      update(
-                        "commitments",
-                        draft.commitments.filter(
-                          (_, itemIndex) => itemIndex !== index,
-                        ),
-                      )
-                    }
-                  >
-                    Remove
-                  </button>
-                </article>
-              ))}
-            </div>
-          </>
-        )}
-        {step === 5 && (
-          <>
-            <div className="onboarding-summary">
-              <div>
-                <strong>{draft.name}</strong>
-                <small>{draft.timezone}</small>
-              </div>
-              <div>
-                <strong>{draft.courseCode || draft.courseTitle}</strong>
-                <small>{draft.termName}</small>
-              </div>
-              <div>
-                <strong>
-                  {draft.availability.length} available day
-                  {draft.availability.length === 1 ? "" : "s"}
-                </strong>
-                <small>
-                  {draft.commitments.length} fixed commitment
-                  {draft.commitments.length === 1 ? "" : "s"}
-                </small>
-              </div>
-            </div>
-            <label className="setting-toggle">
-              <input
-                type="checkbox"
-                checked={importAfter}
-                onChange={(event) => setImportAfter(event.target.checked)}
-              />
-              <span>
-                <strong>Choose my first syllabus after setup</strong>
-                <small>
-                  The source will be copied into the encrypted vault and every
-                  extracted fact will require review.
-                </small>
-              </span>
-            </label>
-          </>
-        )}
-        <div className="onboarding-actions">
-          {step > 0 ? (
-            <button
-              className="outline"
-              disabled={busy}
-              onClick={() => setStep((value) => value - 1)}
-            >
-              Back
-            </button>
-          ) : (
-            <span />
-          )}
-          <button
-            className="solid"
-            disabled={
-              busy ||
-              (step === 1 && (!draft.name.trim() || !timezoneConfirmed)) ||
-              (step === 2 &&
-                (!draft.termName.trim() || !draft.courseTitle.trim())) ||
-              (step === 3 && !draft.availability.length)
-            }
-            onClick={() =>
-              step === 5 ? void finish() : void persist(step + 1)
-            }
-          >
-            {step === 5 ? "Create my local workspace" : "Continue"}
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
 
 function AccountModal({
   status,

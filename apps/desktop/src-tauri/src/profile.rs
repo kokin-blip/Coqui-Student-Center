@@ -672,14 +672,6 @@ pub fn save_draft(conn: &Connection, draft: &OnboardingDraft) -> Result<Onboardi
     onboarding_state(conn)
 }
 
-pub fn resolve_demo_cleanup(
-    conn: &mut Connection,
-    _selected_ids: &[String],
-) -> Result<OnboardingState> {
-    quarantine_untouched_legacy_demo(conn)?;
-    onboarding_state(conn)
-}
-
 pub fn complete_onboarding(
     conn: &mut Connection,
     input: &OnboardingDraft,

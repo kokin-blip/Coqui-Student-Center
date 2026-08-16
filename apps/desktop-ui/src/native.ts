@@ -704,6 +704,12 @@ export async function initialize(): Promise<AppBootstrap> {
   }
   return call<AppBootstrap>("app_initialize");
 }
+export async function getDashboard(): Promise<Dashboard> {
+  if (!isDesktop()) {
+    return structuredClone(browserSeed);
+  }
+  return call<Dashboard>("get_dashboard");
+}
 export async function unlockWithPin(pinValue: string) {
   return call<AppBootstrap>("unlock_with_pin", { pinValue });
 }
@@ -767,12 +773,6 @@ export async function saveOnboardingDraft(draft: OnboardingDraft) {
     return structuredClone(browserOnboardingState);
   }
   return call<OnboardingState>("save_onboarding_draft", { draft });
-}
-export async function resolveDemoCleanup(selectedIds: string[]) {
-  if (!isDesktop()) {
-    return structuredClone(browserOnboardingState);
-  }
-  return call<OnboardingState>("resolve_demo_cleanup", { selectedIds });
 }
 export async function completeOnboarding(draft: OnboardingDraft) {
   if (!isDesktop()) {

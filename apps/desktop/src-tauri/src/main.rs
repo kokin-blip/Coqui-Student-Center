@@ -2588,18 +2588,6 @@ fn save_onboarding_draft(
 }
 
 #[tauri::command]
-fn resolve_demo_cleanup(
-    state: tauri::State<AppState>,
-    selected_ids: Vec<String>,
-) -> Result<profile::OnboardingState> {
-    state.require_unlocked()?;
-    let mut conn = state.db.lock().unwrap();
-    let next = profile::resolve_demo_cleanup(&mut conn, &selected_ids)?;
-    regenerate_plan(&conn, None)?;
-    Ok(next)
-}
-
-#[tauri::command]
 async fn complete_onboarding(
     state: tauri::State<'_, AppState>,
     draft: profile::OnboardingDraft,
@@ -6761,7 +6749,6 @@ fn main() {
             search_course_suggestions,
             get_institution_setup_options,
             save_onboarding_draft,
-            resolve_demo_cleanup,
             complete_onboarding,
             get_local_workspace,
             update_student_profile,
@@ -6895,7 +6882,6 @@ mod tests {
             "set_plan_block_lock",
             "get_onboarding_state",
             "save_onboarding_draft",
-            "resolve_demo_cleanup",
             "complete_onboarding",
             "get_local_workspace",
             "update_student_profile",
