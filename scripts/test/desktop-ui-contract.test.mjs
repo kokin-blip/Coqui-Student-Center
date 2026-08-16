@@ -76,8 +76,35 @@ test("timetable, assignments, and courses expose complete local controls", () =>
     "Add an instructor",
     "Add a recurring class time",
     "Academic calendar",
+    // Every one of these had a working command and wrapper but no caller, so
+    // the record was reachable only until the moment it was created.
+    "Edit instructor",
+    "Edit class time",
+    "Academic terms",
+    "Add a term",
+    "Edit term",
+    "Edit academic event",
+    "Search your workspace",
   ]) {
     assert.match(ui, new RegExp(control));
+  }
+  // Quick Add silently dropped the due date, leaving the planner nothing to
+  // schedule against.
+  assert.match(ui, /addTask\(\s*taskTitle\.trim\(\),\s*taskMinutes,/);
+  // These wrappers all existed in native.ts already; what was missing was any
+  // caller, so assert the interface actually invokes them.
+  for (const caller of [
+    "createAcademicTerm(",
+    "updateAcademicTerm(",
+    "deleteAcademicTerm(",
+    "updateInstructor(",
+    "deleteInstructor(",
+    "updateClassMeeting(",
+    "deleteClassMeeting(",
+    "updateAcademicEvent(",
+    "deleteAcademicEvent(",
+  ]) {
+    assert.ok(ui.includes(caller), `${caller} has no caller in the interface`);
   }
   for (const command of [
     "get_calendar_agenda",

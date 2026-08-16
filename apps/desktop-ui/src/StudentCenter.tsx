@@ -66,13 +66,23 @@ import {
   CourseRecord,
   createCommitment,
   createAcademicEvent,
+  createAcademicTerm,
   createClassMeeting,
   createCourse,
   createInstructor,
   createLocalTask,
+  AcademicCalendarEventRecord,
+  AcademicTermInput,
+  AcademicTermRecord,
+  ClassMeetingSeriesRecord,
+  InstructorRecord,
   Dashboard,
+  deleteAcademicEvent,
+  deleteAcademicTerm,
+  deleteClassMeeting,
   deleteCommitment,
   deleteCourse,
+  deleteInstructor,
   deleteLocalProfile,
   deleteLocalTask,
   DocumentSummary,
@@ -125,7 +135,11 @@ import {
   toggleTask,
   unlockWithPin,
   updateCommitment,
+  updateAcademicEvent,
+  updateAcademicTerm,
+  updateClassMeeting,
   updateCourse,
+  updateInstructor,
   updateAppearance,
   updateLocalTask,
   updateNotificationSettings,
@@ -3079,16 +3093,27 @@ function WorkspaceView({
   );
   const [commitment, setCommitment] =
     useState<CommitmentEditorInput>(emptyCommitment);
-  const [academicEvent, setAcademicEvent] = useState<AcademicCalendarEventInput>({
+  const emptyAcademicEvent: AcademicCalendarEventInput = {
     title: "",
     startsOn: new Date().toISOString().slice(0, 10),
     endsOn: new Date().toISOString().slice(0, 10),
     allDay: true,
     noClass: true,
     source: "user",
-  });
-  const [instructorDraft, setInstructorDraft] = useState({ courseId: "", name: "", email: "", officeLocation: "", officeHours: "" });
-  const [meetingDraft, setMeetingDraft] = useState({ courseId: "", weekdays: [1, 3, 5], startsAtLocal: "09:00", endsAtLocal: "09:50", component: "lecture", location: "" });
+  };
+  const [academicEvent, setAcademicEvent] =
+    useState<AcademicCalendarEventInput>(emptyAcademicEvent);
+  const [academicEventEdit, setAcademicEventEdit] =
+    useState<AcademicCalendarEventRecord | null>(null);
+  const emptyInstructor = { courseId: "", name: "", email: "", officeLocation: "", officeHours: "" };
+  const emptyMeeting = { courseId: "", weekdays: [1, 3, 5], startsAtLocal: "09:00", endsAtLocal: "09:50", component: "lecture", location: "" };
+  const [instructorDraft, setInstructorDraft] = useState(emptyInstructor);
+  const [instructorEdit, setInstructorEdit] = useState<InstructorRecord | null>(null);
+  const [meetingDraft, setMeetingDraft] = useState(emptyMeeting);
+  const [meetingEdit, setMeetingEdit] = useState<ClassMeetingSeriesRecord | null>(null);
+  const emptyTerm: AcademicTermInput = { name: "", startsOn: "", endsOn: "", active: true };
+  const [term, setTerm] = useState<AcademicTermInput>(emptyTerm);
+  const [termEdit, setTermEdit] = useState<AcademicTermRecord | null>(null);
   const [preferences, setPreferences] = useState<PreferenceInput | null>(null);
   const [profileEditor, setProfileEditor] = useState({
     name: "",
@@ -3459,6 +3484,10 @@ function WorkspaceView({
                   <article key={item.id}>
                     <div className="record-icon protected"><CalendarDays /></div>
                     <div><strong>{item.title}</strong><small>{item.startsOn}{item.endsOn !== item.startsOn ? ` – ${item.endsOn}` : ""} · {item.noClass ? "No classes" : "Academic event"}</small></div>
+                    <div className="record-actions">
+                      <button className="outline" onClick={() => { setAcademicEventEdit(item); setAcademicEvent({ title: item.title, startsOn: item.startsOn, endsOn: item.endsOn, allDay: item.allDay, noClass: item.noClass, source: item.source }); }}>Edit</button>
+                      <button className="text-button danger" disabled={busy} onClick={() => { if (window.confirm(`Delete ${item.title}?`)) void act(() => deleteAcademicEvent(item.id, item.version)); }}>Delete</button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -3623,14 +3652,17 @@ function WorkspaceView({
               </button>
             </div>
             <div className="editor-divider" />
-            <h2>Add a holiday or no-class day</h2>
+            <h2>{academicEventEdit ? "Edit academic event" : "Add a holiday or no-class day"}</h2>
             <label className="field">Title<input value={academicEvent.title} onChange={(event) => setAcademicEvent((current) => ({ ...current, title: event.target.value }))} placeholder="Fall break" /></label>
             <div className="form-grid">
               <label className="field">Starts<input type="date" value={academicEvent.startsOn} onChange={(event) => setAcademicEvent((current) => ({ ...current, startsOn: event.target.value, endsOn: current.endsOn < event.target.value ? event.target.value : current.endsOn }))} /></label>
               <label className="field">Ends<input type="date" value={academicEvent.endsOn} onChange={(event) => setAcademicEvent((current) => ({ ...current, endsOn: event.target.value }))} /></label>
             </div>
             <label className="setting-toggle compact"><input type="checkbox" checked={academicEvent.noClass} onChange={(event) => setAcademicEvent((current) => ({ ...current, noClass: event.target.checked }))} /><span><strong>No classes or schedulable work</strong><small>Coqui treats this as protected capacity.</small></span></label>
-            <div className="modal-actions"><button className="solid" disabled={busy || !academicEvent.title.trim()} onClick={() => void act(() => createAcademicEvent({ ...academicEvent, termId: workspace.terms.find((term) => term.active)?.id })).then(() => setAcademicEvent((current) => ({ ...current, title: "" })))}>Add academic event</button></div>
+            <div className="modal-actions">
+              {academicEventEdit && <button className="outline" onClick={() => { setAcademicEventEdit(null); setAcademicEvent(emptyAcademicEvent); }}>Cancel</button>}
+              <button className="solid" disabled={busy || !academicEvent.title.trim()} onClick={() => { const input = { ...academicEvent, termId: workspace.terms.find((value) => value.active)?.id }; void act(() => academicEventEdit ? updateAcademicEvent(academicEventEdit.id, { ...input, expectedVersion: academicEventEdit.version }) : createAcademicEvent(input)).then(() => { setAcademicEventEdit(null); setAcademicEvent(emptyAcademicEvent); }); }}>{academicEventEdit ? "Save academic event" : "Add academic event"}</button>
+            </div>
           </section>
         </div>
       ) : (
@@ -3651,8 +3683,20 @@ function WorkspaceView({
                       <div>
                         <strong>{item.code || item.title}</strong>
                         <small>{item.title}</small>
-                        {workspace.instructors.filter((instructor) => instructor.courseId === item.id).map((instructor) => <small key={instructor.id}>Instructor · {instructor.name}{instructor.email ? ` · ${instructor.email}` : ""}</small>)}
-                        {workspace.classMeetings.filter((meeting) => meeting.courseId === item.id).map((meeting) => <small key={meeting.id}>{meeting.weekdays.map((day) => weekdays[day].slice(0, 3)).join("/")} · {meeting.startsAtLocal}–{meeting.endsAtLocal} · {meeting.component}</small>)}
+                        {workspace.instructors.filter((instructor) => instructor.courseId === item.id).map((instructor) => (
+                          <small key={instructor.id}>
+                            Instructor · {instructor.name}{instructor.email ? ` · ${instructor.email}` : ""}
+                            <button className="text-button" onClick={() => { setInstructorEdit(instructor); setInstructorDraft({ courseId: instructor.courseId, name: instructor.name, email: instructor.email, officeLocation: instructor.officeLocation, officeHours: instructor.officeHours }); }}>Edit</button>
+                            <button className="text-button danger" disabled={busy} onClick={() => { if (window.confirm(`Remove ${instructor.name} from ${item.code || item.title}?`)) void act(() => deleteInstructor(instructor.id, instructor.version)); }}>Remove</button>
+                          </small>
+                        ))}
+                        {workspace.classMeetings.filter((meeting) => meeting.courseId === item.id).map((meeting) => (
+                          <small key={meeting.id}>
+                            {meeting.weekdays.map((day) => weekdays[day].slice(0, 3)).join("/")} · {meeting.startsAtLocal}–{meeting.endsAtLocal} · {meeting.component}
+                            <button className="text-button" onClick={() => { setMeetingEdit(meeting); setMeetingDraft({ courseId: meeting.courseId, weekdays: meeting.weekdays, startsAtLocal: meeting.startsAtLocal, endsAtLocal: meeting.endsAtLocal, component: meeting.component, location: meeting.location }); }}>Edit</button>
+                            <button className="text-button danger" disabled={busy} onClick={() => { if (window.confirm(`Remove this ${meeting.component} time from ${item.code || item.title}?`)) void act(() => deleteClassMeeting(meeting.id, meeting.version)); }}>Remove</button>
+                          </small>
+                        ))}
                       </div>
                       <div className="record-actions">
                         <button
@@ -3750,16 +3794,22 @@ function WorkspaceView({
               </div>
               {workspace.courses.length > 0 && <div className="course-detail-editors">
                 <div className="inline-editor">
-                  <h3>Add an instructor</h3>
+                  <h3>{instructorEdit ? "Edit instructor" : "Add an instructor"}</h3>
                   <div className="form-grid"><label className="field">Course<select value={instructorDraft.courseId || workspace.courses[0].id} onChange={(event) => setInstructorDraft((current) => ({ ...current, courseId: event.target.value }))}>{workspace.courses.map((item) => <option value={item.id} key={item.id}>{item.code || item.title}</option>)}</select></label><label className="field">Name<input value={instructorDraft.name} onChange={(event) => setInstructorDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Professor name" /></label><label className="field">Email (optional)<input type="email" value={instructorDraft.email} onChange={(event) => setInstructorDraft((current) => ({ ...current, email: event.target.value }))} /></label><label className="field">Office (optional)<input value={instructorDraft.officeLocation} onChange={(event) => setInstructorDraft((current) => ({ ...current, officeLocation: event.target.value }))} /></label></div>
-                  <div className="modal-actions"><button className="solid" disabled={busy || !instructorDraft.name.trim()} onClick={() => void act(() => createInstructor({ ...instructorDraft, courseId: instructorDraft.courseId || workspace.courses[0].id })).then(() => setInstructorDraft({ courseId: "", name: "", email: "", officeLocation: "", officeHours: "" }))}>Add instructor</button></div>
+                  <div className="modal-actions">
+                    {instructorEdit && <button className="outline" onClick={() => { setInstructorEdit(null); setInstructorDraft(emptyInstructor); }}>Cancel</button>}
+                    <button className="solid" disabled={busy || !instructorDraft.name.trim()} onClick={() => { const input = { ...instructorDraft, courseId: instructorDraft.courseId || workspace.courses[0].id }; void act(() => instructorEdit ? updateInstructor(instructorEdit.id, { ...input, expectedVersion: instructorEdit.version }) : createInstructor(input)).then(() => { setInstructorEdit(null); setInstructorDraft(emptyInstructor); }); }}>{instructorEdit ? "Save instructor" : "Add instructor"}</button>
+                  </div>
                 </div>
                 <div className="inline-editor">
-                  <h3>Add a recurring class time</h3>
+                  <h3>{meetingEdit ? "Edit class time" : "Add a recurring class time"}</h3>
                   <label className="field">Course<select value={meetingDraft.courseId || workspace.courses[0].id} onChange={(event) => setMeetingDraft((current) => ({ ...current, courseId: event.target.value }))}>{workspace.courses.map((item) => <option value={item.id} key={item.id}>{item.code || item.title}</option>)}</select></label>
                   <div className="day-chips">{weekdays.map((day, dayIndex) => <button className={meetingDraft.weekdays.includes(dayIndex) ? "active" : ""} key={day} onClick={() => setMeetingDraft((current) => ({ ...current, weekdays: current.weekdays.includes(dayIndex) ? current.weekdays.filter((value) => value !== dayIndex) : [...current.weekdays, dayIndex].sort() }))}>{day.slice(0, 3)}</button>)}</div>
                   <div className="form-grid"><label className="field">Starts<input type="time" value={meetingDraft.startsAtLocal} onChange={(event) => setMeetingDraft((current) => ({ ...current, startsAtLocal: event.target.value }))} /></label><label className="field">Ends<input type="time" value={meetingDraft.endsAtLocal} onChange={(event) => setMeetingDraft((current) => ({ ...current, endsAtLocal: event.target.value }))} /></label><label className="field">Type<select value={meetingDraft.component} onChange={(event) => setMeetingDraft((current) => ({ ...current, component: event.target.value }))}><option value="lecture">Lecture</option><option value="lab">Lab</option><option value="seminar">Seminar</option></select></label><label className="field">Location<input value={meetingDraft.location} onChange={(event) => setMeetingDraft((current) => ({ ...current, location: event.target.value }))} /></label></div>
-                  <div className="modal-actions"><button className="solid" disabled={busy || meetingDraft.weekdays.length === 0} onClick={() => { const termId = workspace.courses.find((item) => item.id === (meetingDraft.courseId || workspace.courses[0].id))?.termId || workspace.terms.find((term) => term.active)?.id; if (!termId || !workspace.profile) return; void act(() => createClassMeeting({ ...meetingDraft, courseId: meetingDraft.courseId || workspace.courses[0].id, termId, timezone: workspace.profile!.timezone })).then(() => setMeetingDraft((current) => ({ ...current, location: "" }))); }}>Add class time</button></div>
+                  <div className="modal-actions">
+                    {meetingEdit && <button className="outline" onClick={() => { setMeetingEdit(null); setMeetingDraft(emptyMeeting); }}>Cancel</button>}
+                    <button className="solid" disabled={busy || meetingDraft.weekdays.length === 0} onClick={() => { const courseId = meetingDraft.courseId || workspace.courses[0].id; const termId = workspace.courses.find((item) => item.id === courseId)?.termId || workspace.terms.find((value) => value.active)?.id; if (!termId || !workspace.profile) return; const input = { ...meetingDraft, courseId, termId, timezone: workspace.profile.timezone }; void act(() => meetingEdit ? updateClassMeeting(meetingEdit.id, { ...input, expectedVersion: meetingEdit.version }) : createClassMeeting(input)).then(() => { setMeetingEdit(null); setMeetingDraft(emptyMeeting); }); }}>{meetingEdit ? "Save class time" : "Add class time"}</button>
+                  </div>
                 </div>
               </div>}
             </section>
@@ -4103,6 +4153,145 @@ function WorkspaceView({
               >
                 {taskEdit ? "Save task" : "Add task and replan"}
               </button>
+            </div>
+          </section>
+          <section className="workspace-panel preference-editor">
+            <div className="section-head">
+              <h2>Academic terms</h2>
+              <span>{workspace.terms.length}</span>
+            </div>
+            {workspace.terms.length ? (
+              <div className="record-list compact">
+                {workspace.terms.map((item) => (
+                  <article key={item.id}>
+                    <div className="record-icon course">
+                      <CalendarDays />
+                    </div>
+                    <div>
+                      <strong>
+                        {item.name}
+                        {item.active ? " · Active" : ""}
+                      </strong>
+                      <small>
+                        {item.startsOn} – {item.endsOn}
+                      </small>
+                    </div>
+                    <div className="record-actions">
+                      <button
+                        className="outline"
+                        onClick={() => {
+                          setTermEdit(item);
+                          setTerm({
+                            name: item.name,
+                            startsOn: item.startsOn,
+                            endsOn: item.endsOn,
+                            active: item.active,
+                            expectedVersion: item.version,
+                          });
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="text-button danger"
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete ${item.name}? Courses and class times in this term are removed with it.`,
+                            )
+                          )
+                            void act(() => deleteAcademicTerm(item.id, item.version));
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <CalendarDays />
+                <strong>No terms yet</strong>
+                <p>Add the term your courses belong to.</p>
+              </div>
+            )}
+            <div className="inline-editor">
+              <h3>{termEdit ? "Edit term" : "Add a term"}</h3>
+              <div className="form-grid">
+                <label className="field">
+                  Term name
+                  <input
+                    value={term.name}
+                    onChange={(event) =>
+                      setTerm((current) => ({ ...current, name: event.target.value }))
+                    }
+                    placeholder="Fall 2026"
+                  />
+                </label>
+                <label className="field">
+                  Starts
+                  <input
+                    type="date"
+                    value={term.startsOn}
+                    onChange={(event) =>
+                      setTerm((current) => ({ ...current, startsOn: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  Ends
+                  <input
+                    type="date"
+                    value={term.endsOn}
+                    onChange={(event) =>
+                      setTerm((current) => ({ ...current, endsOn: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="setting-toggle compact">
+                  <input
+                    type="checkbox"
+                    checked={term.active}
+                    onChange={(event) =>
+                      setTerm((current) => ({ ...current, active: event.target.checked }))
+                    }
+                  />
+                  <span>Current term</span>
+                </label>
+              </div>
+              <div className="modal-actions">
+                {termEdit && (
+                  <button
+                    className="outline"
+                    onClick={() => {
+                      setTermEdit(null);
+                      setTerm(emptyTerm);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button
+                  className="solid"
+                  disabled={
+                    busy || !term.name.trim() || !term.startsOn || !term.endsOn
+                  }
+                  onClick={() =>
+                    void act(() =>
+                      termEdit
+                        ? updateAcademicTerm(termEdit.id, term)
+                        : createAcademicTerm(term),
+                    ).then(() => {
+                      setTermEdit(null);
+                      setTerm(emptyTerm);
+                    })
+                  }
+                >
+                  {termEdit ? "Save term" : "Add term"}
+                </button>
+              </div>
             </div>
           </section>
           <section className="workspace-panel preference-editor">
