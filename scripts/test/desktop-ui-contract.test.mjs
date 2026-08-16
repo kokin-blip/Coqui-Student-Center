@@ -18,6 +18,10 @@ const checklist = await readFile(
   new URL("../../apps/desktop-ui/src/components/SetupChecklist.tsx", import.meta.url),
   "utf8",
 );
+const styles = await readFile(
+  new URL("../../apps/desktop-ui/src/styles.css", import.meta.url),
+  "utf8",
+);
 const logo = await readFile(
   new URL("../../apps/desktop-ui/public/coqui-mark.svg", import.meta.url),
   "utf8",
@@ -39,6 +43,22 @@ test("first-run UI is a four-stage local onboarding flow with no demo review", (
   }
   assert.doesNotMatch(onboarding, /Alex Morgan|demoReviewRequired|demoCandidates/);
   assert.match(native, /schemaVersion: 11/);
+});
+
+// Assignments and Courses emit the same markup and are told apart purely by
+// CSS. Drop either class binding and the two tabs silently become the same
+// screen, which no other test would notice.
+test("assignments and courses stay distinct screens", () => {
+  assert.match(ui, /className=\{`content workspace-page mode-\$\{mode\}`\}/);
+  assert.match(ui, /className=\{`workspace-grid academics \$\{mode\}`\}/);
+  for (const rule of [
+    /\.workspace-grid\.assignments\s*>\s*\.workspace-panel:first-child/,
+    /\.workspace-grid\.courses\s*>\s*\.workspace-panel:nth-child\(2\)/,
+    /\.mode-courses \.task-editor/,
+    /\.mode-assignments \.preference-editor/,
+  ]) {
+    assert.match(styles, rule);
+  }
 });
 
 test("timetable, assignments, and courses expose complete local controls", () => {

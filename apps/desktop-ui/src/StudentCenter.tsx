@@ -162,6 +162,7 @@ import {
 } from "./native";
 
 type Modal =
+  | "search"
   | "import"
   | "review"
   | "conflicts"
@@ -231,6 +232,9 @@ export function StudentCenter() {
   const [replanReason, setReplanReason] = useState("I woke up late");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskMinutes, setTaskMinutes] = useState(30);
+  const [taskDue, setTaskDue] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState<WorkspaceSnapshot | null>(null);
   const [canvasUrl, setCanvasUrl] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
@@ -1113,7 +1117,17 @@ export function StudentCenter() {
             <span className="offline">
               <WifiOff /> Works offline
             </span>
-            <button className="icon-btn" aria-label="Search">
+            <button
+              className="icon-btn"
+              aria-label="Search"
+              onClick={() => {
+                setSearchQuery("");
+                setModal("search");
+                getLocalWorkspace()
+                  .then(setSearchIndex)
+                  .catch((next) => setError(String(next)));
+              }}
+            >
               <Search />
             </button>
             <button
@@ -1843,6 +1857,135 @@ export function StudentCenter() {
           </div>
         </Modal>
       )}
+      {modal === "search" && (
+        <Modal
+          title="Search"
+          subtitle="Find a course, assignment, or commitment. Everything is searched locally."
+          close={() => setModal(null)}
+        >
+          <label className="field">
+            Search
+            <input
+              autoFocus
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Statistics, ENG 102, midterm…"
+            />
+          </label>
+          {(() => {
+            if (!searchIndex)
+              return (
+                <div className="empty-state">
+                  <Search />
+                  <strong>Loading your local records…</strong>
+                </div>
+              );
+            const needle = searchQuery.trim().toLowerCase();
+            if (!needle)
+              return (
+                <div className="empty-state">
+                  <Search />
+                  <strong>Search your workspace</strong>
+                  <p>
+                    {searchIndex.courses.length} courses,{" "}
+                    {searchIndex.tasks.length} assignments, and{" "}
+                    {searchIndex.commitments.length} commitments.
+                  </p>
+                </div>
+              );
+            const matches = (value: string) =>
+              value.toLowerCase().includes(needle);
+            const courses = searchIndex.courses.filter(
+              (item) => matches(item.title) || matches(item.code),
+            );
+            const tasks = searchIndex.tasks.filter((item) =>
+              matches(item.title),
+            );
+            const commitments = searchIndex.commitments.filter(
+              (item) => matches(item.title) || matches(item.location),
+            );
+            if (!courses.length && !tasks.length && !commitments.length)
+              return (
+                <div className="empty-state">
+                  <Search />
+                  <strong>No matches</strong>
+                  <p>Nothing local matches “{searchQuery.trim()}”.</p>
+                </div>
+              );
+            const go = (destination: "courses" | "assignments" | "timetable") => {
+              setModal(null);
+              setView(destination);
+            };
+            return (
+              <div className="record-list compact">
+                {courses.map((item) => (
+                  <article key={item.id}>
+                    <div className="record-icon course">
+                      <BookOpen />
+                    </div>
+                    <div>
+                      <strong>{item.code || item.title}</strong>
+                      <small>{item.title}</small>
+                    </div>
+                    <div className="record-actions">
+                      <button className="outline" onClick={() => go("courses")}>
+                        Open
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {tasks.map((item) => (
+                  <article
+                    className={item.completed ? "record-complete" : ""}
+                    key={item.id}
+                  >
+                    <div className="record-icon task">
+                      <ListChecks />
+                    </div>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>
+                        {item.minutes} min
+                        {item.dueAt ? ` · Due ${formatDateTime(item.dueAt)}` : ""}
+                      </small>
+                    </div>
+                    <div className="record-actions">
+                      <button
+                        className="outline"
+                        onClick={() => go("assignments")}
+                      >
+                        Open
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {commitments.map((item) => (
+                  <article key={item.id}>
+                    <div className="record-icon commitment">
+                      <CalendarDays />
+                    </div>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>
+                        {formatDateTime(item.startsAt)}
+                        {item.location ? ` · ${item.location}` : ""}
+                      </small>
+                    </div>
+                    <div className="record-actions">
+                      <button
+                        className="outline"
+                        onClick={() => go("timetable")}
+                      >
+                        Open
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            );
+          })()}
+        </Modal>
+      )}
       {modal === "task" && (
         <Modal
           title="Quick add"
@@ -1869,6 +2012,14 @@ export function StudentCenter() {
               onChange={(e) => setTaskMinutes(Number(e.target.value))}
             />
           </label>
+          <label className="field">
+            Due (optional)
+            <input
+              type="datetime-local"
+              value={taskDue}
+              onChange={(e) => setTaskDue(e.target.value)}
+            />
+          </label>
           <div className="modal-actions">
             <button className="outline" onClick={() => setModal(null)}>
               Cancel
@@ -1878,10 +2029,16 @@ export function StudentCenter() {
               disabled={!taskTitle.trim() || busy}
               onClick={() =>
                 run(
-                  () => addTask(taskTitle.trim(), taskMinutes),
+                  () =>
+                    addTask(
+                      taskTitle.trim(),
+                      taskMinutes,
+                      taskDue ? new Date(taskDue).toISOString() : undefined,
+                    ),
                   "Assignment saved and planned locally.",
                 ).then(() => {
                   setTaskTitle("");
+                  setTaskDue("");
                   setModal(null);
                 })
               }
