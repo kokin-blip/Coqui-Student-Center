@@ -3679,6 +3679,7 @@ function WorkspaceView({
       ) : (
         <>
           <div className={`workspace-grid academics ${mode}`}>
+            {mode === "courses" && (
             <section className="workspace-panel">
               <div className="section-head">
                 <h2>Courses</h2>
@@ -3824,6 +3825,8 @@ function WorkspaceView({
                 </div>
               </div>}
             </section>
+            )}
+            {mode === "assignments" && (
             <section className="workspace-panel">
               <div className="section-head">
                 <h2>Assignments & exams</h2>
@@ -3891,7 +3894,9 @@ function WorkspaceView({
                 </div>
               )}
             </section>
+            )}
           </div>
+          {mode === "assignments" && (
           <section className="workspace-panel task-editor">
             <h2>{taskEdit ? `Edit ${task.kind}` : "Add an assignment or exam"}</h2>
             <div className="form-grid compact">
@@ -4166,6 +4171,9 @@ function WorkspaceView({
               </button>
             </div>
           </section>
+          )}
+          {mode === "courses" && (
+          <>
           <section className="workspace-panel preference-editor">
             <div className="section-head">
               <h2>Academic terms</h2>
@@ -4524,6 +4532,8 @@ function WorkspaceView({
                 </button>
               </div>
             </section>
+          )}
+          </>
           )}
         </>
       )}

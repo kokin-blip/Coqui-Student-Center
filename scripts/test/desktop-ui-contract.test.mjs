@@ -45,20 +45,16 @@ test("first-run UI is a four-stage local onboarding flow with no demo review", (
   assert.match(native, /schemaVersion: 11/);
 });
 
-// Assignments and Courses emit the same markup and are told apart purely by
-// CSS. Drop either class binding and the two tabs silently become the same
-// screen, which no other test would notice.
-test("assignments and courses stay distinct screens", () => {
-  assert.match(ui, /className=\{`content workspace-page mode-\$\{mode\}`\}/);
-  assert.match(ui, /className=\{`workspace-grid academics \$\{mode\}`\}/);
-  for (const rule of [
-    /\.workspace-grid\.assignments\s*>\s*\.workspace-panel:first-child/,
-    /\.workspace-grid\.courses\s*>\s*\.workspace-panel:nth-child\(2\)/,
-    /\.mode-courses \.task-editor/,
-    /\.mode-assignments \.preference-editor/,
-  ]) {
-    assert.match(styles, rule);
-  }
+// Which panels belong to which tab is now decided in WorkspaceView. The
+// behavioural assertion lives in apps/desktop-ui/test/workspace-tabs.test.tsx,
+// which renders both tabs; this only guards against the panels drifting back
+// into positional CSS, where adding or reordering a panel silently merged the
+// two screens.
+test("assignments and courses are separated in markup, not by grid position", () => {
+  assert.match(ui, /\{mode === "courses" && \(/);
+  assert.match(ui, /\{mode === "assignments" && \(/);
+  assert.doesNotMatch(styles, /\.workspace-grid\.\w+\s*>\s*\.workspace-panel:(first-child|nth-child)/);
+  assert.doesNotMatch(styles, /\.mode-(courses|assignments) \.\w+-editor\s*\{?[^}]*display:\s*none/);
 });
 
 test("timetable, assignments, and courses expose complete local controls", () => {

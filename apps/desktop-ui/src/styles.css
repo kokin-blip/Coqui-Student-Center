@@ -1943,12 +1943,11 @@ textarea:focus-visible {
 .quick-add-detailed { width: 100%; margin-top: 12px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); color: var(--ink); display: flex; align-items: center; gap: 9px; font-weight: 800; }
 .quick-add-detailed svg { width: 17px; }
 .quick-add-detailed svg:last-child { margin-left: auto; }
+/* Which panels belong to which tab is decided in WorkspaceView, not here.
+   This previously hid panels by grid position, so reordering or adding one
+   silently merged Assignments and Courses into the same screen. */
 .workspace-grid.assignments,
 .workspace-grid.courses { grid-template-columns: 1fr; }
-.workspace-grid.assignments > .workspace-panel:first-child,
-.workspace-grid.courses > .workspace-panel:nth-child(2),
-.mode-courses .task-editor,
-.mode-assignments .preference-editor { display: none; }
 .record-icon.exam { background: color-mix(in srgb, var(--amber) 18%, var(--surface)); color: var(--amber); }
 
 .onboarding-experience {
