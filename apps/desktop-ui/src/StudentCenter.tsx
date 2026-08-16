@@ -1032,8 +1032,8 @@ export function StudentCenter() {
             <span>Courses</span>
           </button>
         </nav>
-        <p className="nav-label">More</p>
-        <nav>
+        <p className="nav-label">Tools</p>
+        <nav aria-label="Tools">
           <button
             className="nav-item"
             aria-label="Document vault"
@@ -1070,6 +1070,9 @@ export function StudentCenter() {
             <RefreshCw />
             <span>Data recovery</span>
           </button>
+        </nav>
+        <p className="nav-label">Account</p>
+        <nav aria-label="Account">
           <button
             className="nav-item"
             aria-label="Optional account"
@@ -1091,7 +1094,7 @@ export function StudentCenter() {
         <div className="sidebar-foot">
           <button
             className="nav-item"
-            aria-label="Settings"
+            aria-label="App lock"
             onClick={openSecurity}
           >
             <Settings />
