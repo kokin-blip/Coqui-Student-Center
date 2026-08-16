@@ -1,0 +1,24 @@
+{
+  "identifier": "app.studentcenter.desktop.e2e",
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [{
+        "identifier": "e2e",
+        "description": "Test-only WebdriverIO capabilities",
+        "windows": ["main"],
+        "permissions": [
+          "core:default",
+          "dialog:allow-open",
+          "notification:default",
+          "opener:default",
+          "wdio:default",
+          "wdio-webdriver:default"
+        ]
+      }]
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

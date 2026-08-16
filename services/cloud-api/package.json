@@ -1,0 +1,23 @@
+{
+  "name": "@student-center/cloud-api",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@student-center/contracts": "*",
+    "fastify": "^5.6.0",
+    "jose": "^6.1.0",
+    "openai": "^5.20.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "5.9.3"
+  }
+}

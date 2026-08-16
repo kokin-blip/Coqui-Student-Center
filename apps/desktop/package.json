@@ -1,0 +1,10 @@
+{
+  "name": "@student-center/desktop",
+  "version": "0.8.0",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev --config src-tauri/tauri.conf.json",
+    "build": "tauri build --config src-tauri/tauri.conf.json",
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml"
+  }
+}

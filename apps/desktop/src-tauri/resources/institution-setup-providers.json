@@ -1,0 +1,17 @@
+[
+  {
+    "institutionId": "104151",
+    "campuses": [
+      {"id":"tempe","name":"Tempe","city":"Tempe","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+      {"id":"downtown-phoenix","name":"Downtown Phoenix","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+      {"id":"west-valley","name":"West Valley","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+      {"id":"polytechnic","name":"Polytechnic","city":"Mesa","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+      {"id":"flexible","name":"Online or multiple campuses","city":"Flexible","timezone":"America/Phoenix","sourceLabel":"Student selection","sourceUrl":""}
+    ],
+    "terms": [
+      {"id":"asu-fall-2026-c","name":"Fall 2026 — Session C","startsOn":"2026-08-20","endsOn":"2026-12-12","classEndsOn":"2026-12-04","examStartsOn":"2026-12-07","details":"Classes Aug 20–Dec 4 · Finals Dec 7–12","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"},
+      {"id":"asu-spring-2027-c","name":"Spring 2027 — Session C","startsOn":"2027-01-11","endsOn":"2027-05-08","classEndsOn":"2027-04-30","examStartsOn":"2027-05-03","details":"Classes Jan 11–Apr 30 · Finals May 3–8","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"},
+      {"id":"asu-fall-2027-c","name":"Fall 2027 — Session C","startsOn":"2027-08-19","endsOn":"2027-12-11","classEndsOn":"2027-12-03","examStartsOn":"2027-12-06","details":"Classes Aug 19–Dec 3 · Finals Dec 6–11","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"}
+    ]
+  }
+]

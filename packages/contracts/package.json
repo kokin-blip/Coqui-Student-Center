@@ -1,0 +1,10 @@
+{
+  "name": "@student-center/contracts",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": { "check": "tsc --noEmit", "test": "tsx --test test/*.test.ts" },
+  "dependencies": { "zod": "^3.24.0" },
+  "devDependencies": { "tsx": "^4.19.0", "typescript": "5.9.3" }
+}

@@ -1,0 +1,97 @@
+/* Loaded after the legacy stylesheet while its components are migrated. */
+body { color: var(--ink); background: radial-gradient(circle at 95% -10%, color-mix(in srgb, var(--amber) 16%, transparent), transparent 30rem), var(--bg); }
+.sidebar { background: color-mix(in srgb, var(--surface) 92%, transparent); border-color: var(--line); }
+.topbar { background: color-mix(in srgb, var(--bg) 88%, transparent); border-color: var(--line); }
+.nav-item { color: var(--muted); }
+.nav-item:hover,
+.nav-item.active { background: var(--mint); color: var(--deep); }
+.icon-btn,
+.mode-pill,
+.workspace-panel,
+.small-card,
+.capacity,
+.modal,
+.event,
+.week-calendar > section,
+.record-list article,
+.inline-editor,
+.setting-toggle,
+.field input,
+.field select,
+.field textarea,
+.availability,
+.availability input[type="time"] { color: var(--ink); background: var(--surface); border-color: var(--line); }
+.workspace-panel { border-radius: 20px; box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 5%, transparent); }
+.workspace-grid.assignments,
+.workspace-grid.courses { grid-template-columns: 1fr; }
+.workspace-grid.assignments > .workspace-panel:first-child,
+.workspace-grid.courses > .workspace-panel:nth-child(2),
+.mode-courses .task-editor,
+.mode-assignments .preference-editor { display: none; }
+.record-icon.exam { background: color-mix(in srgb, var(--amber) 18%, var(--surface)); color: var(--amber); }
+.editor-divider { height: 1px; margin: 24px 0; background: var(--line); }
+.section-empty-copy { margin: 0; padding: 12px; border-radius: 12px; color: var(--muted); background: var(--surface-soft); font-size: 10px; }
+.next-card .alternatives { color: rgba(255, 255, 255, .82) !important; font-size: 12px !important; line-height: 1.45; }
+.course-detail-editors { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.course-detail-editors .inline-editor { margin-top: 0; }
+html[data-theme="dark"] .next-card { background: linear-gradient(145deg, #16433a, #1d3430); }
+html[data-theme="dark"] .week-block { background: #193b34; }
+html[data-theme="dark"] .week-block.class,
+html[data-theme="dark"] .week-block.work,
+html[data-theme="dark"] .week-block.life,
+html[data-theme="dark"] .week-block.protected { background: #3a2a24; }
+html[data-theme="dark"] .alert { background: #3c2421; border-color: #74443c; color: #ffb5aa; }
+@media (prefers-color-scheme: dark) {
+  html[data-theme="system"] .next-card { background: linear-gradient(145deg, #16433a, #1d3430); }
+  html[data-theme="system"] .week-block { background: #193b34; }
+}
+@media (max-width: 980px) { .course-detail-editors { grid-template-columns: 1fr; } }
+.field-help { margin: -2px 0 10px; color: var(--muted); font-size: 12px; }
+.campus-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.campus-options button,
+.term-options button { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 10px 12px; text-align: left; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 13px; }
+.campus-options button:hover,
+.term-options button:hover { border-color: var(--teal); background: var(--mint); }
+.campus-options button.selected,
+.term-options button.selected { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); background: var(--mint); }
+.campus-options button > svg { width: 18px; color: var(--teal); }
+.campus-options button span,
+.term-options button span { display: grid; gap: 3px; flex: 1; }
+.campus-options button small,
+.term-options button small,
+.term-options button em { color: var(--muted); font-size: 11px; font-style: normal; }
+.term-options { display: grid; gap: 9px; }
+.term-options button em { color: var(--teal); font-weight: 700; }
+.source-note { display: block; margin-top: 9px; color: var(--muted); }
+.setup-intro.compact { padding: 12px 14px; }
+.vault-card.ocr-checking > svg { color: var(--muted); animation: ocr-probe-spin 1.4s linear infinite; }
+@keyframes ocr-probe-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .vault-card.ocr-checking > svg { animation: none; } }
+.setup-checklist { margin-bottom: 18px; padding: 18px 20px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 5%, transparent); }
+.setup-checklist > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.setup-checklist > header strong { display: block; font-size: 15px; }
+.setup-checklist > header small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+.setup-checklist ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.setup-checklist li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface-soft); border-radius: 13px; }
+.setup-checklist li.done { opacity: .62; }
+.setup-checklist-mark { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 10px; background: var(--mint); color: var(--teal); }
+.setup-checklist li.done .setup-checklist-mark { background: color-mix(in srgb, var(--teal) 18%, var(--surface)); }
+.setup-checklist-mark svg { width: 17px; }
+.setup-checklist-copy { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.setup-checklist-copy strong { font-size: 13px; }
+.setup-checklist-copy small { color: var(--muted); font-size: 11px; }
+.setup-checklist li button { flex: none; min-height: 36px; padding-inline: 14px; border-radius: 10px; font-size: 12px; }
+.setup-checklist-state { flex: none; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.setup-checklist-import { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 0; color: var(--muted); background: none; border: none; font-size: 12px; font-weight: 600; }
+.setup-checklist-import:hover { color: var(--ink); text-decoration: underline; }
+.setup-checklist-import svg { width: 15px; }
+@media (max-width: 720px) {
+  .setup-checklist li { flex-wrap: wrap; }
+  .setup-checklist li button { width: 100%; }
+}
+.setup-actions-end { display: flex; align-items: center; gap: 10px; }
+.setup-actions-end .text-button { min-height: 44px; padding-inline: 12px; color: var(--muted); background: none; border: none; font-weight: 600; }
+.setup-actions-end .text-button:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
+.loading p[role="alert"] { max-width: 34rem; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.loading button.solid { margin-top: 4px; }
+@media (max-width: 720px) { .campus-options { grid-template-columns: 1fr; } }

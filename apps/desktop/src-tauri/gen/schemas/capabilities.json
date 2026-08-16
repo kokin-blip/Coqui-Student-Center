@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Student Center desktop capabilities","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open","notification:default","opener:default"]}}

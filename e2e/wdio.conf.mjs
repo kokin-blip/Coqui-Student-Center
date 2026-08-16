@@ -1,0 +1,29 @@
+import path from "node:path";
+
+const fallback = process.platform === "win32"
+  ? "apps/desktop/src-tauri/target/release/student-center.exe"
+  : "apps/desktop/src-tauri/target/aarch64-apple-darwin/release/student-center";
+const appBinaryPath = path.resolve(process.env.STUDENT_CENTER_E2E_BINARY ?? fallback);
+
+export const config = {
+  runner: "local",
+  specs: ["./specs/**/*.spec.mjs"],
+  maxInstances: 1,
+  capabilities: [{ browserName: "tauri", "tauri:options": { application: appBinaryPath } }],
+  services: [["@wdio/tauri-service", {
+    appBinaryPath,
+    driverProvider: "embedded",
+    embeddedPort: 4445,
+    startTimeout: 90_000,
+    statusPollTimeout: 5_000,
+    captureBackendLogs: true,
+    captureFrontendLogs: true
+  }]],
+  framework: "mocha",
+  reporters: ["spec"],
+  logLevel: "warn",
+  waitforTimeout: 15_000,
+  connectionRetryTimeout: 90_000,
+  connectionRetryCount: 2,
+  mochaOpts: { ui: "bdd", timeout: 60_000 }
+};

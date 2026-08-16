@@ -1,0 +1,9 @@
+{
+  "source": "U.S. Department of Education College Scorecard",
+  "sourceUrl": "https://collegescorecard.ed.gov/data/",
+  "sourceUpdated": "2026-06-10",
+  "generatedAt": "2026-08-15T00:51:11.068Z",
+  "inputSha256": "89e8a35a6588dfb81a6ce78fa9df4cb99b36ef7aa4b28fb0157f9e3e1a7d81b5",
+  "count": 6243,
+  "catalogCoverage": "none; official catalog adapters are separately allowlisted"
+}

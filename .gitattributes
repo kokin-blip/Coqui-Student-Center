@@ -1,0 +1,29 @@
+# Normalize text to LF in the repository. Working-tree endings are left to
+# each developer's core.autocrlf.
+* text=auto
+
+# Binary fixtures and assets. Without these, git's text heuristic misreads
+# render-smoke.pdf (no NUL in its first 8000 bytes) and a fresh Windows clone
+# rewrites its line endings, corrupting the OCR render smoke fixture.
+*.pdf   binary
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.zip   binary
+*.gz    binary
+*.dmg   binary
+*.exe   binary
+*.dll   binary
+
+# Tesseract TSV fixtures are tab-delimited text whose column alignment the
+# parser depends on; keep them LF everywhere.
+*.tsv   text eol=lf
+
+# Shell scripts must stay LF or they will not execute on the CI runners.
+*.sh    text eol=lf

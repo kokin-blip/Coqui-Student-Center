@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "runtimeVersion": "tesseract-5.5.2_pdfium-153.0.7999_tessdata-fast-4.1.0_tessconfigs-3decf1c",
+  "pdfium": {
+    "repository": "https://github.com/bblanchon/pdfium-binaries",
+    "tag": "chromium/7999",
+    "commit": "b9132659ca171211a8b7a996e0e4df2d317961ad",
+    "immutableRelease": true,
+    "license": "BSD-3-Clause and bundled third-party notices",
+    "assets": {
+      "windows-x64": {
+        "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7999/pdfium-win-x64.tgz",
+        "sha256": "55329d5cb5de8a379a2fc563106492d7f385a1f795d18970922c71f708f9fbb4",
+        "library": "bin/pdfium.dll",
+        "destination": "lib/pdfium.dll"
+      },
+      "macos-arm64": {
+        "url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7999/pdfium-mac-arm64.tgz",
+        "sha256": "e214ee33f22b2204daa765a545aee1e425d88448e6154dac95c6a06206b7437f",
+        "library": "lib/libpdfium.dylib",
+        "destination": "lib/libpdfium.dylib"
+      }
+    }
+  },
+  "tesseract": {
+    "repository": "https://github.com/tesseract-ocr/tesseract",
+    "version": "5.5.2",
+    "tagObject": "9c516f4c6dc5b3a962dc7a2a39b5c3e21ce27466",
+    "commit": "6e1d56a847e697de07b38619356550e5cf4e8633",
+    "signedTagVerified": true,
+    "license": "Apache-2.0",
+    "licenseUrl": "https://raw.githubusercontent.com/tesseract-ocr/tesseract/5.5.2/LICENSE",
+    "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "vcpkgBaseline": "aae277acf4e7de287ddb5e208b5316614de6aad7",
+    "vcpkgSourceSha512": "e9103c68ba186821aedd38de4d9949cd6732da93a2d0764de18aaaac70eb9c305384a6eb1fe656a8a269bee833178a583a91dd72027ae26d27c8329ed722f4a9"
+  },
+  "tessdataFast": {
+    "repository": "https://github.com/tesseract-ocr/tessdata_fast",
+    "tag": "4.1.0",
+    "tagObject": "a8ba5063ab8013372a20e300da0c97ee46b92b07",
+    "commit": "65727574dfcd264acbb0c3e07860e4e9e9b22185",
+    "signedTagVerified": true,
+    "license": "Apache-2.0",
+    "licenseUrl": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/LICENSE",
+    "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "englishUrl": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata",
+    "englishSha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+    "englishSize": 4113088
+  },
+  "tessconfigs": {
+    "repository": "https://github.com/tesseract-ocr/tessconfigs",
+    "commit": "3decf1c8252ba6dbeef0bf908f4b0aab7f18d113",
+    "license": "Apache-2.0",
+    "licenseUrl": "https://raw.githubusercontent.com/tesseract-ocr/tessconfigs/3decf1c8252ba6dbeef0bf908f4b0aab7f18d113/LICENSE",
+    "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "tsvUrl": "https://raw.githubusercontent.com/tesseract-ocr/tessconfigs/3decf1c8252ba6dbeef0bf908f4b0aab7f18d113/configs/tsv",
+    "tsvSha256": "59d079bb75d8b3d7c839a3564580cb559e362c93a9d70f234e421c0c3e767e04"
+  }
+}

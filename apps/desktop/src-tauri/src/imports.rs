@@ -1,0 +1,1614 @@
+use calamine::{open_workbook_auto, Data, DataType, Reader};
+use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
+use ical::{parser::ical::component::IcalEvent, property::Property, IcalParser};
+use quick_xml::{events::Event, Reader as XmlReader};
+use regex::Regex;
+use rrule::RRuleSet;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    env, fs,
+    io::{BufReader, Cursor, Read},
+    path::{Path, PathBuf},
+    process::{Command, ExitStatus, Stdio},
+    sync::{Arc, RwLock},
+    thread,
+    time::Duration as StdDuration,
+};
+use tempfile::tempdir;
+use wait_timeout::ChildExt;
+use zip::ZipArchive;
+
+const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+const MAX_ARCHIVE_UNCOMPRESSED: u64 = 100 * 1024 * 1024;
+const MAX_RECURRENCES: u16 = 512;
+const MAX_OCR_PAGES: usize = 100;
+const MAX_TOOL_OUTPUT: usize = 4 * 1024 * 1024;
+const PDF_RENDER_TIMEOUT: StdDuration = StdDuration::from_secs(60);
+const OCR_PAGE_TIMEOUT: StdDuration = StdDuration::from_secs(45);
+const RUNTIME_PROBE_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+
+#[derive(Debug, thiserror::Error)]
+pub enum ImportError {
+    #[error("unsupported file type: {0}")]
+    Unsupported(String),
+    #[error("file contents do not match the .{extension} extension ({detected})")]
+    TypeMismatch { extension: String, detected: String },
+    #[error("malformed or corrupt document: {0}")]
+    Malformed(String),
+    #[error("encrypted documents require an unencrypted copy for local extraction")]
+    Encrypted,
+    #[error("local OCR is unavailable: {0}")]
+    OcrUnavailable(String),
+    #[error("document contains no extractable academic text")]
+    Empty,
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentKind {
+    Pdf,
+    Image(&'static str),
+    Docx,
+    Xlsx,
+    Csv,
+    Pptx,
+    Ics,
+    Text,
+}
+
+impl DocumentKind {
+    pub fn mime(&self) -> &'static str {
+        match self {
+            Self::Pdf => "application/pdf",
+            Self::Image(mime) => mime,
+            Self::Docx => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            Self::Xlsx => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            Self::Csv => "text/csv",
+            Self::Pptx => {
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            }
+            Self::Ics => "text/calendar",
+            Self::Text => "text/plain",
+        }
+    }
+
+    fn extension(&self) -> &'static str {
+        match self {
+            Self::Pdf => "pdf",
+            Self::Image("image/jpeg") => "jpg",
+            Self::Image("image/png") => "png",
+            Self::Image("image/tiff") => "tiff",
+            Self::Image(_) => "image",
+            Self::Docx => "docx",
+            Self::Xlsx => "xlsx",
+            Self::Csv => "csv",
+            Self::Pptx => "pptx",
+            Self::Ics => "ics",
+            Self::Text => "txt",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OcrPhase {
+    Checking,
+    Ready,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OcrProbe {
+    phase: OcrPhase,
+    renderer_available: bool,
+    engine_available: bool,
+    english_data_available: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct OcrRuntime {
+    renderer_command: PathBuf,
+    renderer_library: PathBuf,
+    tesseract: PathBuf,
+    tessdata: Option<PathBuf>,
+    renderer_source: &'static str,
+    engine_source: &'static str,
+    renderer_installed: bool,
+    engine_installed: bool,
+    // Shared so every clone of AppState — including the ones handed to
+    // spawn_blocking closures and the background workers — sees the upgrade
+    // once the deferred probe finishes.
+    probe: Arc<RwLock<OcrProbe>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrStatus {
+    pub ready: bool,
+    pub phase: OcrPhase,
+    pub renderer_available: bool,
+    pub engine_available: bool,
+    pub english_data_available: bool,
+    pub renderer_source: String,
+    pub engine_source: String,
+    pub message: String,
+}
+
+impl OcrRuntime {
+    pub fn discover(resource_root: Option<&Path>) -> Self {
+        let platform = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            "windows-x64"
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            "macos-arm64"
+        } else {
+            "unsupported"
+        };
+        let bundled = resource_root.map(|root| root.join("ocr").join(platform));
+        let bundled_renderer_library = bundled.as_ref().map(|root| {
+            root.join("lib").join(if cfg!(windows) {
+                "pdfium.dll"
+            } else {
+                "libpdfium.dylib"
+            })
+        });
+        let bundled_tesseract = bundled.as_ref().map(|root| {
+            root.join("bin").join(if cfg!(windows) {
+                "tesseract.exe"
+            } else {
+                "tesseract"
+            })
+        });
+        let bundled_tessdata = bundled.as_ref().map(|root| root.join("tessdata"));
+
+        let (renderer_library, renderer_source) = select_library(
+            "STUDENT_CENTER_PDFIUM",
+            bundled_renderer_library.as_deref(),
+            if cfg!(windows) {
+                "pdfium.dll"
+            } else {
+                "libpdfium.dylib"
+            },
+        );
+        let renderer_command = env::current_exe().unwrap_or_else(|_| {
+            PathBuf::from(if cfg!(windows) {
+                "student-center.exe"
+            } else {
+                "student-center"
+            })
+        });
+        let (tesseract, engine_source) = select_tool(
+            "STUDENT_CENTER_TESSERACT",
+            bundled_tesseract.as_deref(),
+            if cfg!(windows) {
+                "tesseract.exe"
+            } else {
+                "tesseract"
+            },
+        );
+        let tessdata = env::var_os("STUDENT_CENTER_TESSDATA")
+            .map(PathBuf::from)
+            .filter(|path| path.join("eng.traineddata").is_file())
+            .or_else(|| bundled_tessdata.filter(|path| path.join("eng.traineddata").is_file()));
+        let renderer_exists = renderer_library.is_file() && command_available(&renderer_command);
+        let engine_exists = command_available(&tesseract);
+        // Discovery is filesystem-only so it can run during app setup. The two
+        // subprocess probes cost up to ten seconds and used to run here, before
+        // the window was ever shown; `probe_now` performs them off the hot path.
+        let tessdata_exists = tessdata.is_some();
+        Self {
+            renderer_command,
+            renderer_library,
+            tesseract,
+            tessdata,
+            renderer_source,
+            engine_source,
+            renderer_installed: renderer_exists,
+            engine_installed: engine_exists,
+            probe: Arc::new(RwLock::new(OcrProbe {
+                phase: OcrPhase::Checking,
+                renderer_available: renderer_exists,
+                engine_available: engine_exists,
+                english_data_available: tessdata_exists,
+            })),
+        }
+    }
+
+    /// Runs the bounded readiness subprocesses and publishes the result to every
+    /// clone of this runtime. Blocks for up to `2 * RUNTIME_PROBE_TIMEOUT`, so
+    /// never call it from the main thread.
+    pub fn probe_now(&self) -> OcrStatus {
+        // A Rust test harness is also an executable. Launching `current_exe()`
+        // from inside a probe recursively starts the entire test suite instead
+        // of the desktop renderer subcommand. Runtime probes remain mandatory in
+        // production; tests exercise the bounded process runner separately.
+        #[cfg(test)]
+        let (renderer_available, engine_available, english_data_available) = (false, false, false);
+        #[cfg(not(test))]
+        let (renderer_available, engine_available, english_data_available) = {
+            let renderer_available = self.renderer_installed
+                && probe_renderer(&self.renderer_command, &self.renderer_library);
+            let (engine_available, english_data_available) = if self.engine_installed {
+                probe_tesseract(&self.tesseract, self.tessdata.as_deref())
+            } else {
+                (false, false)
+            };
+            (renderer_available, engine_available, english_data_available)
+        };
+        let ready = renderer_available && engine_available && english_data_available;
+        if let Ok(mut probe) = self.probe.write() {
+            *probe = OcrProbe {
+                phase: if ready {
+                    OcrPhase::Ready
+                } else {
+                    OcrPhase::Unavailable
+                },
+                renderer_available,
+                engine_available,
+                english_data_available,
+            };
+        }
+        self.status()
+    }
+
+    pub fn status(&self) -> OcrStatus {
+        let probe = self.probe.read().map(|probe| *probe).unwrap_or(OcrProbe {
+            phase: OcrPhase::Unavailable,
+            renderer_available: false,
+            engine_available: false,
+            english_data_available: false,
+        });
+        let ready = probe.phase == OcrPhase::Ready;
+        let message: String = if probe.phase == OcrPhase::Checking {
+            "Checking the local OCR runtime…".into()
+        } else if ready {
+            "Local image and scanned-PDF OCR is ready".into()
+        } else if !self.engine_installed {
+            "Tesseract is not installed in this build; scanned imports remain encrypted and are marked for attention".into()
+        } else if !probe.engine_available {
+            "Tesseract did not pass its startup check; scanned imports remain encrypted and are marked for attention".into()
+        } else if !probe.english_data_available {
+            "The English OCR model is unavailable; scanned imports are marked for attention".into()
+        } else if !self.renderer_installed {
+            "The PDF renderer is not installed; image OCR works, but scanned PDFs are marked for attention".into()
+        } else {
+            "The PDF renderer did not pass its startup check; image OCR works, but scanned PDFs are marked for attention".into()
+        };
+        OcrStatus {
+            ready,
+            phase: probe.phase,
+            renderer_available: probe.renderer_available,
+            engine_available: probe.engine_available,
+            english_data_available: probe.english_data_available,
+            renderer_source: self.renderer_source.into(),
+            engine_source: self.engine_source.into(),
+            message,
+        }
+    }
+}
+
+fn select_library(
+    environment_variable: &str,
+    bundled: Option<&Path>,
+    system_name: &str,
+) -> (PathBuf, &'static str) {
+    if let Some(path) = env::var_os(environment_variable).map(PathBuf::from) {
+        return (path, "environment");
+    }
+    if let Some(path) = bundled.filter(|path| path.is_file()) {
+        return (path.to_path_buf(), "bundled");
+    }
+    (PathBuf::from(system_name), "system")
+}
+
+fn select_tool(
+    environment_variable: &str,
+    bundled: Option<&Path>,
+    system_name: &str,
+) -> (PathBuf, &'static str) {
+    if let Some(path) = env::var_os(environment_variable).map(PathBuf::from) {
+        return (path, "environment");
+    }
+    if let Some(path) = bundled.filter(|path| path.is_file()) {
+        return (path.to_path_buf(), "bundled");
+    }
+    (PathBuf::from(system_name), "system")
+}
+
+fn command_available(command: &Path) -> bool {
+    if command.is_absolute() || command.components().count() > 1 {
+        return executable_file(command);
+    }
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    let extensions = if cfg!(windows) {
+        env::var_os("PATHEXT")
+            .and_then(|value| value.into_string().ok())
+            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into())
+            .split(';')
+            .map(|value| value.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+    } else {
+        vec![String::new()]
+    };
+    env::split_paths(&path).any(|directory| {
+        if command.extension().is_some() {
+            executable_file(&directory.join(command))
+        } else {
+            extensions.iter().any(|extension| {
+                executable_file(&directory.join(format!("{}{}", command.display(), extension)))
+            })
+        }
+    })
+}
+
+fn executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    true
+}
+
+fn probe_renderer(renderer_command: &Path, renderer_library: &Path) -> bool {
+    let mut command = Command::new(renderer_command);
+    command
+        .args(["--student-center-pdf-renderer", "probe", "--library"])
+        .arg(renderer_library);
+    run_bounded(
+        command,
+        RUNTIME_PROBE_TIMEOUT,
+        "PDF renderer readiness check",
+    )
+    .map(|output| output.status.success())
+    .unwrap_or(false)
+}
+
+fn probe_tesseract(tesseract: &Path, tessdata: Option<&Path>) -> (bool, bool) {
+    let mut command = Command::new(tesseract);
+    if let Some(tessdata) = tessdata {
+        command.arg("--tessdata-dir").arg(tessdata);
+    }
+    command.arg("--list-langs");
+    let Ok(output) = run_bounded(command, RUNTIME_PROBE_TIMEOUT, "OCR readiness check") else {
+        return (false, false);
+    };
+    if !output.status.success() {
+        return (false, false);
+    }
+    let mut languages = String::from_utf8_lossy(&output.stdout).into_owned();
+    languages.push_str(&String::from_utf8_lossy(&output.stderr));
+    let english_available = languages.lines().any(|language| language.trim() == "eng");
+    (true, english_available)
+}
+
+#[derive(Debug, Clone)]
+pub struct Segment {
+    pub text: String,
+    pub locator: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractedCandidate {
+    pub kind: String,
+    pub title: String,
+    pub course: String,
+    pub due_at: Option<String>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub duration_minutes: Option<i64>,
+    pub evidence: String,
+    pub source_locator: String,
+    pub source_uid: String,
+    pub confidence: f64,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct Extraction {
+    pub candidates: Vec<ExtractedCandidate>,
+    pub warnings: Vec<String>,
+}
+
+pub fn detect_document(bytes: &[u8], file_name: &str) -> Result<DocumentKind, ImportError> {
+    if bytes.is_empty() {
+        return Err(ImportError::Empty);
+    }
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let detected = if bytes.starts_with(b"%PDF-") {
+        DocumentKind::Pdf
+    } else if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
+        detect_ooxml(bytes)?
+    } else if let Some(kind) = infer::get(bytes) {
+        match kind.mime_type() {
+            "image/jpeg" => DocumentKind::Image("image/jpeg"),
+            "image/png" => DocumentKind::Image("image/png"),
+            "image/tiff" => DocumentKind::Image("image/tiff"),
+            other => return Err(ImportError::Unsupported(other.to_string())),
+        }
+    } else {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| ImportError::Unsupported("unknown binary data".into()))?;
+        let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+        if trimmed.starts_with("BEGIN:VCALENDAR") {
+            DocumentKind::Ics
+        } else if ext == "csv" {
+            DocumentKind::Csv
+        } else if ext == "txt" {
+            DocumentKind::Text
+        } else {
+            return Err(ImportError::Unsupported(format!(".{ext}")));
+        }
+    };
+
+    if !extension_matches(&ext, &detected) {
+        return Err(ImportError::TypeMismatch {
+            extension: ext,
+            detected: detected.extension().into(),
+        });
+    }
+    Ok(detected)
+}
+
+fn extension_matches(ext: &str, kind: &DocumentKind) -> bool {
+    match kind {
+        DocumentKind::Image("image/jpeg") => matches!(ext, "jpg" | "jpeg"),
+        DocumentKind::Image("image/tiff") => matches!(ext, "tif" | "tiff"),
+        DocumentKind::Image(_) => ext == kind.extension(),
+        _ => ext == kind.extension(),
+    }
+}
+
+fn detect_ooxml(bytes: &[u8]) -> Result<DocumentKind, ImportError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| ImportError::Malformed(error.to_string()))?;
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(ImportError::Malformed(
+            "archive contains too many entries".into(),
+        ));
+    }
+    let mut total = 0u64;
+    let mut names = HashSet::new();
+    for index in 0..archive.len() {
+        let item = archive
+            .by_index(index)
+            .map_err(|error| ImportError::Malformed(error.to_string()))?;
+        total = total.saturating_add(item.size());
+        if total > MAX_ARCHIVE_UNCOMPRESSED {
+            return Err(ImportError::Malformed(
+                "archive expands beyond the 100 MB safety limit".into(),
+            ));
+        }
+        names.insert(item.name().replace('\\', "/"));
+    }
+    if names.contains("word/document.xml") {
+        Ok(DocumentKind::Docx)
+    } else if names.contains("xl/workbook.xml") {
+        Ok(DocumentKind::Xlsx)
+    } else if names.contains("ppt/presentation.xml") {
+        Ok(DocumentKind::Pptx)
+    } else {
+        Err(ImportError::Unsupported(
+            "ZIP archive that is not DOCX, XLSX, or PPTX".into(),
+        ))
+    }
+}
+
+pub fn extract_document(
+    path: &Path,
+    bytes: &[u8],
+    file_name: &str,
+    timezone: &str,
+    ocr: &OcrRuntime,
+) -> Result<Extraction, ImportError> {
+    let kind = detect_document(bytes, file_name)?;
+    let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
+    let mut warnings = Vec::new();
+    let candidates = match &kind {
+        DocumentKind::Ics => extract_ics(bytes, tz)?,
+        DocumentKind::Csv => extract_csv(bytes, file_name, tz)?,
+        DocumentKind::Xlsx => extract_xlsx(path, tz)?,
+        DocumentKind::Pdf => {
+            let pages = pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|error| {
+                let message = error.to_string();
+                if message.to_ascii_lowercase().contains("encrypt") {
+                    ImportError::Encrypted
+                } else {
+                    ImportError::Malformed(message)
+                }
+            })?;
+            let mut segments: Vec<Segment> = pages
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, text)| {
+                    (!text.trim().is_empty()).then(|| Segment {
+                        text,
+                        locator: format!("page {}", index + 1),
+                        confidence: 1.0,
+                    })
+                })
+                .collect();
+            if segments.is_empty() {
+                match ocr_scanned_pdf(path, ocr) {
+                    Ok(ocr_segments) => segments = ocr_segments,
+                    Err(error) => {
+                        warnings.push(error.to_string());
+                        return Ok(Extraction {
+                            candidates: Vec::new(),
+                            warnings,
+                        });
+                    }
+                }
+            }
+            candidates_from_segments(file_name, &segments, tz)
+        }
+        DocumentKind::Image(_) => {
+            let segment = ocr_image(path, "image", ocr)?;
+            candidates_from_segments(file_name, &[segment], tz)
+        }
+        DocumentKind::Docx => {
+            let segments = extract_office_xml(bytes, "word/", "paragraph")?;
+            candidates_from_segments(file_name, &segments, tz)
+        }
+        DocumentKind::Pptx => {
+            let segments = extract_office_xml(bytes, "ppt/slides/slide", "slide")?;
+            candidates_from_segments(file_name, &segments, tz)
+        }
+        DocumentKind::Text => {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|error| ImportError::Malformed(error.to_string()))?;
+            candidates_from_segments(
+                file_name,
+                &[Segment {
+                    text: text.into(),
+                    locator: "text body".into(),
+                    confidence: 1.0,
+                }],
+                tz,
+            )
+        }
+    };
+
+    Ok(Extraction {
+        candidates,
+        warnings,
+    })
+}
+
+fn extract_office_xml(
+    bytes: &[u8],
+    prefix: &str,
+    locator_name: &str,
+) -> Result<Vec<Segment>, ImportError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| ImportError::Malformed(error.to_string()))?;
+    let mut entries = Vec::new();
+    for index in 0..archive.len() {
+        let item = archive
+            .by_index(index)
+            .map_err(|error| ImportError::Malformed(error.to_string()))?;
+        let name = item.name().replace('\\', "/");
+        if name.starts_with(prefix) && name.ends_with(".xml") {
+            entries.push(name);
+        }
+    }
+    entries.sort_by_key(|name| numeric_suffix(name));
+    let mut segments = Vec::new();
+    for (position, entry_name) in entries.iter().enumerate() {
+        let mut item = archive
+            .by_name(entry_name)
+            .map_err(|error| ImportError::Malformed(error.to_string()))?;
+        let mut xml = String::new();
+        item.read_to_string(&mut xml)?;
+        let text = xml_text(&xml)?;
+        if !text.trim().is_empty() {
+            segments.push(Segment {
+                text,
+                locator: format!("{locator_name} {}", position + 1),
+                confidence: 1.0,
+            });
+        }
+    }
+    if segments.is_empty() {
+        return Err(ImportError::Empty);
+    }
+    Ok(segments)
+}
+
+fn numeric_suffix(name: &str) -> u32 {
+    Regex::new(r"(\d+)\.xml$")
+        .unwrap()
+        .captures(name)
+        .and_then(|capture| capture.get(1))
+        .and_then(|value| value.as_str().parse().ok())
+        .unwrap_or(u32::MAX)
+}
+
+fn xml_text(xml: &str) -> Result<String, ImportError> {
+    let mut reader = XmlReader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut output = String::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Text(text)) => {
+                let decoded = text
+                    .decode()
+                    .map_err(|error| ImportError::Malformed(error.to_string()))?;
+                if !output.is_empty() {
+                    output.push(' ');
+                }
+                output.push_str(&decoded);
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(ImportError::Malformed(error.to_string())),
+            _ => {}
+        }
+    }
+    Ok(output)
+}
+
+fn extract_csv(
+    bytes: &[u8],
+    file_name: &str,
+    tz: Tz,
+) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .trim(csv::Trim::All)
+        .from_reader(bytes);
+    let headers = reader
+        .headers()
+        .map_err(|error| ImportError::Malformed(error.to_string()))?
+        .iter()
+        .map(normalize_header)
+        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    for (index, row) in reader.records().enumerate() {
+        let row = row.map_err(|error| ImportError::Malformed(error.to_string()))?;
+        if row.iter().all(|value| value.trim().is_empty()) {
+            continue;
+        }
+        let values = headers
+            .iter()
+            .zip(row.iter())
+            .map(|(header, value)| (header.as_str(), value.trim()))
+            .collect::<HashMap<_, _>>();
+        if let Some(candidate) =
+            candidate_from_row(&values, file_name, &format!("row {}", index + 2), tz)
+        {
+            candidates.push(candidate);
+        }
+    }
+    if candidates.is_empty() {
+        return Err(ImportError::Malformed(
+            "CSV needs a title/assignment column and a due-date column".into(),
+        ));
+    }
+    Ok(candidates)
+}
+
+fn extract_xlsx(path: &Path, tz: Tz) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    let mut workbook = open_workbook_auto(path).map_err(|error| {
+        let message = error.to_string();
+        if message.to_ascii_lowercase().contains("password")
+            || message.to_ascii_lowercase().contains("encrypt")
+        {
+            ImportError::Encrypted
+        } else {
+            ImportError::Malformed(message)
+        }
+    })?;
+    let mut candidates = Vec::new();
+    for sheet_name in workbook.sheet_names().to_owned() {
+        let range = workbook
+            .worksheet_range(&sheet_name)
+            .map_err(|error| ImportError::Malformed(error.to_string()))?;
+        let mut rows = range.rows();
+        let Some(header_row) = rows.next() else {
+            continue;
+        };
+        let headers = header_row
+            .iter()
+            .map(|cell| normalize_header(&cell.to_string()))
+            .collect::<Vec<_>>();
+        for (index, row) in rows.enumerate() {
+            let rendered = row.iter().map(render_cell).collect::<Vec<_>>();
+            if rendered.iter().all(|value| value.is_empty()) {
+                continue;
+            }
+            let values = headers
+                .iter()
+                .zip(rendered.iter())
+                .map(|(header, value)| (header.as_str(), value.as_str()))
+                .collect::<HashMap<_, _>>();
+            if let Some(candidate) = candidate_from_row(
+                &values,
+                &sheet_name,
+                &format!("sheet {sheet_name} · row {}", index + 2),
+                tz,
+            ) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return Err(ImportError::Malformed(
+            "workbook needs a title/assignment column and a due-date column".into(),
+        ));
+    }
+    Ok(candidates)
+}
+
+fn render_cell(cell: &Data) -> String {
+    cell.as_datetime()
+        .map(|value| value.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| cell.to_string().trim().to_string())
+}
+
+fn normalize_header(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '-', '/'], "_")
+}
+
+fn first_value<'a>(values: &HashMap<&str, &'a str>, names: &[&str]) -> Option<&'a str> {
+    names
+        .iter()
+        .find_map(|name| values.get(name).copied())
+        .filter(|value| !value.is_empty())
+}
+
+fn candidate_from_row(
+    values: &HashMap<&str, &str>,
+    source: &str,
+    locator: &str,
+    tz: Tz,
+) -> Option<ExtractedCandidate> {
+    let title = first_value(values, &["title", "assignment", "task", "name"])?;
+    let due_text = first_value(values, &["due", "due_date", "deadline", "date"]);
+    let due_at = due_text.and_then(|value| parse_due(value, tz));
+    let duration_minutes = first_value(
+        values,
+        &["duration", "duration_minutes", "minutes", "estimate"],
+    )
+    .and_then(|value| value.parse::<i64>().ok())
+    .filter(|value| (5..=480).contains(value));
+    let course = first_value(values, &["course", "class", "subject"]).unwrap_or("Imported course");
+    let evidence = values
+        .iter()
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(key, value)| format!("{key}: {value}"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let mut warnings = Vec::new();
+    if due_text.is_some() && due_at.is_none() {
+        warnings.push("Due date could not be interpreted and must be entered manually".into());
+    }
+    Some(ExtractedCandidate {
+        kind: "task".into(),
+        title: title.into(),
+        course: course.into(),
+        due_at,
+        starts_at: None,
+        ends_at: None,
+        duration_minutes,
+        evidence,
+        source_locator: locator.into(),
+        source_uid: format!("row:{}:{}", source, locator),
+        confidence: if warnings.is_empty() { 0.98 } else { 0.65 },
+        warnings,
+    })
+}
+
+fn extract_ics(bytes: &[u8], fallback_tz: Tz) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    extract_ics_at(bytes, fallback_tz, Utc::now())
+}
+
+fn extract_ics_at(
+    bytes: &[u8],
+    fallback_tz: Tz,
+    observed_at: DateTime<Utc>,
+) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    let reader = BufReader::new(Cursor::new(bytes));
+    let mut candidates = Vec::new();
+    let mut calendars = 0usize;
+    for calendar in IcalParser::new(reader) {
+        calendars += 1;
+        let calendar = calendar.map_err(|error| ImportError::Malformed(error.to_string()))?;
+        for event in calendar.events {
+            candidates.extend(candidates_from_event(&event, fallback_tz, observed_at)?);
+        }
+    }
+    if calendars == 0 || candidates.is_empty() {
+        return Err(ImportError::Malformed(
+            "calendar contains no importable events".into(),
+        ));
+    }
+    Ok(candidates)
+}
+
+fn candidates_from_event(
+    event: &IcalEvent,
+    fallback_tz: Tz,
+    observed_at: DateTime<Utc>,
+) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    let summary = property_value(&event.properties, "SUMMARY").unwrap_or("Untitled calendar event");
+    let uid = property_value(&event.properties, "UID").unwrap_or(summary);
+    let start_property = property(&event.properties, "DTSTART").ok_or_else(|| {
+        ImportError::Malformed(format!("calendar event {summary:?} has no DTSTART"))
+    })?;
+    let start_raw = start_property.value.as_deref().unwrap_or_default();
+    let tzid = property_parameter(start_property, "TZID");
+    let starts_at = parse_ical_datetime(start_raw, tzid, fallback_tz)?;
+    let end = if let Some(end_property) = property(&event.properties, "DTEND") {
+        parse_ical_datetime(
+            end_property.value.as_deref().unwrap_or_default(),
+            property_parameter(end_property, "TZID").or(tzid),
+            fallback_tz,
+        )?
+    } else {
+        starts_at + Duration::hours(1)
+    };
+    if end <= starts_at {
+        return Err(ImportError::Malformed(format!(
+            "calendar event {summary:?} ends before it starts"
+        )));
+    }
+    let duration = end - starts_at;
+    let rrule = property_value(&event.properties, "RRULE");
+    let exdates = event
+        .properties
+        .iter()
+        .filter(|value| value.name.eq_ignore_ascii_case("EXDATE"))
+        .filter_map(|value| value.value.as_deref())
+        .flat_map(|value| value.split(','))
+        .filter_map(|value| parse_ical_datetime(value, tzid, fallback_tz).ok())
+        .collect::<HashSet<_>>();
+
+    let occurrences = if let Some(rule) = rrule {
+        let start_line = if let Some(tzid) = tzid {
+            format!("DTSTART;TZID={tzid}:{start_raw}")
+        } else {
+            format!("DTSTART:{start_raw}")
+        };
+        let set: RRuleSet = format!("{start_line}\nRRULE:{rule}")
+            .parse()
+            .map_err(|error| {
+                ImportError::Malformed(format!("invalid recurrence for {summary:?}: {error}"))
+            })?;
+        set.all(MAX_RECURRENCES)
+            .dates
+            .into_iter()
+            .map(|date| date.with_timezone(&Utc))
+            .filter(|date| !exdates.contains(date))
+            .collect::<Vec<_>>()
+    } else {
+        vec![starts_at]
+    };
+
+    let horizon_start = observed_at - Duration::days(1);
+    let horizon_end = observed_at + Duration::days(180);
+    let evidence = format!(
+        "SUMMARY:{summary} · DTSTART:{start_raw}{}",
+        rrule
+            .map(|value| format!(" · RRULE:{value}"))
+            .unwrap_or_default()
+    );
+    Ok(occurrences
+        .into_iter()
+        .filter(|start| *start >= horizon_start && *start <= horizon_end)
+        .enumerate()
+        .map(|(index, start)| ExtractedCandidate {
+            kind: "commitment".into(),
+            title: summary.into(),
+            course: "Calendar".into(),
+            due_at: None,
+            starts_at: Some(start.to_rfc3339()),
+            ends_at: Some((start + duration).to_rfc3339()),
+            duration_minutes: None,
+            evidence: evidence.clone(),
+            source_locator: format!("calendar event {uid} · occurrence {}", index + 1),
+            source_uid: format!("ics:{uid}:{}", start.timestamp()),
+            confidence: 1.0,
+            warnings: Vec::new(),
+        })
+        .collect())
+}
+
+fn property<'a>(properties: &'a [Property], name: &str) -> Option<&'a Property> {
+    properties
+        .iter()
+        .find(|property| property.name.eq_ignore_ascii_case(name))
+}
+
+fn property_value<'a>(properties: &'a [Property], name: &str) -> Option<&'a str> {
+    property(properties, name).and_then(|property| property.value.as_deref())
+}
+
+fn property_parameter<'a>(property: &'a Property, name: &str) -> Option<&'a str> {
+    property
+        .params
+        .as_ref()?
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .and_then(|(_, values)| values.first())
+        .map(String::as_str)
+}
+
+fn parse_ical_datetime(
+    value: &str,
+    tzid: Option<&str>,
+    fallback_tz: Tz,
+) -> Result<DateTime<Utc>, ImportError> {
+    if value.ends_with('Z') {
+        return NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%SZ")
+            .map(|date| Utc.from_utc_datetime(&date))
+            .map_err(|error| ImportError::Malformed(error.to_string()));
+    }
+    let tz = tzid
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(fallback_tz);
+    if value.len() == 8 {
+        let date = NaiveDate::parse_from_str(value, "%Y%m%d")
+            .map_err(|error| ImportError::Malformed(error.to_string()))?;
+        return resolve_local(tz, date.and_time(NaiveTime::MIN));
+    }
+    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S")
+        .map_err(|error| ImportError::Malformed(error.to_string()))?;
+    resolve_local(tz, naive)
+}
+
+fn resolve_local(tz: Tz, naive: NaiveDateTime) -> Result<DateTime<Utc>, ImportError> {
+    match tz.from_local_datetime(&naive) {
+        LocalResult::Single(value) => Ok(value.with_timezone(&Utc)),
+        LocalResult::Ambiguous(first, _) => Ok(first.with_timezone(&Utc)),
+        LocalResult::None => Err(ImportError::Malformed(format!(
+            "local time {naive} does not exist in {tz}"
+        ))),
+    }
+}
+
+fn candidates_from_segments(
+    file_name: &str,
+    segments: &[Segment],
+    tz: Tz,
+) -> Vec<ExtractedCandidate> {
+    let mut candidates = Vec::new();
+    for segment in segments {
+        for (line_index, line) in segment.text.lines().enumerate() {
+            let normalized = line.trim();
+            if normalized.is_empty()
+                || !Regex::new(r"(?i)\b(due|deadline)\b")
+                    .unwrap()
+                    .is_match(normalized)
+            {
+                continue;
+            }
+            let due_at = parse_due(normalized, tz);
+            let title = normalized
+                .split([':', '–', '—'])
+                .next()
+                .map(str::trim)
+                .filter(|value| value.len() > 3)
+                .unwrap_or("Imported assignment");
+            let mut warnings = Vec::new();
+            if due_at.is_none() {
+                warnings.push(
+                    "A deadline word was found, but its date needs manual confirmation".into(),
+                );
+            }
+            candidates.push(ExtractedCandidate {
+                kind: "task".into(),
+                title: title.into(),
+                course: "Imported course".into(),
+                due_at,
+                starts_at: None,
+                ends_at: None,
+                duration_minutes: None,
+                evidence: normalized.chars().take(400).collect(),
+                source_locator: format!("{} · line {}", segment.locator, line_index + 1),
+                source_uid: format!("text:{file_name}:{}:{}", segment.locator, line_index + 1),
+                confidence: if warnings.is_empty() {
+                    0.92 * segment.confidence
+                } else {
+                    0.55 * segment.confidence
+                },
+                warnings,
+            });
+        }
+    }
+    candidates
+}
+
+fn parse_due(value: &str, tz: Tz) -> Option<String> {
+    if let Ok(date) = DateTime::parse_from_rfc3339(value.trim()) {
+        return Some(date.with_timezone(&Utc).to_rfc3339());
+    }
+    let patterns = [
+        (
+            r"(?i)(\d{4}-\d{1,2}-\d{1,2})(?:[ T](\d{1,2}:\d{2})(?:\s*(AM|PM))?)?",
+            "%Y-%m-%d",
+        ),
+        (
+            r"(?i)(\d{1,2}/\d{1,2}/\d{4})(?:\s+(\d{1,2}:\d{2})(?:\s*(AM|PM))?)?",
+            "%m/%d/%Y",
+        ),
+        (
+            r"(?i)(\d{1,2}/\d{1,2}/\d{2})(?:\s+(\d{1,2}:\d{2})(?:\s*(AM|PM))?)?",
+            "%m/%d/%y",
+        ),
+        (
+            r"(?i)((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4})(?:\s+(?:at\s+)?(\d{1,2}:\d{2})(?:\s*(AM|PM))?)?",
+            "%B %d, %Y",
+        ),
+    ];
+    for (pattern, format) in patterns {
+        let Some(captures) = Regex::new(pattern).ok()?.captures(value) else {
+            continue;
+        };
+        let date_text = captures.get(1)?.as_str();
+        let date = NaiveDate::parse_from_str(date_text, format)
+            .or_else(|_| NaiveDate::parse_from_str(date_text, "%b %d, %Y"))
+            .or_else(|_| {
+                NaiveDate::parse_from_str(&date_text.replace(',', ""), &format.replace(',', ""))
+            })
+            .or_else(|_| NaiveDate::parse_from_str(&date_text.replace(',', ""), "%b %d %Y"))
+            .ok()?;
+        let time = captures
+            .get(2)
+            .and_then(|capture| {
+                let mut rendered = capture.as_str().to_string();
+                if let Some(period) = captures.get(3) {
+                    rendered.push_str(period.as_str());
+                    NaiveTime::parse_from_str(&rendered, "%I:%M%p").ok()
+                } else {
+                    NaiveTime::parse_from_str(&rendered, "%H:%M").ok()
+                }
+            })
+            .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 0).unwrap());
+        return resolve_local(tz, date.and_time(time))
+            .ok()
+            .map(|date| date.to_rfc3339());
+    }
+    None
+}
+
+fn ocr_scanned_pdf(path: &Path, runtime: &OcrRuntime) -> Result<Vec<Segment>, ImportError> {
+    if !command_available(&runtime.renderer_command) || !runtime.renderer_library.is_file() {
+        return Err(ImportError::OcrUnavailable(
+            "the packaged PDFium renderer was not found".into(),
+        ));
+    }
+    let temp = tempdir()?;
+    let page_limit = MAX_OCR_PAGES.to_string();
+    let mut command = Command::new(&runtime.renderer_command);
+    command
+        .args(["--student-center-pdf-renderer", "render", "--library"])
+        .arg(&runtime.renderer_library)
+        .arg("--input")
+        .arg(path)
+        .arg("--output-dir")
+        .arg(temp.path())
+        .args(["--max-pages", &page_limit, "--target-width", "2200"]);
+    let output = run_bounded(command, PDF_RENDER_TIMEOUT, "PDF rendering")?;
+    if !output.status.success() {
+        return Err(ImportError::OcrUnavailable(
+            String::from_utf8_lossy(&output.stderr).trim().into(),
+        ));
+    }
+    let mut images = fs::read_dir(temp.path())?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("png"))
+        .collect::<Vec<_>>();
+    images.sort();
+    if images.len() > MAX_OCR_PAGES {
+        images.truncate(MAX_OCR_PAGES);
+    }
+    let mut segments = Vec::new();
+    for (index, image) in images.iter().enumerate() {
+        segments.push(ocr_image(
+            image,
+            &format!("page {} OCR", index + 1),
+            runtime,
+        )?);
+    }
+    if segments.is_empty() {
+        return Err(ImportError::OcrUnavailable(
+            "PDF renderer produced no pages".into(),
+        ));
+    }
+    Ok(segments)
+}
+
+fn ocr_image(path: &Path, locator: &str, runtime: &OcrRuntime) -> Result<Segment, ImportError> {
+    if !command_available(&runtime.tesseract) {
+        return Err(ImportError::OcrUnavailable(
+            "the packaged Tesseract engine was not found".into(),
+        ));
+    }
+    if runtime.engine_source == "bundled" && runtime.tessdata.is_none() {
+        return Err(ImportError::OcrUnavailable(
+            "the packaged English Tesseract model was not found".into(),
+        ));
+    }
+    let mut command = Command::new(&runtime.tesseract);
+    command.arg(path).arg("stdout");
+    if let Some(tessdata) = &runtime.tessdata {
+        command.arg("--tessdata-dir").arg(tessdata);
+    }
+    command.args(["-l", "eng", "--psm", "6", "tsv"]);
+    let output = run_bounded(command, OCR_PAGE_TIMEOUT, "OCR recognition")?;
+    if !output.status.success() {
+        return Err(ImportError::OcrUnavailable(
+            String::from_utf8_lossy(&output.stderr).trim().into(),
+        ));
+    }
+    parse_tesseract_tsv(&String::from_utf8_lossy(&output.stdout), locator)
+}
+
+#[derive(Debug)]
+struct ProcessOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn run_bounded(
+    mut command: Command,
+    timeout: StdDuration,
+    operation: &str,
+) -> Result<ProcessOutput, ImportError> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| {
+        ImportError::OcrUnavailable(format!("{operation} could not start: {error}"))
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ImportError::OcrUnavailable(format!("{operation} has no output stream")))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ImportError::OcrUnavailable(format!("{operation} has no error stream")))?;
+    let stdout_reader = thread::spawn(move || read_capped(stdout));
+    let stderr_reader = thread::spawn(move || read_capped(stderr));
+    let status = match child
+        .wait_timeout(timeout)
+        .map_err(|error| ImportError::OcrUnavailable(format!("{operation} wait failed: {error}")))?
+    {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(ImportError::OcrUnavailable(format!(
+                "{operation} exceeded its {} second safety limit",
+                timeout.as_secs()
+            )));
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| ImportError::OcrUnavailable(format!("{operation} output reader failed")))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| ImportError::OcrUnavailable(format!("{operation} error reader failed")))??;
+    Ok(ProcessOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_capped<R: Read>(mut reader: R) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = MAX_TOOL_OUTPUT.saturating_sub(output.len());
+        output.extend_from_slice(&chunk[..read.min(remaining)]);
+    }
+    Ok(output)
+}
+
+fn parse_tesseract_tsv(tsv: &str, locator: &str) -> Result<Segment, ImportError> {
+    let mut lines: BTreeMap<(u32, u32, u32, u32), Vec<String>> = BTreeMap::new();
+    let mut confidences = Vec::new();
+    for row in tsv.lines().skip(1) {
+        let columns = row.splitn(12, '\t').collect::<Vec<_>>();
+        if columns.len() != 12 || columns[0] != "5" || columns[11].trim().is_empty() {
+            continue;
+        }
+        let key = (
+            columns[1].parse().unwrap_or_default(),
+            columns[2].parse().unwrap_or_default(),
+            columns[3].parse().unwrap_or_default(),
+            columns[4].parse().unwrap_or_default(),
+        );
+        lines
+            .entry(key)
+            .or_default()
+            .push(columns[11].trim().into());
+        if let Ok(confidence) = columns[10].parse::<f64>() {
+            if confidence >= 0.0 {
+                confidences.push(confidence / 100.0);
+            }
+        }
+    }
+    let text = lines
+        .values()
+        .map(|words| words.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.trim().is_empty() {
+        return Err(ImportError::Empty);
+    }
+    let confidence = if confidences.is_empty() {
+        0.5
+    } else {
+        confidences.iter().sum::<f64>() / confidences.len() as f64
+    };
+    Ok(Segment {
+        text,
+        locator: locator.into(),
+        confidence,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Datelike;
+    use std::io::Write;
+
+    fn zip_with(entry: &str) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        archive
+            .start_file(entry, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive
+            .write_all(b"<root><t>Due 08/17/2026</t></root>")
+            .unwrap();
+        archive.finish().unwrap().into_inner()
+    }
+
+    fn office_fixture(entries: &[(&str, &str)]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        for (name, body) in entries {
+            archive
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(body.as_bytes()).unwrap();
+        }
+        archive.finish().unwrap().into_inner()
+    }
+
+    fn minimal_xlsx() -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        let entries = [
+            (
+                "[Content_Types].xml",
+                r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+            ),
+            (
+                "_rels/.rels",
+                r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/workbook.xml",
+                r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Assignments" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Assignment</t></is></c><c r="B1" t="inlineStr"><is><t>Course</t></is></c><c r="C1" t="inlineStr"><is><t>Due Date</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Research memo</t></is></c><c r="B2" t="inlineStr"><is><t>History</t></is></c><c r="C2" t="inlineStr"><is><t>2030-09-12</t></is></c></row></sheetData></worksheet>"#,
+            ),
+        ];
+        for (name, body) in entries {
+            archive.start_file(name, options).unwrap();
+            archive.write_all(body.as_bytes()).unwrap();
+        }
+        archive.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn rejects_extension_spoofing() {
+        let error = detect_document(b"%PDF-1.7\n", "malware.jpg").unwrap_err();
+        assert!(matches!(error, ImportError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn distinguishes_ooxml_archives() {
+        assert_eq!(
+            detect_document(&zip_with("word/document.xml"), "course.docx").unwrap(),
+            DocumentKind::Docx
+        );
+        assert_eq!(
+            detect_document(&zip_with("xl/workbook.xml"), "course.xlsx").unwrap(),
+            DocumentKind::Xlsx
+        );
+        assert_eq!(
+            detect_document(&zip_with("ppt/presentation.xml"), "course.pptx").unwrap(),
+            DocumentKind::Pptx
+        );
+    }
+
+    #[test]
+    fn rejects_corrupt_archives_and_pdfs_safely() {
+        assert!(matches!(
+            detect_document(b"PK\x03\x04not-a-valid-archive", "broken.docx"),
+            Err(ImportError::Malformed(_))
+        ));
+        let pdf = b"%PDF-1.7\nthis is not a valid PDF";
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        assert!(matches!(
+            extract_document(
+                temp.path(),
+                pdf,
+                "broken.pdf",
+                "Etc/UTC",
+                &OcrRuntime::discover(None)
+            ),
+            Err(ImportError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn discovers_a_complete_packaged_runtime_layout() {
+        let root = tempfile::tempdir().unwrap();
+        let platform = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            "windows-x64"
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            "macos-arm64"
+        } else {
+            "unsupported"
+        };
+        let runtime = root.path().join("ocr").join(platform);
+        fs::create_dir_all(runtime.join("bin")).unwrap();
+        fs::create_dir_all(runtime.join("lib")).unwrap();
+        fs::create_dir_all(runtime.join("tessdata")).unwrap();
+        fs::write(
+            runtime.join("lib").join(if cfg!(windows) {
+                "pdfium.dll"
+            } else {
+                "libpdfium.dylib"
+            }),
+            b"fixture",
+        )
+        .unwrap();
+        fs::write(
+            runtime.join("bin").join(if cfg!(windows) {
+                "tesseract.exe"
+            } else {
+                "tesseract"
+            }),
+            b"fixture",
+        )
+        .unwrap();
+        fs::write(runtime.join("tessdata/eng.traineddata"), b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = runtime.join("bin/tesseract");
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+        let discovered = OcrRuntime::discover(Some(root.path()));
+        // Discovery must stay filesystem-only: it runs during app setup, before
+        // the window is shown, so it may not launch a subprocess.
+        let initial = discovered.status();
+        assert_eq!(
+            initial.phase,
+            OcrPhase::Checking,
+            "discovery must defer the readiness probes"
+        );
+        assert!(!initial.ready, "an unprobed runtime is never ready");
+        // Probing is what decides readiness, and placeholder files must fail it.
+        let status = discovered.probe_now();
+        assert_eq!(status.phase, OcrPhase::Unavailable);
+        assert!(
+            !status.ready,
+            "placeholder executables must not pass readiness probes"
+        );
+        assert_eq!(status.renderer_source, "bundled");
+        assert_eq!(status.engine_source, "bundled");
+    }
+
+    #[test]
+    fn native_tool_execution_is_stopped_at_its_deadline() {
+        let command = if cfg!(windows) {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 2"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 2"]);
+            command
+        };
+        let error = run_bounded(command, StdDuration::from_millis(50), "fixture OCR").unwrap_err();
+        assert!(error.to_string().contains("safety limit"));
+    }
+
+    #[test]
+    fn golden_ocr_fixture_meets_critical_date_threshold() {
+        let tsv = include_str!("../test-fixtures/ocr/syllabus.tsv");
+        let segment = parse_tesseract_tsv(tsv, "page 1 OCR").unwrap();
+        let candidates = candidates_from_segments(
+            "golden-syllabus.pdf",
+            &[segment],
+            chrono_tz::America::Phoenix,
+        );
+        let expected = [
+            ("Research memo", "2030-09-13T06:30:00+00:00"),
+            ("Midterm deadline 10/15/2030 9", "2030-10-15T16:00:00+00:00"),
+        ];
+        let correct = expected
+            .iter()
+            .filter(|(title, due)| {
+                candidates.iter().any(|candidate| {
+                    candidate.title.starts_with(title) && candidate.due_at.as_deref() == Some(*due)
+                })
+            })
+            .count();
+        let precision = correct as f64 / candidates.len() as f64;
+        let recall = correct as f64 / expected.len() as f64;
+        assert!(precision >= 0.95, "critical-date precision was {precision}");
+        assert!(recall >= 0.90, "critical-date recall was {recall}");
+    }
+
+    #[test]
+    fn parses_ocr_confidence_and_evidence_lines() {
+        let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t90\tPaper\n5\t1\t1\t1\t1\t2\t0\t0\t1\t1\t80\tdue\n";
+        let segment = parse_tesseract_tsv(tsv, "page 1 OCR").unwrap();
+        assert_eq!(segment.text, "Paper due");
+        assert!((segment.confidence - 0.85).abs() < 0.001);
+    }
+
+    #[test]
+    fn parses_csv_rows_with_field_provenance() {
+        let csv = b"Assignment,Course,Due Date,Minutes\nProblem Set 4,Statistics,2030-08-17,45\n";
+        let rows = extract_csv(csv, "assignments.csv", chrono_tz::America::Phoenix).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Problem Set 4");
+        assert_eq!(rows[0].duration_minutes, Some(45));
+        assert!(rows[0].source_locator.contains("row 2"));
+    }
+
+    #[test]
+    fn parses_named_month_deadlines_without_guessing_invalid_dates() {
+        let due = parse_due(
+            "Final paper due Sep 12, 2030 at 11:30 PM",
+            chrono_tz::America::Phoenix,
+        )
+        .unwrap();
+        assert_eq!(
+            DateTime::parse_from_rfc3339(&due)
+                .unwrap()
+                .with_timezone(&Utc),
+            DateTime::parse_from_rfc3339("2030-09-13T06:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert!(parse_due(
+            "Final paper due February 30, 2030",
+            chrono_tz::America::Phoenix
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn parses_xlsx_rows_with_sheet_provenance() {
+        let bytes = minimal_xlsx();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&bytes).unwrap();
+        let rows = extract_xlsx(file.path(), chrono_tz::America::Phoenix).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Research memo");
+        assert_eq!(rows[0].course, "History");
+        assert!(rows[0].source_locator.contains("Assignments"));
+        assert!(rows[0].source_locator.contains("row 2"));
+    }
+
+    #[test]
+    fn parses_docx_and_pptx_with_paragraph_and_slide_evidence() {
+        let docx = office_fixture(&[(
+            "word/document.xml",
+            "<document><p><t>Research memo due Sep 12, 2030 at 11:30 PM</t></p></document>",
+        )]);
+        let docx_rows = extract_document(
+            Path::new("syllabus.docx"),
+            &docx,
+            "syllabus.docx",
+            "America/Phoenix",
+            &OcrRuntime::discover(None),
+        )
+        .unwrap()
+        .candidates;
+        assert_eq!(docx_rows.len(), 1);
+        assert!(docx_rows[0].source_locator.starts_with("paragraph 1"));
+        assert_eq!(
+            docx_rows[0].due_at.as_deref(),
+            Some("2030-09-13T06:30:00+00:00")
+        );
+
+        let pptx = office_fixture(&[
+            ("ppt/presentation.xml", "<presentation/>"),
+            (
+                "ppt/slides/slide1.xml",
+                "<slide><t>Capstone presentation due Oct 15, 2030 at 9:00 AM</t></slide>",
+            ),
+        ]);
+        let pptx_rows = extract_document(
+            Path::new("course.pptx"),
+            &pptx,
+            "course.pptx",
+            "America/Phoenix",
+            &OcrRuntime::discover(None),
+        )
+        .unwrap()
+        .candidates;
+        assert_eq!(pptx_rows.len(), 1);
+        assert!(pptx_rows[0].source_locator.starts_with("slide 1"));
+        assert_eq!(
+            pptx_rows[0].due_at.as_deref(),
+            Some("2030-10-15T16:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn parses_ics_and_excludes_exception_dates() {
+        let year = Utc::now().year();
+        let start = (Utc::now() + Duration::days(2)).date_naive();
+        let first = start.format("%Y%m%d").to_string();
+        let excluded = (start + Duration::days(1)).format("%Y%m%d").to_string();
+        let ics = format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:class-{year}\r\nSUMMARY:Statistics 201\r\nDTSTART:{first}T090000Z\r\nDTEND:{first}T095000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEXDATE:{excluded}T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+        let rows = extract_ics(ics.as_bytes(), chrono_tz::America::Phoenix).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.kind == "commitment"));
+    }
+
+    #[test]
+    fn preserves_named_timezone_across_dst_recurrence() {
+        let ics = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:dst-course\r\nSUMMARY:Fall seminar\r\nDTSTART;TZID=America/New_York:20261031T090000\r\nDTEND;TZID=America/New_York:20261031T100000\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let observed_at = DateTime::parse_from_rfc3339("2026-08-12T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let rows = extract_ics_at(ics, chrono_tz::America::Phoenix, observed_at).unwrap();
+        assert_eq!(rows.len(), 3);
+        let starts = rows
+            .iter()
+            .map(|row| DateTime::parse_from_rfc3339(row.starts_at.as_deref().unwrap()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(starts[1] - starts[0], Duration::hours(25));
+        assert_eq!(starts[2] - starts[1], Duration::hours(24));
+    }
+}

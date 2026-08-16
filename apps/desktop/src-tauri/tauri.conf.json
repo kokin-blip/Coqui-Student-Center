@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Coqui Student Center",
+  "version": "0.8.0",
+  "identifier": "app.studentcenter.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev --workspace @student-center/desktop-ui",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build --workspace @student-center/desktop-ui",
+    "frontendDist": "../../desktop-ui/dist"
+  },
+  "app": {
+    "windows": [{
+      "title": "Coqui Student Center",
+      "width": 1280,
+      "height": 820,
+      "minWidth": 760,
+      "minHeight": 600,
+      "center": true,
+      "visible": false
+    }],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' https://*.supabase.co; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": ""
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["studentcenter"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "dmg"],
+    "category": "Education",
+    "shortDescription": "A private, local-first college planning workspace",
+    "longDescription": "Import academic work, build a realistic plan, choose the next action, and replan offline.",
+    "windows": { "nsis": { "installMode": "currentUser" } },
+    "macOS": { "minimumSystemVersion": "12.0" },
+    "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
+    "resources": { "resources/ocr/": "ocr/" }
+  }
+}
