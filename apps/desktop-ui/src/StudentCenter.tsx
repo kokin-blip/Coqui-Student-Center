@@ -1378,11 +1378,17 @@ export function StudentCenter() {
                 ) : (
                   <div className="empty-state">
                     <CalendarDays />
-                    <strong>Nothing scheduled today</strong>
+                    <strong>Your day is open.</strong>
                     <p>
-                      Add a task or import a syllabus. Student Center will only
-                      place work in feasible windows.
+                      Add an assignment, class, or study session and Coqui will
+                      build your plan around the time you actually have.
                     </p>
+                    <button
+                      className="solid"
+                      onClick={() => setModal("task")}
+                    >
+                      <Plus /> Add something
+                    </button>
                   </div>
                 )}
               </section>

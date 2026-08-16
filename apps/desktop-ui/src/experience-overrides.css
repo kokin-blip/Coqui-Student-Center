@@ -174,7 +174,102 @@ body {
 .field textarea,
 .availability,
 .availability input[type="time"] { color: var(--ink); background: var(--surface); border-color: var(--line); }
-.workspace-panel { border-radius: 20px; box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 5%, transparent); }
+/* ------------------------------------------------------------- surfaces -- */
+/*
+ * One surface hierarchy instead of a different background and radius per
+ * component: app background, content surface, raised card, modal. Radii come
+ * down from 18-24px, and shadows are reserved for things that actually float.
+ */
+
+.workspace-panel,
+.small-card,
+.timeline,
+.week-calendar > section {
+  padding: var(--space-5);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+
+.record-list article,
+.inline-editor,
+.setting-toggle,
+.event {
+  /* Nested inside a panel; spacing and a quiet fill separate these, not a
+     second ring of borders. */
+  background: var(--bg-surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.record-list article:hover { background: var(--bg-surface-hover); }
+
+.modal {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.overlay { background: color-mix(in srgb, #000 55%, transparent); }
+
+.field input,
+.field select,
+.field textarea,
+.availability input[type="time"] {
+  min-height: 36px;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-secondary-size);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus { border-color: var(--accent); }
+
+.field { color: var(--text-secondary); font-size: var(--text-secondary-size); }
+
+.icon-btn {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover);
+}
+
+.section-head h2 {
+  font-size: var(--text-section-title);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Empty states name the next action instead of stating the obvious. */
+.empty-state {
+  padding: var(--space-8) var(--space-5);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.empty-state svg { width: 28px; color: var(--text-muted); }
+.empty-state strong { color: var(--text-primary); font-size: var(--text-card-title); }
+.empty-state p { color: var(--text-secondary); font-size: var(--text-secondary-size); }
+
+.section-empty-copy {
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--text-secondary-size);
+}
 /* Tab membership is decided in WorkspaceView; see workspace-tabs.test.tsx. */
 .workspace-grid.assignments,
 .workspace-grid.courses { grid-template-columns: 1fr; }
