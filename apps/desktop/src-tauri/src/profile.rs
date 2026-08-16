@@ -84,13 +84,43 @@ pub struct ClassMeetingInput {
     pub instructor_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum AppearancePreference {
     #[default]
     System,
+    CoquiDark,
+    Midnight,
+    Graphite,
+    Forest,
     Light,
-    Dark,
+}
+
+impl AppearancePreference {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::CoquiDark => "coqui-dark",
+            Self::Midnight => "midnight",
+            Self::Graphite => "graphite",
+            Self::Forest => "forest",
+            Self::Light => "light",
+        }
+    }
+
+    /// `dark` is the pre-0.9 name for the only dark theme there was; stored
+    /// profiles still carry it.
+    pub fn from_setting(value: &str) -> Option<Self> {
+        Some(match value {
+            "system" => Self::System,
+            "coqui-dark" | "dark" => Self::CoquiDark,
+            "midnight" => Self::Midnight,
+            "graphite" => Self::Graphite,
+            "forest" => Self::Forest,
+            "light" => Self::Light,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +175,7 @@ pub struct WorkspaceSnapshot {
     pub profile: Option<StudentProfileRecord>,
     pub institution: Option<InstitutionSelection>,
     pub appearance: AppearancePreference,
+    pub accent: String,
     pub terms: Vec<AcademicTermRecord>,
     pub courses: Vec<CourseRecord>,
     pub tasks: Vec<TaskRecord>,
@@ -694,12 +725,7 @@ pub fn complete_onboarding(
         &serde_json::to_string(&input.institution)
             .map_err(|_| ProfileError::Invalid("institution could not be encoded".into()))?,
     )?;
-    let appearance = match input.appearance {
-        AppearancePreference::System => "system",
-        AppearancePreference::Light => "light",
-        AppearancePreference::Dark => "dark",
-    };
-    set_setting_tx(&transaction, "appearance", appearance)?;
+    set_setting_tx(&transaction, "appearance", input.appearance.as_str())?;
     transaction.execute("UPDATE academic_terms SET active=0 WHERE active=1", [])?;
     let term_id = Uuid::new_v4().to_string();
     transaction.execute(
@@ -799,11 +825,13 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
     let institution = setting(conn, "institution_selection")?
         .and_then(|value| serde_json::from_str::<InstitutionSelection>(&value).ok())
         .filter(|value| !value.name.trim().is_empty());
-    let appearance = match setting(conn, "appearance")?.as_deref() {
-        Some("light") => AppearancePreference::Light,
-        Some("dark") => AppearancePreference::Dark,
-        _ => AppearancePreference::System,
-    };
+    let appearance = setting(conn, "appearance")?
+        .as_deref()
+        .and_then(AppearancePreference::from_setting)
+        .unwrap_or_default();
+    let accent = setting(conn, "accent")?
+        .filter(|value| ACCENTS.contains(&value.as_str()))
+        .unwrap_or_else(|| "green".to_owned());
     let terms = query_records(conn, "SELECT id,name,starts_on,ends_on,active,version FROM academic_terms ORDER BY active DESC,starts_on DESC,name", |row| Ok(AcademicTermRecord { id: row.get(0)?, name: row.get(1)?, starts_on: row.get(2)?, ends_on: row.get(3)?, active: row.get::<_, i64>(4)? != 0, version: row.get(5)? }))?;
     let courses = query_records(
         conn,
@@ -840,6 +868,7 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
         profile,
         institution,
         appearance,
+        accent,
         terms,
         courses,
         tasks,
@@ -1110,13 +1139,21 @@ pub fn update_preferences(conn: &mut Connection, input: &PreferenceInput) -> Res
     Ok(())
 }
 
+pub const ACCENTS: [&str; 6] = ["green", "mint", "blue", "purple", "rose", "amber"];
+
 pub fn set_appearance(conn: &Connection, appearance: &str) -> Result<()> {
-    if !matches!(appearance, "system" | "light" | "dark") {
-        return Err(ProfileError::Invalid(
-            "appearance preference is invalid".into(),
-        ));
+    let preference = AppearancePreference::from_setting(appearance).ok_or_else(|| {
+        ProfileError::Invalid("appearance preference is invalid".into())
+    })?;
+    // Normalized, so a legacy "dark" is stored under its current name.
+    set_setting(conn, "appearance", preference.as_str())
+}
+
+pub fn set_accent(conn: &Connection, accent: &str) -> Result<()> {
+    if !ACCENTS.contains(&accent) {
+        return Err(ProfileError::Invalid("accent preference is invalid".into()));
     }
-    set_setting(conn, "appearance", appearance)
+    set_setting(conn, "accent", accent)
 }
 
 fn validate_term(input: &AcademicTermInput) -> Result<()> {

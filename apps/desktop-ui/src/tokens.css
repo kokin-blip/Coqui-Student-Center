@@ -1,0 +1,300 @@
+/*
+ * Design tokens.
+ *
+ * Components consume semantic tokens only — never a theme-specific colour.
+ * Themes are [data-theme] blocks, accents are [data-accent] blocks, and the two
+ * are independent: any accent works on any theme.
+ *
+ * "system" is resolved to a concrete theme in JS (see ThemeControls) rather
+ * than mirrored into a prefers-color-scheme block, so no theme is ever defined
+ * twice.
+ *
+ * The legacy alias block at the bottom maps the original variable names onto
+ * these tokens, which is what lets the pre-existing stylesheet pick up every
+ * theme without being rewritten.
+ */
+
+:root {
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Typography */
+  --font-ui:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --text-page-title: 32px;
+  --text-section-title: 20px;
+  --text-card-title: 16px;
+  --text-body: 15px;
+  --text-nav: 14px;
+  --text-secondary-size: 13px;
+  --text-meta: 12px;
+  --leading-tight: 1.3;
+  --leading-normal: 1.5;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-normal: 160ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --sidebar-width: 232px;
+  --content-max: 1240px;
+}
+
+/* ---------------------------------------------------------------- themes -- */
+
+:root,
+[data-theme="coqui-dark"] {
+  color-scheme: dark;
+
+  --bg-app: #111513;
+  --bg-sidebar: #151a18;
+  --bg-surface: #1a201d;
+  --bg-surface-raised: #202824;
+  --bg-surface-hover: #252e2a;
+  --bg-selected: #203c34;
+
+  --text-primary: #f2f5f3;
+  --text-secondary: #b6c0bb;
+  --text-muted: #7f8c86;
+
+  --border-subtle: #29322e;
+  --border-strong: #3a4640;
+
+  --success: #68c997;
+  --warning: #e3b35b;
+  --danger: #e17575;
+  --info: #69aee8;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.2);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+[data-theme="midnight"] {
+  color-scheme: dark;
+
+  --bg-app: #0e1116;
+  --bg-sidebar: #12161d;
+  --bg-surface: #171c24;
+  --bg-surface-raised: #1d2430;
+  --bg-surface-hover: #232b39;
+  --bg-selected: #1c2c4b;
+
+  --text-primary: #f0f3f8;
+  --text-secondary: #aab4c2;
+  --text-muted: #78828f;
+
+  --border-subtle: #232a34;
+  --border-strong: #333c49;
+
+  --success: #6fcb9f;
+  --warning: #e0b563;
+  --danger: #e37b7b;
+  --info: #6e9eff;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.24);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.22);
+}
+
+[data-theme="graphite"] {
+  color-scheme: dark;
+
+  --bg-app: #121212;
+  --bg-sidebar: #171717;
+  --bg-surface: #1d1d1d;
+  --bg-surface-raised: #242424;
+  --bg-surface-hover: #2b2b2b;
+  --bg-selected: #303030;
+
+  --text-primary: #f2f2f2;
+  --text-secondary: #b4b4b4;
+  --text-muted: #808080;
+
+  --border-subtle: #282828;
+  --border-strong: #3a3a3a;
+
+  --success: #7dc79c;
+  --warning: #d8b169;
+  --danger: #dd7d7d;
+  --info: #7fa8cc;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.24);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.22);
+}
+
+[data-theme="forest"] {
+  color-scheme: dark;
+
+  --bg-app: #0f1512;
+  --bg-sidebar: #131b17;
+  --bg-surface: #18231d;
+  --bg-surface-raised: #1e2c25;
+  --bg-surface-hover: #24352c;
+  --bg-selected: #193a2b;
+
+  --text-primary: #eff7f2;
+  --text-secondary: #a9bdb1;
+  --text-muted: #788a7f;
+
+  --border-subtle: #22302a;
+  --border-strong: #33453b;
+
+  --success: #6ecb9a;
+  --warning: #ddb166;
+  --danger: #e07b7b;
+  --info: #6fa9dd;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.22);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.2);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #f4f6f5;
+  --bg-sidebar: #ecefee;
+  --bg-surface: #ffffff;
+  --bg-surface-raised: #fafbfa;
+  --bg-surface-hover: #eff2f0;
+  --bg-selected: #dcefe8;
+
+  --text-primary: #18201d;
+  --text-secondary: #53615b;
+  --text-muted: #7c8983;
+
+  --border-subtle: #dde3e0;
+  --border-strong: #c2cbc7;
+
+  --success: #1c7f52;
+  --warning: #96631a;
+  --danger: #a83a3a;
+  --info: #1f5fa8;
+
+  --shadow-sm: 0 1px 2px rgb(20 40 34 / 0.08);
+  --shadow-md: 0 8px 24px rgb(20 40 34 / 0.1);
+}
+
+/* --------------------------------------------------------------- accents -- */
+/*
+ * Accents come after the themes so they win on the accent tokens, and are
+ * derived with color-mix so a single definition reads correctly on both dark
+ * and light backgrounds.
+ */
+
+:root,
+[data-accent="green"] {
+  --accent: #48b89b;
+  --accent-hover: #5cc7aa;
+}
+[data-accent="mint"] {
+  --accent: #55c9a7;
+  --accent-hover: #6bd8b7;
+}
+[data-accent="blue"] {
+  --accent: #6e9eff;
+  --accent-hover: #85b0ff;
+}
+[data-accent="purple"] {
+  --accent: #a98bf0;
+  --accent-hover: #b99ff5;
+}
+[data-accent="rose"] {
+  --accent: #e780a4;
+  --accent-hover: #f094b4;
+}
+[data-accent="amber"] {
+  --accent: #dfa95e;
+  --accent-hover: #ecb972;
+}
+
+[data-theme="light"] {
+  --accent: #147c69;
+  --accent-hover: #0f6959;
+}
+[data-theme="light"][data-accent="mint"] {
+  --accent: #12806a;
+  --accent-hover: #0d6b58;
+}
+[data-theme="light"][data-accent="blue"] {
+  --accent: #2b5fc9;
+  --accent-hover: #234fa8;
+}
+[data-theme="light"][data-accent="purple"] {
+  --accent: #6d4bbd;
+  --accent-hover: #5c3ea1;
+}
+[data-theme="light"][data-accent="rose"] {
+  --accent: #b6446c;
+  --accent-hover: #9b3a5c;
+}
+[data-theme="light"][data-accent="amber"] {
+  --accent: #8f5c17;
+  --accent-hover: #784d13;
+}
+
+:root {
+  /* Derived from the resolved accent, so every theme/accent pair works. */
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, var(--bg-surface));
+  --accent-text: color-mix(in srgb, var(--accent) 10%, #ffffff);
+}
+
+/* ------------------------------------------------------------- element -- */
+
+html {
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  color: var(--text-primary);
+  background: var(--bg-app);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------- legacy aliases -- */
+/*
+ * The original stylesheet predates these tokens. Mapping the old names here
+ * means it themes correctly everywhere instead of needing 2,779 lines rewritten
+ * before anything is visible. New styles should use the semantic tokens above.
+ */
+
+:root {
+  --bg: var(--bg-app);
+  --surface: var(--bg-surface);
+  --surface-raised: var(--bg-surface-raised);
+  --surface-soft: var(--bg-surface-hover);
+  --card: var(--bg-surface);
+  --ink: var(--text-primary);
+  /* Deliberately the secondary tone, not the muted one: --muted has 63 usages
+     and was the main source of the low-contrast text complaint. */
+  --muted: var(--text-secondary);
+  --line: var(--border-subtle);
+  --teal: var(--accent);
+  --deep: var(--accent-hover);
+  --mint: var(--accent-soft);
+  --cobalt: var(--info);
+  --amber: var(--warning);
+  --shadow: var(--shadow-md);
+}

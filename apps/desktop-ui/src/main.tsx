@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { StudentCenter } from "./StudentCenter";
 import { applyAppearance, initialAppearance } from "./components/ThemeControls";
+import "./tokens.css";
 import "./styles.css";
 import "./experience-overrides.css";
 

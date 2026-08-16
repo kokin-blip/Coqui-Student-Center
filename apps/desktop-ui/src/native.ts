@@ -204,7 +204,23 @@ export type OnboardingDraft = {
   availability: AvailabilityInput[];
   commitments: CommitmentInput[];
 };
-export type AppearancePreference = "system" | "light" | "dark";
+// Mirrors profile::ACCENTS.
+export type AccentPreference =
+  | "green"
+  | "mint"
+  | "blue"
+  | "purple"
+  | "rose"
+  | "amber";
+// Mirrors profile::AppearancePreference. Keep the two in step: the Rust side
+// rejects any value it does not know.
+export type AppearancePreference =
+  | "system"
+  | "coqui-dark"
+  | "midnight"
+  | "graphite"
+  | "forest"
+  | "light";
 export type InstitutionSelection = {
   id: string;
   name: string;
@@ -389,6 +405,7 @@ export type WorkspaceSnapshot = {
   profile: StudentProfileRecord | null;
   institution: InstitutionSelection | null;
   appearance: AppearancePreference;
+  accent: AccentPreference;
   terms: AcademicTermRecord[];
   courses: CourseRecord[];
   tasks: TaskRecord[];
@@ -825,6 +842,7 @@ const browserWorkspace: WorkspaceSnapshot = {
     custom: false,
   },
   appearance: "system",
+  accent: "green",
   terms: [
     {
       id: "term",
@@ -1077,6 +1095,13 @@ export async function updateAppearance(appearance: AppearancePreference) {
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("update_appearance", { appearance });
+}
+export async function updateAccent(accent: AccentPreference) {
+  if (!isDesktop()) {
+    browserWorkspace.accent = accent;
+    return structuredClone(browserWorkspace);
+  }
+  return call<WorkspaceSnapshot>("update_accent", { accent });
 }
 export async function listLegacyQuarantine() {
   return isDesktop() ? call<LegacyQuarantineItem[]>("list_legacy_quarantine") : [];

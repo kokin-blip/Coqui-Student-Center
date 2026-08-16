@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BookOpen,
@@ -42,9 +42,12 @@ import {
 } from "./components/SetupChecklist";
 import {
   applyAppearance,
+  AccentPreference,
   AppearancePreference,
+  initialAccent,
   initialAppearance,
   ThemeControls,
+  watchSystemAppearance,
 } from "./components/ThemeControls";
 import {
   AccountStatus,
@@ -237,6 +240,11 @@ export function StudentCenter() {
     "today",
   );
   const [appearance, setAppearance] = useState<AppearancePreference>(initialAppearance);
+  const [accent, setAccent] = useState<AccentPreference>(initialAccent);
+  const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
+  // A "system" preference has to keep following the OS while the app is open.
+  useEffect(() => watchSystemAppearance(() => appearanceRef.current), []);
   const [data, setData] = useState<Dashboard | null>(null);
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
@@ -327,7 +335,8 @@ export function StudentCenter() {
         getLocalWorkspace().then((workspace) => {
           setTodayWorkspace(workspace);
           setAppearance(workspace.appearance);
-          applyAppearance(workspace.appearance);
+          setAccent(workspace.accent);
+          applyAppearance(workspace.appearance, workspace.accent);
         }).catch(() => undefined);
       })
       .catch((e) => {
@@ -1125,7 +1134,7 @@ export function StudentCenter() {
               value={appearance}
               onChange={(next) => {
                 setAppearance(next);
-                applyAppearance(next);
+                applyAppearance(next, accent);
                 void updateAppearance(next).catch((value) => setError(String(value)));
               }}
             />

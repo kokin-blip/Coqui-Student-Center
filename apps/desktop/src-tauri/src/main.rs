@@ -2994,6 +2994,17 @@ fn update_appearance(
 }
 
 #[tauri::command]
+fn update_accent(
+    state: tauri::State<AppState>,
+    accent: String,
+) -> Result<profile::WorkspaceSnapshot> {
+    state.require_unlocked()?;
+    let conn = state.db.lock().unwrap();
+    profile::set_accent(&conn, &accent)?;
+    Ok(profile::workspace(&conn)?)
+}
+
+#[tauri::command]
 fn list_legacy_quarantine(
     state: tauri::State<AppState>,
 ) -> Result<Vec<profile::LegacyQuarantineItem>> {
@@ -6774,6 +6785,7 @@ fn main() {
             update_academic_event,
             delete_academic_event,
             update_appearance,
+            update_accent,
             list_legacy_quarantine,
             restore_legacy_quarantine,
             purge_legacy_quarantine,
@@ -6883,6 +6895,8 @@ mod tests {
             "get_onboarding_state",
             "save_onboarding_draft",
             "complete_onboarding",
+            "update_appearance",
+            "update_accent",
             "get_local_workspace",
             "update_student_profile",
             "create_academic_term",
@@ -8261,6 +8275,37 @@ mod tests {
     // for derived local-only state but meant that three shipped entity types
     // replicated as nothing at all. Every replicable type must be classified
     // deliberately, not by omission.
+    #[test]
+    fn appearance_accepts_every_shipped_theme_and_migrates_the_legacy_dark_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("appearance.db"), &random_key()).unwrap();
+        for theme in ["system", "coqui-dark", "midnight", "graphite", "forest", "light"] {
+            profile::set_appearance(&conn, theme).unwrap();
+            assert_eq!(profile::workspace(&conn).unwrap().appearance.as_str(), theme);
+        }
+        // Profiles written before 0.9 stored the only dark theme as "dark".
+        profile::set_appearance(&conn, "dark").unwrap();
+        assert_eq!(
+            profile::workspace(&conn).unwrap().appearance.as_str(),
+            "coqui-dark"
+        );
+        assert!(profile::set_appearance(&conn, "neon").is_err());
+
+        for accent in profile::ACCENTS {
+            profile::set_accent(&conn, accent).unwrap();
+            assert_eq!(profile::workspace(&conn).unwrap().accent, accent);
+        }
+        assert!(profile::set_accent(&conn, "chartreuse").is_err());
+        assert_eq!(
+            profile::workspace(
+                &open_database(&directory.path().join("fresh.db"), &random_key()).unwrap()
+            )
+            .unwrap()
+            .accent,
+            "green"
+        );
+    }
+
     #[test]
     fn every_canonical_entity_type_is_either_replicated_or_explicitly_local() {
         const LOCAL_ONLY: [&str; 6] = [
