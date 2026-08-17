@@ -12,7 +12,11 @@ use url::Url;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const MUTATION_SCHEMA_VERSION: u16 = 2;
+/// The wire envelope version. v3 added the per-device Ed25519 signature; an unsigned v2 envelope is
+/// rejected outright rather than treated as "signature absent", so a signature cannot be stripped.
+const MUTATION_ENVELOPE_VERSION: u16 = 3;
+/// The version of the canonical payload *inside* the envelope. Its shape did not change with v3.
+const CANONICAL_PAYLOAD_VERSION: u16 = 2;
 const MAX_RESPONSE_BYTES: u64 = 1_048_576;
 
 #[derive(thiserror::Error, Debug)]
@@ -31,6 +35,8 @@ pub enum SyncTransportError {
     InvalidMutation(String),
     #[error("mutation encryption failed")]
     Crypto,
+    #[error("a synchronized mutation was not signed by the computer it claims to come from")]
+    InvalidSignature,
 }
 
 pub type Result<T> = std::result::Result<T, SyncTransportError>;
@@ -58,6 +64,7 @@ pub struct EncryptedMutation {
     pub nonce: String,
     pub ciphertext: String,
     pub schema_version: u16,
+    pub signature: String,
     pub tombstone: bool,
 }
 
@@ -92,6 +99,15 @@ struct MutationAad<'a> {
     entity_type: &'a str,
     schema_version: u16,
     tombstone: bool,
+}
+
+/// Field order here IS the wire format for signatures. See `mutation_signing_message`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MutationSignaturePayload<'a> {
+    aad: MutationAad<'a>,
+    nonce: &'a str,
+    ciphertext: &'a str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -298,6 +314,20 @@ impl CloudSyncClient {
         Ok(read_json::<DeviceEnvelopesResponse>(response)?.envelopes)
     }
 
+    /// Retire an approval envelope once it has been adopted, so it is not re-delivered until it
+    /// happens to expire. The target device is still pending here, so this cannot require approval.
+    pub fn consume_device_envelope(
+        &self,
+        access_token: &str,
+        device_id: Uuid,
+        envelope_id: Uuid,
+    ) -> Result<()> {
+        let path = format!("v1/devices/envelopes/{envelope_id}/consume");
+        let _: serde_json::Value =
+            self.post_device_json(&path, access_token, device_id, &serde_json::json!({}))?;
+        Ok(())
+    }
+
     pub fn revoke_device(
         &self,
         access_token: &str,
@@ -413,6 +443,7 @@ impl CloudSyncClient {
     pub fn push_mutations(
         &self,
         access_token: &str,
+        device_id: Uuid,
         mutations: &[EncryptedMutation],
     ) -> Result<PushResponse> {
         if mutations.is_empty() || mutations.len() > 1000 {
@@ -420,7 +451,22 @@ impl CloudSyncClient {
                 "a push must contain between 1 and 1000 mutations".into(),
             ));
         }
-        self.post_json("v1/sync/push", access_token, &PushRequest { mutations })
+        // The server attributes the whole batch to the header device, so refuse locally rather than
+        // send anything it would have to reject wholesale.
+        if mutations
+            .iter()
+            .any(|mutation| mutation.device_id != device_id)
+        {
+            return Err(SyncTransportError::InvalidMutation(
+                "a push may only contain mutations authored by this computer".into(),
+            ));
+        }
+        self.post_device_json(
+            "v1/sync/push",
+            access_token,
+            device_id,
+            &PushRequest { mutations },
+        )
     }
 
     pub fn pull_mutations(
@@ -446,6 +492,28 @@ impl CloudSyncClient {
             .get(endpoint)
             .bearer_auth(access_token)
             .header("x-student-center-device-id", device_id.to_string())
+            .send()
+            .map_err(|error| SyncTransportError::Network(error.to_string()))?;
+        read_json(response)
+    }
+
+    fn post_device_json<T: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        access_token: &str,
+        device_id: Uuid,
+        body: &T,
+    ) -> Result<R> {
+        if access_token.len() < 32 || access_token.len() > 16_384 {
+            return Err(SyncTransportError::InvalidResponse);
+        }
+        let endpoint = self.endpoint(path)?;
+        let response = self
+            .client
+            .post(endpoint)
+            .bearer_auth(access_token)
+            .header("x-student-center-device-id", device_id.to_string())
+            .json(body)
             .send()
             .map_err(|error| SyncTransportError::Network(error.to_string()))?;
         read_json(response)
@@ -625,11 +693,12 @@ pub fn platform() -> Result<&'static str> {
 }
 
 pub fn encrypt_mutation(
-    account_key: &Zeroizing<[u8; 32]>,
+    material: &crate::sync_crypto::SyncKeyMaterial,
     account_id: Uuid,
-    device_id: Uuid,
     mutation: &LocalMutation,
 ) -> Result<EncryptedMutation> {
+    let account_key = &material.account_key;
+    let device_id = material.device_id;
     validate_mutation(mutation)?;
     validate_hlc(&mutation.logical_timestamp, device_id)?;
     let aad = mutation_aad(account_id, device_id, mutation)?;
@@ -653,6 +722,13 @@ pub fn encrypt_mutation(
             },
         )
         .map_err(|_| SyncTransportError::Crypto)?;
+    let nonce = URL_SAFE_NO_PAD.encode(nonce);
+    let ciphertext = URL_SAFE_NO_PAD.encode(ciphertext);
+    let signature = material
+        .sign(&mutation_signing_message(
+            account_id, device_id, mutation, &nonce, &ciphertext,
+        )?)
+        .map_err(|_| SyncTransportError::Crypto)?;
     Ok(EncryptedMutation {
         mutation_id: mutation.mutation_id,
         account_id,
@@ -660,9 +736,10 @@ pub fn encrypt_mutation(
         logical_timestamp: mutation.logical_timestamp.clone(),
         entity_id: mutation.entity_id,
         entity_type: mutation.entity_type.clone(),
-        nonce: URL_SAFE_NO_PAD.encode(nonce),
-        ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
-        schema_version: MUTATION_SCHEMA_VERSION,
+        nonce,
+        ciphertext,
+        schema_version: MUTATION_ENVELOPE_VERSION,
+        signature,
         tombstone: mutation.tombstone,
     })
 }
@@ -670,10 +747,11 @@ pub fn encrypt_mutation(
 pub fn decrypt_mutation(
     account_key: &Zeroizing<[u8; 32]>,
     expected_account_id: Uuid,
+    sender_signing_public_key: &str,
     mutation: &EncryptedMutation,
 ) -> Result<DecryptedMutation> {
     if mutation.account_id != expected_account_id
-        || mutation.schema_version != MUTATION_SCHEMA_VERSION
+        || mutation.schema_version != MUTATION_ENVELOPE_VERSION
         || mutation.ciphertext.len() > 1_400_000
     {
         return Err(SyncTransportError::InvalidMutation(
@@ -681,6 +759,8 @@ pub fn decrypt_mutation(
         ));
     }
     validate_hlc(&mutation.logical_timestamp, mutation.device_id)?;
+    // Authorship is checked before the cipher runs, so a forged envelope never reaches the AEAD.
+    verify_mutation_signature(mutation, sender_signing_public_key)?;
     let metadata = LocalMutation {
         mutation_id: mutation.mutation_id,
         entity_type: mutation.entity_type.clone(),
@@ -775,7 +855,7 @@ fn validate_mutation(mutation: &LocalMutation) -> Result<()> {
         if payload
             .get("schemaVersion")
             .and_then(|value| value.as_u64())
-            != Some(2)
+            != Some(u64::from(CANONICAL_PAYLOAD_VERSION))
             || payload.get("entityType").and_then(|value| value.as_str())
                 != Some(mutation.entity_type.as_str())
             || payload.get("entityId").and_then(|value| value.as_str())
@@ -812,19 +892,89 @@ fn validate_hlc(value: &str, device_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-fn mutation_aad(account_id: Uuid, device_id: Uuid, mutation: &LocalMutation) -> Result<Vec<u8>> {
-    serde_json::to_vec(&MutationAad {
-        protocol: "student-center.encrypted-mutation.v2",
+fn mutation_metadata<'a>(
+    account_id: Uuid,
+    device_id: Uuid,
+    mutation: &'a LocalMutation,
+) -> MutationAad<'a> {
+    MutationAad {
+        protocol: "student-center.encrypted-mutation.v3",
         mutation_id: mutation.mutation_id,
         account_id,
         device_id,
         logical_timestamp: &mutation.logical_timestamp,
         entity_id: mutation.entity_id,
         entity_type: &mutation.entity_type,
-        schema_version: MUTATION_SCHEMA_VERSION,
+        schema_version: MUTATION_ENVELOPE_VERSION,
         tombstone: mutation.tombstone,
+    }
+}
+
+fn mutation_aad(account_id: Uuid, device_id: Uuid, mutation: &LocalMutation) -> Result<Vec<u8>> {
+    serde_json::to_vec(&mutation_metadata(account_id, device_id, mutation))
+        .map_err(|_| SyncTransportError::InvalidMutation("metadata cannot be encoded".into()))
+}
+
+/// The exact bytes a device signs to claim authorship of an encrypted mutation.
+///
+/// The AEAD's associated data is authenticated under the SHARED account key, so it proves only that
+/// some device of this account produced the envelope. Signing binds it to one device's private key.
+/// The nonce and ciphertext are included because otherwise a sibling device could re-encrypt
+/// different plaintext under identical metadata and reuse the original signature verbatim.
+///
+/// Must stay byte-identical to `encryptedMutationSigningMessage` in packages/contracts/src/index.ts;
+/// `signing_message_matches_the_published_golden_vector` and its TypeScript twin pin the bytes.
+fn mutation_signing_message(
+    account_id: Uuid,
+    device_id: Uuid,
+    mutation: &LocalMutation,
+    nonce: &str,
+    ciphertext: &str,
+) -> Result<Vec<u8>> {
+    serde_json::to_vec(&MutationSignaturePayload {
+        aad: mutation_metadata(account_id, device_id, mutation),
+        nonce,
+        ciphertext,
     })
     .map_err(|_| SyncTransportError::InvalidMutation("metadata cannot be encoded".into()))
+}
+
+/// Rebuild the signed message from a received envelope, so verification uses the same construction
+/// as signing rather than a parallel one that could drift.
+fn envelope_signing_message(mutation: &EncryptedMutation) -> Result<Vec<u8>> {
+    let metadata = LocalMutation {
+        mutation_id: mutation.mutation_id,
+        entity_type: mutation.entity_type.clone(),
+        entity_id: mutation.entity_id,
+        operation: String::new(),
+        logical_timestamp: mutation.logical_timestamp.clone(),
+        tombstone: mutation.tombstone,
+        payload: String::new(),
+    };
+    mutation_signing_message(
+        mutation.account_id,
+        mutation.device_id,
+        &metadata,
+        &mutation.nonce,
+        &mutation.ciphertext,
+    )
+}
+
+/// Verify that `mutation` was authored by the device holding `signing_public_key`.
+pub fn verify_mutation_signature(
+    mutation: &EncryptedMutation,
+    signing_public_key: &str,
+) -> Result<()> {
+    let key = URL_SAFE_NO_PAD
+        .decode(signing_public_key)
+        .map_err(|_| SyncTransportError::InvalidSignature)?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(&mutation.signature)
+        .map_err(|_| SyncTransportError::InvalidSignature)?;
+    let message = envelope_signing_message(mutation)?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+        .verify(&message, &signature)
+        .map_err(|_| SyncTransportError::InvalidSignature)
 }
 
 #[cfg(test)]
@@ -860,16 +1010,23 @@ mod tests {
 
     #[test]
     fn encrypted_mutation_contains_no_plaintext_and_binds_metadata() {
-        let key = Zeroizing::new([7_u8; 32]);
         let account_id = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
         let device_id = Uuid::parse_str("44444444-4444-4444-8444-444444444444").unwrap();
+        let material = crate::sync_crypto::SyncKeyMaterial::for_test(device_id, [7_u8; 32]);
+        let key = Zeroizing::new([7_u8; 32]);
         let mutation = fixture();
-        let encrypted = encrypt_mutation(&key, account_id, device_id, &mutation).unwrap();
+        let encrypted = encrypt_mutation(&material, account_id, &mutation).unwrap();
         let serialized = serde_json::to_string(&encrypted).unwrap();
         assert!(!serialized.contains("completion_changed"));
         assert!(!serialized.contains("completed"));
         assert_eq!(
-            decrypt_mutation(&key, account_id, &encrypted).unwrap(),
+            decrypt_mutation(
+                &key,
+                account_id,
+                &material.signing_public_key,
+                &encrypted
+            )
+            .unwrap(),
             DecryptedMutation {
                 operation: "completion_changed".into(),
                 payload: mutation.payload.clone(),
@@ -908,20 +1065,130 @@ mod tests {
             .is_err());
         let mut substituted_envelope = encrypted;
         substituted_envelope.entity_type = "exam".into();
-        assert!(decrypt_mutation(&key, account_id, &substituted_envelope).is_err());
+        assert!(decrypt_mutation(
+            &key,
+            account_id,
+            &material.signing_public_key,
+            &substituted_envelope
+        )
+        .is_err());
     }
 
     #[test]
     fn invalid_mutation_metadata_is_rejected_before_encryption() {
         let mut mutation = fixture();
         mutation.entity_type = "Task".into();
-        assert!(encrypt_mutation(
-            &Zeroizing::new([7_u8; 32]),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            &mutation
+        let material = crate::sync_crypto::SyncKeyMaterial::for_test(Uuid::new_v4(), [7_u8; 32]);
+        assert!(encrypt_mutation(&material, Uuid::new_v4(), &mutation).is_err());
+    }
+
+    /// The same bytes are pinned in packages/contracts/test/contracts.test.ts. If either side
+    /// reorders a field the two stop agreeing, every signature fails, and sync breaks silently --
+    /// so both pin the exact string rather than only checking a round trip.
+    const GOLDEN_SIGNING_MESSAGE: &str = "{\"aad\":{\"protocol\":\"student-center.encrypted-mutation.v3\",\"mutationId\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"accountId\":\"11111111-1111-4111-8111-111111111111\",\"deviceId\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"logicalTimestamp\":\"1723478400000-0000000000-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"entityId\":\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\",\"entityType\":\"task\",\"schemaVersion\":3,\"tombstone\":false},\"nonce\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",\"ciphertext\":\"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\"}";
+
+    #[test]
+    fn signing_message_matches_the_published_golden_vector() {
+        let account_id = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let device_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let mutation = LocalMutation {
+            mutation_id: Uuid::parse_str("dddddddd-dddd-4ddd-8ddd-dddddddddddd").unwrap(),
+            entity_type: "task".into(),
+            entity_id: Uuid::parse_str("cccccccc-cccc-4ccc-8ccc-cccccccccccc").unwrap(),
+            operation: String::new(),
+            logical_timestamp: "1723478400000-0000000000-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                .into(),
+            tombstone: false,
+            payload: String::new(),
+        };
+        let message = mutation_signing_message(
+            account_id,
+            device_id,
+            &mutation,
+            &"N".repeat(32),
+            &"C".repeat(64),
         )
-        .is_err());
+        .unwrap();
+        assert_eq!(String::from_utf8(message).unwrap(), GOLDEN_SIGNING_MESSAGE);
+    }
+
+    #[test]
+    fn an_account_key_holder_cannot_forge_authorship_of_another_device() {
+        let account_id = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
+        let device_a = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let device_b = Uuid::parse_str("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+        // Both devices of an account share the account key, which is exactly why the AEAD alone
+        // cannot establish authorship.
+        let alice = crate::sync_crypto::SyncKeyMaterial::for_test(device_a, [7_u8; 32]);
+        let mallory = crate::sync_crypto::SyncKeyMaterial::for_test(device_b, [7_u8; 32]);
+        let mut mutation = fixture();
+        mutation.logical_timestamp = format!("1723478400000-0000000000-{device_a}");
+        let authentic = encrypt_mutation(&alice, account_id, &mutation).unwrap();
+        assert!(verify_mutation_signature(&authentic, &alice.signing_public_key).is_ok());
+
+        // Re-attributing Alice's envelope to Mallory's device must not verify under either key.
+        let mut reattributed = authentic.clone();
+        reattributed.device_id = device_b;
+        assert!(verify_mutation_signature(&reattributed, &alice.signing_public_key).is_err());
+        assert!(verify_mutation_signature(&reattributed, &mallory.signing_public_key).is_err());
+
+        // Nor may Mallory keep Alice's signature while swapping in her own ciphertext.
+        let mut swapped = authentic.clone();
+        swapped.ciphertext = URL_SAFE_NO_PAD.encode([9_u8; 96]);
+        assert!(verify_mutation_signature(&swapped, &alice.signing_public_key).is_err());
+    }
+
+    #[test]
+    fn the_signature_covers_every_authenticated_field() {
+        let account_id = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
+        let device_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let material = crate::sync_crypto::SyncKeyMaterial::for_test(device_id, [7_u8; 32]);
+        let mut mutation = fixture();
+        mutation.logical_timestamp = format!("1723478400000-0000000000-{device_id}");
+        let envelope = encrypt_mutation(&material, account_id, &mutation).unwrap();
+
+        let tamper: [(&str, fn(&mut EncryptedMutation)); 6] = [
+            ("mutation_id", |value| value.mutation_id = Uuid::nil()),
+            ("account_id", |value| value.account_id = Uuid::nil()),
+            ("entity_id", |value| value.entity_id = Uuid::nil()),
+            ("entity_type", |value| value.entity_type = "exam".into()),
+            ("tombstone", |value| value.tombstone = !value.tombstone),
+            ("nonce", |value| {
+                value.nonce = URL_SAFE_NO_PAD.encode([1_u8; 24])
+            }),
+        ];
+        for (field, mutate) in tamper {
+            let mut forged = envelope.clone();
+            mutate(&mut forged);
+            assert!(
+                verify_mutation_signature(&forged, &material.signing_public_key).is_err(),
+                "tampering with {field} must invalidate the signature"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsigned_envelope_is_rejected_before_the_cipher_runs() {
+        let account_id = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
+        let device_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let material = crate::sync_crypto::SyncKeyMaterial::for_test(device_id, [7_u8; 32]);
+        let key = Zeroizing::new([7_u8; 32]);
+        let mut mutation = fixture();
+        mutation.logical_timestamp = format!("1723478400000-0000000000-{device_id}");
+        let mut envelope = encrypt_mutation(&material, account_id, &mutation).unwrap();
+        envelope.signature = URL_SAFE_NO_PAD.encode([0_u8; 64]);
+        assert!(matches!(
+            decrypt_mutation(&key, account_id, &material.signing_public_key, &envelope),
+            Err(SyncTransportError::InvalidSignature)
+        ));
+
+        // A downgrade to the unsigned v2 envelope must not be mistaken for "no signature required".
+        let mut downgraded = encrypt_mutation(&material, account_id, &mutation).unwrap();
+        downgraded.schema_version = 2;
+        assert!(matches!(
+            decrypt_mutation(&key, account_id, &material.signing_public_key, &downgraded),
+            Err(SyncTransportError::InvalidMutation(_))
+        ));
     }
 
     #[test]

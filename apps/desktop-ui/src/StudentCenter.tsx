@@ -4860,7 +4860,7 @@ function AccountModal({
   const revokeAuthorizedDevice = async (device: PendingSyncDevice) => {
     if (
       !window.confirm(
-        `Revoke ${device.displayName}? It will immediately lose access to new encrypted changes and documents.`,
+        `Revoke ${device.displayName}? It will immediately lose access to new encrypted changes and documents. It keeps whatever it already downloaded, so revoking does not undo past access.`,
       )
     )
       return;
@@ -4984,20 +4984,21 @@ function AccountModal({
                   </span>
                 </div>
               )}
-              {!!cloudSyncStatus?.pendingDownloadedMutations && (
-                <div className="consent-box security-warning">
+              {!!cloudSyncStatus?.unsupportedDownloadedMutations && (
+                <div className="consent-box">
                   <CircleAlert />
                   <div>
-                    <strong>Downloaded changes are safely staged</strong>
+                    <strong>Changes from a newer version are waiting</strong>
                     <p>
-                      {cloudSyncStatus.pendingDownloadedMutations} decrypted
-                      mutation
-                      {cloudSyncStatus.pendingDownloadedMutations === 1
-                        ? " is"
-                        : "s are"}{" "}
-                      from an interrupted transaction will be retried as one
-                      validated batch. Student Center never advances the cursor
-                      until canonical validation and replanning succeed.
+                      Student Center saved{" "}
+                      {cloudSyncStatus.unsupportedDownloadedMutations} encrypted
+                      change
+                      {cloudSyncStatus.unsupportedDownloadedMutations === 1
+                        ? ""
+                        : "s"}{" "}
+                      that this version does not understand yet. They stay
+                      encrypted on this computer and are applied automatically
+                      after you update.
                     </p>
                   </div>
                 </div>

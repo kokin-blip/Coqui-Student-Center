@@ -1,5 +1,5 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
-import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
+import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import {
   AiStructureRequest,
@@ -9,8 +9,10 @@ import {
   EncryptedObjectManifest,
   DeviceRegistration,
   SyncCursor,
-  SyncPush
+  SyncPush,
+  encryptedMutationSigningMessage
 } from "@student-center/contracts";
+import { verifyEd25519 } from "./signature.js";
 import { bearerToken, type AccessTokenVerifier, type AuthIdentity } from "./auth.js";
 import {
   MemorySyncRepository,
@@ -18,6 +20,7 @@ import {
   RepositoryForbidden,
   type SyncRepository
 } from "./sync-repository.js";
+import { AuthorizingSyncRepository } from "./authorizing-repository.js";
 
 type AppOptions={
   repository?:SyncRepository;
@@ -98,7 +101,8 @@ function sendRepositoryError(req:FastifyRequest,reply:FastifyReply,error:unknown
 }
 
 export function buildApp(options:AppOptions={}){
-  const repository=options.repository??new MemorySyncRepository();
+  // Every repository is wrapped, so device authorization cannot depend on which adapter is injected.
+  const repository=new AuthorizingSyncRepository(options.repository??new MemorySyncRepository());
   const verifyAccessToken=options.verifyAccessToken;
   const aiProvider=options.aiProvider??configuredAiProvider();
   const app=Fastify({bodyLimit:8*1024*1024,logger:{redact:["req.headers.authorization","req.body.excerpt","req.body.ciphertext","req.body.mutations[*].ciphertext","req.body.encryptedAccountKey","req.body.signature"],serializers:{req(req){return {method:req.method,url:req.url};}}}});
@@ -136,12 +140,7 @@ export function buildApp(options:AppOptions={}){
       const [sender,target]=await Promise.all([repository.getDevice(auth,parsed.data.senderDeviceId),repository.getDevice(auth,parsed.data.targetDeviceId)]);
       if(!sender||sender.revoked||!sender.authorized||!target||target.revoked||target.authorized)return reply.code(403).send({error:"the sender must be authorized and the target must be pending"});
       const message=JSON.stringify({envelopeId:parsed.data.envelopeId,targetDeviceId:parsed.data.targetDeviceId,senderDeviceId:parsed.data.senderDeviceId,encryptedAccountKey:parsed.data.encryptedAccountKey,createdAt:parsed.data.createdAt,expiresAt:parsed.data.expiresAt});
-      try{
-        const raw=Buffer.from(sender.signingPublicKey,"base64url");
-        if(raw.length!==32)return reply.code(403).send({error:"the sender signing key is invalid"});
-        const key=createPublicKey({key:Buffer.concat([Buffer.from("302a300506032b6570032100","hex"),raw]),format:"der",type:"spki"});
-        if(!verifySignature(null,Buffer.from(message),key,Buffer.from(parsed.data.signature,"base64url")))return reply.code(403).send({error:"the device approval signature is invalid"});
-      }catch{return reply.code(403).send({error:"the device approval signature is invalid"});}
+      if(!verifyEd25519(sender.signingPublicKey,Buffer.from(message),parsed.data.signature))return reply.code(403).send({error:"the device approval signature is invalid"});
       await repository.saveDeviceEnvelope(auth,parsed.data);
       await repository.authorizeDevice(auth,targetId);
       return {accepted:true,expiresAt:parsed.data.expiresAt};
@@ -184,15 +183,32 @@ export function buildApp(options:AppOptions={}){
     catch(error){return sendRepositoryError(req,reply,error,"device revocation failed");}
   });
 
-  app.post("/v1/devices/recovery",async(req,reply)=>{
+  // Consumption must accept a still-pending target: the device adopting an approval envelope is
+  // by definition not authorized yet, so this uses the same relaxed check as GET /v1/devices/envelopes.
+  app.post("/v1/devices/envelopes/:envelopeId/consume",async(req,reply)=>{
     const auth=await requireAuth(req,reply);if(!auth)return;
-    return {status:"challenge_required",accountId:auth.accountId,message:"Recovery proof must be completed by the desktop client."};
+    const header=Array.isArray(req.headers["x-student-center-device-id"])?undefined:req.headers["x-student-center-device-id"];
+    if(typeof header!=="string")return reply.code(401).send({error:"a device header is required"});
+    const envelopeId=(req.params as {envelopeId:string}).envelopeId;
+    try{
+      const target=await repository.getDevice(auth,header);
+      if(!target||target.revoked)return reply.code(403).send({error:"the target device is unavailable"});
+      await repository.markDeviceEnvelopeConsumed(auth,header,envelopeId);
+      return {consumed:true,envelopeId};
+    }catch(error){return sendRepositoryError(req,reply,error,"device envelope consumption failed");}
   });
 
   app.post("/v1/sync/push",async(req,reply)=>{
     const auth=await requireAuth(req,reply);if(!auth)return;
+    const device=await requireAuthorizedDevice(req,reply,auth);if(!device)return;
     const parsed=SyncPush.safeParse(req.body);if(!parsed.success)return reply.code(400).send({error:"invalid encrypted mutation batch"});
     if(parsed.data.mutations.some(item=>item.accountId!==auth.accountId))return reply.code(403).send({error:"mutation account does not match the authenticated account"});
+    // The client binds every mutation's HLC suffix to its own device ID, so a batch may only ever
+    // carry mutations authored by the pushing device. Anything else is an attempt to spoof authorship.
+    if(parsed.data.mutations.some(item=>item.deviceId!==device.deviceId))return reply.code(403).send({error:"mutation device does not match the pushing device"});
+    // Authorship is cryptographic, not merely asserted: the account key is shared across a student's
+    // devices, so only the per-device signing key distinguishes who actually wrote a mutation.
+    if(parsed.data.mutations.some(item=>!verifyEd25519(device.signingPublicKey,Buffer.from(encryptedMutationSigningMessage(item)),item.signature)))return reply.code(403).send({error:"the mutation signature is invalid"});
     try{return await repository.pushMutations(auth,parsed.data.mutations);}
     catch(error){return sendRepositoryError(req,reply,error,"sync push failed");}
   });

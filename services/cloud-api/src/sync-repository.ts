@@ -13,6 +13,7 @@ export interface SyncRepository{
   revokeDevice(auth:SyncAuth,deviceId:string):Promise<void>;
   saveDeviceEnvelope(auth:SyncAuth,envelope:DeviceEnvelope):Promise<void>;
   listDeviceEnvelopes(auth:SyncAuth,targetDeviceId:string):Promise<DeviceEnvelope[]>;
+  markDeviceEnvelopeConsumed(auth:SyncAuth,targetDeviceId:string,envelopeId:string):Promise<void>;
   pushMutations(auth:SyncAuth,mutations:EncryptedMutation[]):Promise<{accepted:number;cursor:string}>;
   pullMutations(auth:SyncAuth,cursor:number,limit:number):Promise<{cursor:string;mutations:EncryptedMutation[];hasMore:boolean}>;
   initiateObject(auth:SyncAuth,manifest:EncryptedObjectManifest):Promise<number[]>;
@@ -27,7 +28,7 @@ export class RepositoryForbidden extends Error{}
 export class MemorySyncRepository implements SyncRepository{
   readonly devices=new Map<string,RegisteredDevice>();
   readonly mutations:StoredMutation[]=[];
-  readonly envelopes:Array<DeviceEnvelope&{accountId:string}>=[];
+  readonly envelopes:Array<DeviceEnvelope&{accountId:string;consumedAt:string|null}>=[];
   readonly objects=new Map<string,{manifest:EncryptedObjectManifest;chunks:Map<number,EncryptedObjectChunk>;completed:boolean}>();
   #nextSequence=1;
 
@@ -49,16 +50,20 @@ export class MemorySyncRepository implements SyncRepository{
   async revokeDevice(auth:SyncAuth,deviceId:string){const device=await this.getDevice(auth,deviceId);if(!device)throw new RepositoryForbidden("device is unavailable");device.revoked=true;device.authorized=false;}
 
   async saveDeviceEnvelope(auth:SyncAuth,envelope:DeviceEnvelope){
-    this.envelopes.push({...envelope,accountId:auth.accountId});
+    if(this.envelopes.some(current=>current.accountId===auth.accountId&&current.envelopeId===envelope.envelopeId))throw new RepositoryConflict("device envelope ID was already used");
+    this.envelopes.push({...envelope,accountId:auth.accountId,consumedAt:null});
   }
-  async listDeviceEnvelopes(auth:SyncAuth,targetDeviceId:string){return this.envelopes.filter(envelope=>envelope.accountId===auth.accountId&&envelope.targetDeviceId===targetDeviceId&&Date.parse(envelope.expiresAt)>Date.now()).map(({accountId:_,...envelope})=>envelope);}
+  async listDeviceEnvelopes(auth:SyncAuth,targetDeviceId:string){return this.envelopes.filter(envelope=>envelope.accountId===auth.accountId&&envelope.targetDeviceId===targetDeviceId&&envelope.consumedAt===null&&Date.parse(envelope.expiresAt)>Date.now()).map(({accountId:_,consumedAt:__,...envelope})=>envelope);}
+  async markDeviceEnvelopeConsumed(auth:SyncAuth,targetDeviceId:string,envelopeId:string){
+    const envelope=this.envelopes.find(current=>current.accountId===auth.accountId&&current.targetDeviceId===targetDeviceId&&current.envelopeId===envelopeId&&current.consumedAt===null);
+    if(envelope)envelope.consumedAt=new Date().toISOString();
+  }
 
+  // Device authorization is enforced once, in AuthorizingSyncRepository, so that every adapter shares it.
   async pushMutations(auth:SyncAuth,mutations:EncryptedMutation[]){
     let accepted=0;
     for(const mutation of mutations){
       if(mutation.accountId!==auth.accountId)throw new RepositoryForbidden("mutation account does not match the authenticated account");
-      const device=await this.getDevice(auth,mutation.deviceId);
-      if(!device||device.revoked||!device.authorized)throw new RepositoryForbidden("mutation device is not authorized");
       const current=this.mutations.find(item=>item.mutationId===mutation.mutationId);
       if(current){
         const {sequence:_,...currentMutation}=current;
@@ -86,17 +91,21 @@ export class MemorySyncRepository implements SyncRepository{
 
 type SupabaseRow=Record<string,unknown>;
 
+export type FetchLike=(input:string,init?:RequestInit)=>Promise<Response>;
+
 export class SupabaseRestSyncRepository implements SyncRepository{
   readonly origin:string;
-  constructor(supabaseUrl:string,readonly publishableKey:string){
+  readonly #fetch:FetchLike;
+  constructor(supabaseUrl:string,readonly publishableKey:string,fetchImpl?:FetchLike){
     const url=new URL(supabaseUrl);
     if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||url.pathname!=="/")throw new Error("SUPABASE_URL must be an HTTPS origin");
     if(publishableKey.length<20)throw new Error("SUPABASE_PUBLISHABLE_KEY is missing or invalid");
     this.origin=url.origin;
+    this.#fetch=fetchImpl??((input,init)=>fetch(input,init));
   }
 
   async #request(auth:SyncAuth,path:string,init:RequestInit={}){
-    const response=await fetch(`${this.origin}/rest/v1/${path}`,{...init,headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`,"Content-Type":"application/json",...(init.headers??{})}});
+    const response=await this.#fetch(`${this.origin}/rest/v1/${path}`,{...init,headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`,"Content-Type":"application/json",...(init.headers??{})}});
     if(!response.ok){
       const detail=(await response.text()).slice(0,500);
       if(response.status===409)throw new RepositoryConflict(detail||"repository conflict");
@@ -111,32 +120,44 @@ export class SupabaseRestSyncRepository implements SyncRepository{
     if(current&&(current.publicKey!==input.publicKey||current.signingPublicKey!==input.signingPublicKey))throw new RepositoryConflict("device ID is already bound to another key");
     if(current)return {created:false,authorized:current.authorized};
     const devices=await this.listDevices(auth);
-    const authorized=!input.requestApproval&&!devices.some(device=>device.authorized&&!device.revoked);
+    // Any surviving device — including one still pending approval — blocks silent auto-authorization.
+    const authorized=!input.requestApproval&&!devices.some(device=>!device.revoked);
     await this.#request(auth,"student_center_devices",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({account_id:auth.accountId,id:input.deviceId,public_key:input.publicKey,signing_public_key:input.signingPublicKey,display_name:input.displayName,platform:input.platform,approved_at:authorized?new Date().toISOString():null})});
     return {created:true,authorized};
   }
 
   async getDevice(auth:SyncAuth,deviceId:string){
-    const response=await this.#request(auth,`student_center_devices?select=id,account_id,public_key,signing_public_key,display_name,platform,approved_at,revoked_at&id=eq.${encodeURIComponent(deviceId)}&limit=1`);
+    const response=await this.#request(auth,`student_center_devices?select=id,account_id,public_key,signing_public_key,display_name,platform,approved_at,revoked_at&account_id=eq.${encodeURIComponent(auth.accountId)}&id=eq.${encodeURIComponent(deviceId)}&limit=1`);
     const [row]=(await response.json()) as SupabaseRow[];
     return row?{deviceId:String(row.id),accountId:String(row.account_id),publicKey:String(row.public_key),signingPublicKey:String(row.signing_public_key),displayName:String(row.display_name),platform:row.platform as DeviceRegistration["platform"],requestApproval:false,authorized:row.approved_at!==null,revoked:row.revoked_at!==null}:null;
   }
 
   async listDevices(auth:SyncAuth){
-    const response=await this.#request(auth,"student_center_devices?select=id,account_id,public_key,signing_public_key,display_name,platform,approved_at,revoked_at&order=created_at.asc");
+    const response=await this.#request(auth,`student_center_devices?select=id,account_id,public_key,signing_public_key,display_name,platform,approved_at,revoked_at&account_id=eq.${encodeURIComponent(auth.accountId)}&order=created_at.asc`);
     return ((await response.json()) as SupabaseRow[]).map(row=>({deviceId:String(row.id),accountId:String(row.account_id),publicKey:String(row.public_key),signingPublicKey:String(row.signing_public_key),displayName:String(row.display_name),platform:row.platform as DeviceRegistration["platform"],requestApproval:false,authorized:row.approved_at!==null,revoked:row.revoked_at!==null}));
   }
 
-  async authorizeDevice(auth:SyncAuth,deviceId:string){await this.#request(auth,`student_center_devices?account_id=eq.${encodeURIComponent(auth.accountId)}&id=eq.${encodeURIComponent(deviceId)}`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({approved_at:new Date().toISOString(),revoked_at:null})});}
-  async revokeDevice(auth:SyncAuth,deviceId:string){await this.#request(auth,`student_center_devices?account_id=eq.${encodeURIComponent(auth.accountId)}&id=eq.${encodeURIComponent(deviceId)}`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({revoked_at:new Date().toISOString()})});}
+  // Approval must never resurrect a revoked device, so revoked_at is deliberately left untouched.
+  async authorizeDevice(auth:SyncAuth,deviceId:string){
+    const device=await this.getDevice(auth,deviceId);
+    if(!device||device.revoked)throw new RepositoryForbidden("device is unavailable");
+    await this.#request(auth,`student_center_devices?account_id=eq.${encodeURIComponent(auth.accountId)}&id=eq.${encodeURIComponent(deviceId)}&revoked_at=is.null`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({approved_at:new Date().toISOString()})});
+  }
+  async revokeDevice(auth:SyncAuth,deviceId:string){
+    const device=await this.getDevice(auth,deviceId);
+    if(!device)throw new RepositoryForbidden("device is unavailable");
+    await this.#request(auth,`student_center_devices?account_id=eq.${encodeURIComponent(auth.accountId)}&id=eq.${encodeURIComponent(deviceId)}`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({revoked_at:new Date().toISOString(),approved_at:null})});
+  }
 
   async saveDeviceEnvelope(auth:SyncAuth,envelope:DeviceEnvelope){
     await this.#request(auth,"student_center_device_envelopes",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({account_id:auth.accountId,envelope_id:envelope.envelopeId,target_device_id:envelope.targetDeviceId,sender_device_id:envelope.senderDeviceId,encrypted_account_key:envelope.encryptedAccountKey,signature:envelope.signature,created_at:envelope.createdAt,expires_at:envelope.expiresAt})});
   }
-  async listDeviceEnvelopes(auth:SyncAuth,targetDeviceId:string){const response=await this.#request(auth,`student_center_device_envelopes?select=envelope_id,target_device_id,sender_device_id,encrypted_account_key,signature,created_at,expires_at&target_device_id=eq.${encodeURIComponent(targetDeviceId)}&consumed_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&order=created_at.desc`);return ((await response.json()) as SupabaseRow[]).map(row=>({envelopeId:String(row.envelope_id),targetDeviceId:String(row.target_device_id),senderDeviceId:String(row.sender_device_id),encryptedAccountKey:String(row.encrypted_account_key),signature:String(row.signature),createdAt:String(row.created_at),expiresAt:String(row.expires_at)}));}
+  async listDeviceEnvelopes(auth:SyncAuth,targetDeviceId:string){const response=await this.#request(auth,`student_center_device_envelopes?select=envelope_id,target_device_id,sender_device_id,encrypted_account_key,signature,created_at,expires_at&account_id=eq.${encodeURIComponent(auth.accountId)}&target_device_id=eq.${encodeURIComponent(targetDeviceId)}&consumed_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&order=created_at.desc`);return ((await response.json()) as SupabaseRow[]).map(row=>({envelopeId:String(row.envelope_id),targetDeviceId:String(row.target_device_id),senderDeviceId:String(row.sender_device_id),encryptedAccountKey:String(row.encrypted_account_key),signature:String(row.signature),createdAt:String(row.created_at),expiresAt:String(row.expires_at)}));}
+  // The consumed_at=is.null filter makes consumption one-shot even if the client retries.
+  async markDeviceEnvelopeConsumed(auth:SyncAuth,targetDeviceId:string,envelopeId:string){await this.#request(auth,`student_center_device_envelopes?account_id=eq.${encodeURIComponent(auth.accountId)}&target_device_id=eq.${encodeURIComponent(targetDeviceId)}&envelope_id=eq.${encodeURIComponent(envelopeId)}&consumed_at=is.null`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({consumed_at:new Date().toISOString()})});}
 
   async pushMutations(auth:SyncAuth,mutations:EncryptedMutation[]){
-    const body=mutations.map(mutation=>({mutation_id:mutation.mutationId,account_id:auth.accountId,device_id:mutation.deviceId,logical_timestamp:mutation.logicalTimestamp,entity_id:mutation.entityId,entity_type:mutation.entityType,nonce:mutation.nonce,ciphertext:mutation.ciphertext,schema_version:mutation.schemaVersion,tombstone:mutation.tombstone}));
+    const body=mutations.map(mutation=>({mutation_id:mutation.mutationId,account_id:auth.accountId,device_id:mutation.deviceId,logical_timestamp:mutation.logicalTimestamp,entity_id:mutation.entityId,entity_type:mutation.entityType,nonce:mutation.nonce,ciphertext:mutation.ciphertext,schema_version:mutation.schemaVersion,signature:mutation.signature,tombstone:mutation.tombstone}));
     const response=await this.#request(auth,"student_center_encrypted_mutations?on_conflict=mutation_id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=representation"},body:JSON.stringify(body)});
     const inserted=(await response.json()) as SupabaseRow[];
     const latest=await this.#request(auth,"student_center_encrypted_mutations?select=sequence&order=sequence.desc&limit=1");
@@ -145,14 +166,14 @@ export class SupabaseRestSyncRepository implements SyncRepository{
   }
 
   async pullMutations(auth:SyncAuth,cursor:number,limit:number){
-    const response=await this.#request(auth,`student_center_encrypted_mutations?select=sequence,mutation_id,account_id,device_id,logical_timestamp,entity_id,entity_type,nonce,ciphertext,schema_version,tombstone&sequence=gt.${cursor}&order=sequence.asc&limit=${limit+1}`);
+    const response=await this.#request(auth,`student_center_encrypted_mutations?select=sequence,mutation_id,account_id,device_id,logical_timestamp,entity_id,entity_type,nonce,ciphertext,schema_version,signature,tombstone&sequence=gt.${cursor}&order=sequence.asc&limit=${limit+1}`);
     const rows=(await response.json()) as SupabaseRow[];
     const page=rows.slice(0,limit);
-    const mutations=page.map(row=>({mutationId:String(row.mutation_id),accountId:String(row.account_id),deviceId:String(row.device_id),logicalTimestamp:String(row.logical_timestamp),entityId:String(row.entity_id),entityType:String(row.entity_type),nonce:String(row.nonce),ciphertext:String(row.ciphertext),schemaVersion:2 as const,tombstone:Boolean(row.tombstone)}));
+    const mutations=page.map(row=>({mutationId:String(row.mutation_id),accountId:String(row.account_id),deviceId:String(row.device_id),logicalTimestamp:String(row.logical_timestamp),entityId:String(row.entity_id),entityType:String(row.entity_type),nonce:String(row.nonce),ciphertext:String(row.ciphertext),schemaVersion:3 as const,signature:String(row.signature),tombstone:Boolean(row.tombstone)}));
     return {cursor:String(page.at(-1)?.sequence??cursor),mutations,hasMore:rows.length>limit};
   }
-  async initiateObject(auth:SyncAuth,manifest:EncryptedObjectManifest){const lookup=await this.#request(auth,`student_center_encrypted_objects?select=document_id,encrypted_metadata,wrapped_object_key,chunk_hashes,version&document_id=eq.${encodeURIComponent(manifest.documentId)}&limit=1`);const [row]=(await lookup.json()) as SupabaseRow[];if(row){const existing={documentId:String(row.document_id),encryptedMetadata:String(row.encrypted_metadata),wrappedObjectKey:String(row.wrapped_object_key),chunkHashes:row.chunk_hashes as string[],version:Number(row.version)};if(JSON.stringify(existing)!==JSON.stringify(manifest))throw new RepositoryConflict("object ID is already bound to another encrypted manifest");}else{await this.#request(auth,"student_center_encrypted_objects",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({account_id:auth.accountId,document_id:manifest.documentId,encrypted_metadata:manifest.encryptedMetadata,wrapped_object_key:manifest.wrappedObjectKey,chunk_hashes:manifest.chunkHashes,version:manifest.version,completed_at:null,updated_at:new Date().toISOString()})});}const missing=[] as number[];for(let index=0;index<manifest.chunkHashes.length;index++){const response=await fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${manifest.documentId}/${index}`,{method:"HEAD",headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`}});if(response.status===404)missing.push(index);else if(!response.ok)throw new Error(`encrypted chunk status failed (${response.status})`);}return missing;}
-  async putObjectChunk(auth:SyncAuth,chunk:EncryptedObjectChunk){const bytes=Buffer.from(chunk.ciphertext,"base64url");const response=await fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${chunk.documentId}/${chunk.index}`,{method:"POST",headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`,"Content-Type":"application/octet-stream","x-upsert":"true"},body:bytes});if(!response.ok)throw new Error(`encrypted chunk upload failed (${response.status})`);}
-  async completeObject(auth:SyncAuth,documentId:string){const lookup=await this.#request(auth,`student_center_encrypted_objects?select=chunk_hashes&document_id=eq.${encodeURIComponent(documentId)}&limit=1`);const [row]=(await lookup.json()) as SupabaseRow[];if(!row)throw new RepositoryForbidden("object upload was not initiated");const hashes=row.chunk_hashes as string[];for(let index=0;index<hashes.length;index++){const response=await fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${documentId}/${index}`,{headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`}});if(!response.ok)throw new RepositoryConflict("object chunks are incomplete");const hash=createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");if(hash!==hashes[index])throw new RepositoryConflict("object chunk hash does not match the manifest");}await this.#request(auth,`student_center_encrypted_objects?account_id=eq.${encodeURIComponent(auth.accountId)}&document_id=eq.${encodeURIComponent(documentId)}`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({completed_at:new Date().toISOString(),updated_at:new Date().toISOString()})});}
-  async downloadObject(auth:SyncAuth,documentId:string){const response=await this.#request(auth,`student_center_encrypted_objects?select=document_id,encrypted_metadata,wrapped_object_key,chunk_hashes,version,completed_at&document_id=eq.${encodeURIComponent(documentId)}&limit=1`);const [row]=(await response.json()) as SupabaseRow[];if(!row||row.completed_at===null)return null;const manifest={documentId:String(row.document_id),encryptedMetadata:String(row.encrypted_metadata),wrappedObjectKey:String(row.wrapped_object_key),chunkHashes:row.chunk_hashes as string[],version:Number(row.version)};const chunks=[] as EncryptedObjectChunk[];for(let index=0;index<manifest.chunkHashes.length;index++){const chunkResponse=await fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${documentId}/${index}`,{headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`}});if(!chunkResponse.ok)throw new Error(`encrypted chunk download failed (${chunkResponse.status})`);chunks.push({documentId,index,ciphertext:Buffer.from(await chunkResponse.arrayBuffer()).toString("base64url"),sha256:manifest.chunkHashes[index]!});}return {manifest,chunks};}
+  async initiateObject(auth:SyncAuth,manifest:EncryptedObjectManifest){const lookup=await this.#request(auth,`student_center_encrypted_objects?select=document_id,encrypted_metadata,wrapped_object_key,chunk_hashes,version&document_id=eq.${encodeURIComponent(manifest.documentId)}&limit=1`);const [row]=(await lookup.json()) as SupabaseRow[];if(row){const existing={documentId:String(row.document_id),encryptedMetadata:String(row.encrypted_metadata),wrappedObjectKey:String(row.wrapped_object_key),chunkHashes:row.chunk_hashes as string[],version:Number(row.version)};if(JSON.stringify(existing)!==JSON.stringify(manifest))throw new RepositoryConflict("object ID is already bound to another encrypted manifest");}else{await this.#request(auth,"student_center_encrypted_objects",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({account_id:auth.accountId,document_id:manifest.documentId,encrypted_metadata:manifest.encryptedMetadata,wrapped_object_key:manifest.wrappedObjectKey,chunk_hashes:manifest.chunkHashes,version:manifest.version,completed_at:null,updated_at:new Date().toISOString()})});}const missing=[] as number[];for(let index=0;index<manifest.chunkHashes.length;index++){const response=await this.#fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${manifest.documentId}/${index}`,{method:"HEAD",headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`}});if(response.status===404)missing.push(index);else if(!response.ok)throw new Error(`encrypted chunk status failed (${response.status})`);}return missing;}
+  async putObjectChunk(auth:SyncAuth,chunk:EncryptedObjectChunk){const bytes=Buffer.from(chunk.ciphertext,"base64url");const response=await this.#fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${chunk.documentId}/${chunk.index}`,{method:"POST",headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`,"Content-Type":"application/octet-stream","x-upsert":"true"},body:bytes});if(!response.ok)throw new Error(`encrypted chunk upload failed (${response.status})`);}
+  async completeObject(auth:SyncAuth,documentId:string){const lookup=await this.#request(auth,`student_center_encrypted_objects?select=chunk_hashes&document_id=eq.${encodeURIComponent(documentId)}&limit=1`);const [row]=(await lookup.json()) as SupabaseRow[];if(!row)throw new RepositoryForbidden("object upload was not initiated");const hashes=row.chunk_hashes as string[];for(let index=0;index<hashes.length;index++){const response=await this.#fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${documentId}/${index}`,{headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`}});if(!response.ok)throw new RepositoryConflict("object chunks are incomplete");const hash=createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");if(hash!==hashes[index])throw new RepositoryConflict("object chunk hash does not match the manifest");}await this.#request(auth,`student_center_encrypted_objects?account_id=eq.${encodeURIComponent(auth.accountId)}&document_id=eq.${encodeURIComponent(documentId)}`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({completed_at:new Date().toISOString(),updated_at:new Date().toISOString()})});}
+  async downloadObject(auth:SyncAuth,documentId:string){const response=await this.#request(auth,`student_center_encrypted_objects?select=document_id,encrypted_metadata,wrapped_object_key,chunk_hashes,version,completed_at&document_id=eq.${encodeURIComponent(documentId)}&limit=1`);const [row]=(await response.json()) as SupabaseRow[];if(!row||row.completed_at===null)return null;const manifest={documentId:String(row.document_id),encryptedMetadata:String(row.encrypted_metadata),wrappedObjectKey:String(row.wrapped_object_key),chunkHashes:row.chunk_hashes as string[],version:Number(row.version)};const chunks=[] as EncryptedObjectChunk[];for(let index=0;index<manifest.chunkHashes.length;index++){const chunkResponse=await this.#fetch(`${this.origin}/storage/v1/object/student-center-encrypted-objects/${auth.accountId}/${documentId}/${index}`,{headers:{apikey:this.publishableKey,Authorization:`Bearer ${auth.accessToken}`}});if(!chunkResponse.ok)throw new Error(`encrypted chunk download failed (${chunkResponse.status})`);chunks.push({documentId,index,ciphertext:Buffer.from(await chunkResponse.arrayBuffer()).toString("base64url"),sha256:manifest.chunkHashes[index]!});}return {manifest,chunks};}
 }
