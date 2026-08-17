@@ -19,7 +19,12 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build
-      - run: npm run check --workspaces --if-present
+      # Deliberately not `--workspaces`: apps/desktop's `check` is a cargo check,
+      # and Tauri cannot configure on Linux without the GTK/glib stack. The app
+      # ships nsis and dmg only, and the desktop job below compiles and tests the
+      # Rust on both shipping targets, so a Linux cargo check buys no coverage in
+      # exchange for an apt install of a toolchain we never release against.
+      - run: npm run check --workspace @student-center/desktop-ui --workspace @student-center/contracts --workspace @student-center/cloud-api --if-present
       - run: npm run test --workspaces --if-present
       - run: npm run test:ocr
       - run: npm run ocr:verify -- --target=windows-x64
