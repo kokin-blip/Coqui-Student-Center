@@ -52,9 +52,15 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 url = "2"
 wait-timeout = "0.2"
-windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 zip = "2.2"
 zeroize = { version = "1.8", features = ["alloc"] }
+
+# DPAPI, used only by device_key::platform, which is #[cfg(target_os = "windows")].
+# This has to stay target-scoped: as a plain dependency it pulls windows-future
+# into the macOS graph, and that crate cannot compile off Windows because the
+# windows-core items it calls (imp::marshaler, imp::IMarshal) are cfg(windows).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
