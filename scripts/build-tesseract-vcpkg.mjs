@@ -20,6 +20,13 @@ const triplet = option("--triplet") ?? (process.platform === "win32" ? "x64-wind
 const executable = process.platform === "win32" ? join(root, "vcpkg.exe") : join(root, "vcpkg");
 const installRoot = join(root, "installed");
 
+// vcpkg exits before doing anything if VCPKG_DEFAULT_BINARY_CACHE names a path
+// that does not exist, and actions/cache does not create the directory when it
+// misses -- which is every first run on a new cache key.
+if (process.env.VCPKG_DEFAULT_BINARY_CACHE) {
+  mkdirSync(process.env.VCPKG_DEFAULT_BINARY_CACHE, { recursive: true });
+}
+
 if (!existsSync(join(root, ".git"))) {
   mkdirSync(root, { recursive: true });
   run("git", ["init", root]);
