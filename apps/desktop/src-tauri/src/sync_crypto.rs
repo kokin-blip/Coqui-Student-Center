@@ -112,6 +112,24 @@ struct UnsignedDeviceApproval<'a> {
 }
 
 impl SyncKeyMaterial {
+    /// Key material with a real Ed25519 identity, for tests that need signing to actually work.
+    #[cfg(test)]
+    pub(crate) fn for_test(device_id: Uuid, account_key: [u8; 32]) -> Self {
+        let signing = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+        let pair = Ed25519KeyPair::from_pkcs8(signing.as_ref()).unwrap();
+        Self {
+            account_key: Zeroizing::new(account_key),
+            device_id,
+            public_key: URL_SAFE_NO_PAD.encode(
+                x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([3_u8; 32]))
+                    .as_bytes(),
+            ),
+            signing_public_key: URL_SAFE_NO_PAD.encode(pair.public_key().as_ref()),
+            device_private_key: Zeroizing::new([3_u8; 32]),
+            signing_private_key: Zeroizing::new(signing.as_ref().to_vec()),
+        }
+    }
+
     pub fn sign(&self, message: &[u8]) -> Result<String> {
         let pair = Ed25519KeyPair::from_pkcs8(self.signing_private_key.as_slice())
             .map_err(|_| SyncCryptoError::Corrupt)?;

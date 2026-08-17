@@ -642,6 +642,85 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
             return Err(error);
         }
     }
+    conn.execute_batch("SAVEPOINT signed_sync_v3_migration")?;
+    let signed_sync_result = (|| -> Result<()> {
+        // Pinned public keys of this account's other computers. Verifying a peer signature against
+        // a key the server just handed us would prove nothing, so keys are trusted on first use and
+        // never silently replaced -- see upsert_peer_device.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_devices(
+               account_id TEXT NOT NULL,
+               device_id TEXT NOT NULL,
+               public_key TEXT NOT NULL,
+               signing_public_key TEXT NOT NULL,
+               display_name TEXT NOT NULL DEFAULT '',
+               platform TEXT NOT NULL DEFAULT '',
+               authorized INTEGER NOT NULL DEFAULT 0,
+               revoked INTEGER NOT NULL DEFAULT 0,
+               first_seen_at TEXT NOT NULL,
+               refreshed_at TEXT NOT NULL,
+               PRIMARY KEY(account_id,device_id)
+             );",
+        )?;
+        ensure_column(
+            &conn,
+            "sync_received_mutations",
+            "outcome",
+            "TEXT NOT NULL DEFAULT 'applied'",
+        )?;
+        ensure_column(
+            &conn,
+            "sync_received_mutations",
+            "entity_type",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            &conn,
+            "sync_received_mutations",
+            "logical_timestamp",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            &conn,
+            "sync_received_mutations",
+            "device_id",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        conn.execute_batch(
+            "UPDATE sync_received_mutations SET outcome='applied' WHERE applied<>0;
+             CREATE INDEX IF NOT EXISTS sync_received_outcome_idx
+             ON sync_received_mutations(account_id,outcome);",
+        )?;
+        // Envelopes for local-only types were uploaded by earlier builds and can never be applied
+        // anywhere. Drop the queued ones, and clear the register entries they poisoned so a type
+        // that later becomes replicated is not permanently stuck behind a phantom high water mark.
+        let filter = replicated_entity_type_filter();
+        let binds: Vec<&dyn rusqlite::ToSql> = REPLICATED_ENTITY_TYPES
+            .iter()
+            .map(|value| value as &dyn rusqlite::ToSql)
+            .collect();
+        conn.execute(
+            &format!(
+                "DELETE FROM sync_outbox WHERE mutation_id IN
+                 (SELECT id FROM mutations WHERE entity_type NOT IN {filter})"
+            ),
+            binds.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM sync_entity_versions WHERE entity_type NOT IN {filter}"),
+            binds.as_slice(),
+        )?;
+        Ok(())
+    })();
+    match signed_sync_result {
+        Ok(()) => conn.execute_batch("RELEASE signed_sync_v3_migration")?,
+        Err(error) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO signed_sync_v3_migration; RELEASE signed_sync_v3_migration",
+            );
+            return Err(error);
+        }
+    }
     ensure_column(
         &conn,
         "sync_state",
@@ -875,13 +954,25 @@ fn mutation(
     "INSERT INTO mutations(id,entity_type,entity_id,operation,hlc,device_id,tombstone,payload) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
     params![mutation_id, entity_type, entity_id, operation, hlc, device_id, i64::from(tombstone), payload],
   )?;
-    conn.execute(
-        "INSERT INTO sync_entity_versions(entity_type,entity_id,hlc,device_id,tombstone,mutation_id)
-         VALUES(?1,?2,?3,?4,?5,?6)
-         ON CONFLICT(entity_type,entity_id) DO UPDATE SET
-           hlc=excluded.hlc,device_id=excluded.device_id,tombstone=excluded.tombstone,mutation_id=excluded.mutation_id",
-        params![entity_type, entity_id, hlc, device_id, i64::from(tombstone), mutation_id],
-    )?;
+    // A new entity type must be a deliberate choice: either mapped in canonical_table so peers can
+    // apply it, or named in LOCAL_ONLY_ENTITY_TYPES. Silently defaulting to local-only is how
+    // records end up encrypted, uploaded, and discarded forever.
+    debug_assert!(
+        is_replicated_entity_type(entity_type) || LOCAL_ONLY_ENTITY_TYPES.contains(&entity_type),
+        "{entity_type} is neither replicated nor declared local-only"
+    );
+    // The version register exists to resolve last-writer-wins against peers. Advancing it for a
+    // type that is never replicated would leave a high water mark that silently swallows the first
+    // real remote mutation if that type ever does become replicated.
+    if is_replicated_entity_type(entity_type) {
+        conn.execute(
+            "INSERT INTO sync_entity_versions(entity_type,entity_id,hlc,device_id,tombstone,mutation_id)
+             VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(entity_type,entity_id) DO UPDATE SET
+               hlc=excluded.hlc,device_id=excluded.device_id,tombstone=excluded.tombstone,mutation_id=excluded.mutation_id",
+            params![entity_type, entity_id, hlc, device_id, i64::from(tombstone), mutation_id],
+        )?;
+    }
     record_local_set_elements(conn, entity_type, entity_id, &set_changes, &hlc, &device_id)?;
     Ok(())
 }
@@ -3307,16 +3398,24 @@ async fn check_existing_device_approval(
             .lock()
             .unwrap()
             .begin_existing_device_approval(&account_id)?;
-        let envelopes = sync_transport::CloudSyncClient::compiled()?
-            .device_envelopes(&access_token, setup.device_id)?;
+        let client = sync_transport::CloudSyncClient::compiled()?;
+        let envelopes = client.device_envelopes(&access_token, setup.device_id)?;
         let received = envelopes.first().ok_or_else(|| {
             AppError::Invalid("Approval is still pending on an existing computer".into())
         })?;
-        Ok(state
+        let status = state
             .sync_protection
             .lock()
             .unwrap()
-            .accept_existing_device_approval(&account_id, received)?)
+            .accept_existing_device_approval(&account_id, received)?;
+        // Retire the envelope now that it has been adopted. A failure here is not worth failing
+        // the approval over: the envelope expires on its own within fifteen minutes.
+        let _ = client.consume_device_envelope(
+            &access_token,
+            setup.device_id,
+            received.envelope.envelope_id,
+        );
+        Ok(status)
     })
     .await
     .map_err(|error| AppError::Background(error.to_string()))?
@@ -3338,7 +3437,7 @@ struct EncryptedSyncStatus {
     account_id: String,
     device_id: Option<String>,
     pending_mutations: usize,
-    pending_downloaded_mutations: usize,
+    unsupported_downloaded_mutations: usize,
     last_pushed_at: Option<String>,
     message: String,
 }
@@ -3369,19 +3468,14 @@ fn encrypted_sync_status(state: &AppState, account_id: &str) -> Result<Encrypted
             .as_ref()
             .is_some_and(|(device_id, _)| Some(device_id) == current_device.as_ref());
     let pending_mutations = if binding.as_deref().is_none_or(|bound| bound == account_id) {
-        db.query_row(
-            "SELECT COUNT(*) FROM mutations m LEFT JOIN sync_uploaded_mutations u ON u.account_id=?1 AND u.mutation_id=m.id WHERE u.mutation_id IS NULL",
-            params![account_id],
-            |row| row.get::<_, i64>(0),
-        )?
-        .max(0) as usize
+        pending_mutation_count(&db, account_id)?
     } else {
         0
     };
     let last_pushed_at = state_row.and_then(|(_, pushed)| pushed);
-    let pending_downloaded_mutations = db
+    let unsupported_downloaded_mutations = db
         .query_row(
-            "SELECT COUNT(*) FROM sync_received_mutations WHERE account_id=?1 AND applied=0",
+            "SELECT COUNT(*) FROM sync_received_mutations WHERE account_id=?1 AND outcome='deferred_unknown_type'",
             params![account_id],
             |row| row.get::<_, i64>(0),
         )?
@@ -3405,7 +3499,7 @@ fn encrypted_sync_status(state: &AppState, account_id: &str) -> Result<Encrypted
         account_id: account_id.into(),
         device_id: current_device,
         pending_mutations,
-        pending_downloaded_mutations,
+        unsupported_downloaded_mutations,
         last_pushed_at,
         message,
     })
@@ -3682,21 +3776,52 @@ async fn revoke_sync_device(
     .map_err(|error| AppError::Background(error.to_string()))?
 }
 
+/// How many local mutations are still waiting to upload.
+///
+/// Shares the replication filter with `prepare_sync_outbox` so the badge can never count work that
+/// will not actually be sent.
+fn pending_mutation_count(conn: &Connection, account_id: &str) -> Result<usize> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM mutations m
+         LEFT JOIN sync_uploaded_mutations u ON u.account_id=?1 AND u.mutation_id=m.id
+         WHERE u.mutation_id IS NULL AND m.entity_type IN {}",
+        replicated_entity_type_filter()
+    );
+    let mut binds: Vec<&dyn rusqlite::ToSql> = vec![&account_id];
+    for entity_type in REPLICATED_ENTITY_TYPES.iter() {
+        binds.push(entity_type);
+    }
+    Ok(conn
+        .query_row(&sql, binds.as_slice(), |row| row.get::<_, i64>(0))?
+        .max(0) as usize)
+}
+
 fn prepare_sync_outbox(
     conn: &mut Connection,
     account_id: Uuid,
     material: &sync_crypto::SyncKeyMaterial,
 ) -> Result<Vec<sync_transport::EncryptedMutation>> {
     let pending = {
-        let mut statement = conn.prepare(
+        // The entity-type filter MUST stay in SQL. Filtering in Rust after the LIMIT would let
+        // local-only churn (a plan snapshot is rewritten on every replan) fill the page and starve
+        // real uploads indefinitely.
+        let sql = format!(
             "SELECT m.id,m.entity_type,m.entity_id,m.operation,m.hlc,m.tombstone,m.payload,o.envelope
              FROM mutations m
              LEFT JOIN sync_uploaded_mutations u ON u.account_id=?1 AND u.mutation_id=m.id
              LEFT JOIN sync_outbox o ON o.account_id=?1 AND o.mutation_id=m.id
-             WHERE u.mutation_id IS NULL ORDER BY m.hlc,m.id LIMIT 100",
-        )?;
+             WHERE u.mutation_id IS NULL AND m.entity_type IN {}
+             ORDER BY m.hlc,m.id LIMIT 100",
+            replicated_entity_type_filter()
+        );
+        let account = account_id.to_string();
+        let mut binds: Vec<&dyn rusqlite::ToSql> = vec![&account];
+        for entity_type in REPLICATED_ENTITY_TYPES.iter() {
+            binds.push(entity_type);
+        }
+        let mut statement = conn.prepare(&sql)?;
         let rows = statement
-            .query_map(params![account_id.to_string()], |row| {
+            .query_map(binds.as_slice(), |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -3717,21 +3842,34 @@ fn prepare_sync_outbox(
     {
         let mutation_uuid = Uuid::parse_str(&mutation_id)
             .map_err(|_| AppError::Invalid("A local mutation ID is invalid".into()))?;
-        let envelope = if let Some(saved) = saved {
-            let envelope: sync_transport::EncryptedMutation = serde_json::from_str(&saved)
-                .map_err(|_| AppError::Invalid("The encrypted sync outbox is invalid".into()))?;
-            if envelope.mutation_id != mutation_uuid
-                || envelope.account_id != account_id
-                || envelope.entity_id.to_string() != entity_id
-                || envelope.entity_type != entity_type
-                || envelope.logical_timestamp != hlc
-                || envelope.tombstone != (tombstone != 0)
-                || envelope.schema_version != 2
-            {
-                return Err(AppError::Invalid(
-                    "The encrypted sync outbox does not match this profile".into(),
-                ));
+        // A saved envelope is reused byte-for-byte so a crash retry cannot re-encrypt the same
+        // mutation ID under a fresh nonce. An envelope written by an older protocol version has no
+        // usable signature, so it is discarded and re-encrypted rather than uploaded as-is.
+        let reusable = match saved {
+            Some(saved) => {
+                let envelope: sync_transport::EncryptedMutation = serde_json::from_str(&saved)
+                    .map_err(|_| AppError::Invalid("The encrypted sync outbox is invalid".into()))?;
+                if envelope.mutation_id != mutation_uuid
+                    || envelope.account_id != account_id
+                    || envelope.entity_id.to_string() != entity_id
+                    || envelope.entity_type != entity_type
+                    || envelope.logical_timestamp != hlc
+                    || envelope.tombstone != (tombstone != 0)
+                {
+                    return Err(AppError::Invalid(
+                        "The encrypted sync outbox does not match this profile".into(),
+                    ));
+                }
+                let signed_by_this_device = sync_transport::verify_mutation_signature(
+                    &envelope,
+                    &material.signing_public_key,
+                )
+                .is_ok();
+                signed_by_this_device.then_some(envelope)
             }
+            None => None,
+        };
+        let envelope = if let Some(envelope) = reusable {
             envelope
         } else {
             let local = sync_transport::LocalMutation {
@@ -3744,17 +3882,14 @@ fn prepare_sync_outbox(
                 tombstone: tombstone != 0,
                 payload,
             };
-            let envelope = sync_transport::encrypt_mutation(
-                &material.account_key,
-                account_id,
-                material.device_id,
-                &local,
-            )?;
+            let envelope = sync_transport::encrypt_mutation(material, account_id, &local)?;
             let serialized = serde_json::to_string(&envelope).map_err(|_| {
                 AppError::Invalid("The encrypted outbox could not be encoded".into())
             })?;
             transaction.execute(
-                "INSERT INTO sync_outbox(account_id,mutation_id,envelope,created_at) VALUES(?1,?2,?3,?4)",
+                "INSERT INTO sync_outbox(account_id,mutation_id,envelope,created_at)
+                 VALUES(?1,?2,?3,?4)
+                 ON CONFLICT(account_id,mutation_id) DO UPDATE SET envelope=excluded.envelope,created_at=excluded.created_at",
                 params![account_id.to_string(), mutation_id, serialized, Utc::now().to_rfc3339()],
             )?;
             envelope
@@ -3805,7 +3940,7 @@ async fn push_encrypted_mutations(
             return encrypted_sync_status(&state, &account_id);
         }
         let client = sync_transport::CloudSyncClient::compiled()?;
-        let response = client.push_mutations(&access_token, &envelopes)?;
+        let response = client.push_mutations(&access_token, material.device_id, &envelopes)?;
         if !response.cursor.chars().all(|value| value.is_ascii_digit())
             || response.cursor.len() > 20
             || response.accepted > envelopes.len()
@@ -3849,6 +3984,55 @@ struct CanonicalMutationV2 {
     snapshot: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     set_changes: Vec<SetElementChange>,
+}
+
+/// Entity types that are recorded in the local mutation log but deliberately never leave this
+/// computer. They have no `canonical_table` mapping, so a peer could not apply them anyway; listing
+/// them here is the explicit statement that the omission is a product decision, not an oversight.
+///
+/// This governs the OUTBOUND direction only. Nothing inbound consults it -- see the note on
+/// `ApplyOutcome::Deferred` for why an unmapped incoming type must be staged rather than dropped.
+const LOCAL_ONLY_ENTITY_TYPES: [&str; 6] = [
+    "plan",
+    "plan_block",
+    "document",
+    "reminder",
+    "notification_preferences",
+    "integration_connection",
+];
+
+/// Every entity type that is replicated to other computers, in the form the outbox SQL needs.
+const REPLICATED_ENTITY_TYPES: [&str; 14] = [
+    "task",
+    "assignment",
+    "exam",
+    "course",
+    "commitment",
+    "academic_term",
+    "instructor",
+    "class_meeting_series",
+    "academic_calendar_event",
+    "student_profile",
+    "planning_preferences",
+    "availability_rule",
+    "import_candidate",
+    "source_conflict",
+];
+
+/// The single source of truth for "does this entity type participate in sync", derived from the
+/// apply-side mapping so the two can never disagree.
+fn is_replicated_entity_type(entity_type: &str) -> bool {
+    canonical_table(entity_type).is_some()
+}
+
+/// A `WHERE entity_type IN (?,?,...)` fragment plus its bind values.
+fn replicated_entity_type_filter() -> String {
+    let placeholders = REPLICATED_ENTITY_TYPES
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("({placeholders})")
 }
 
 fn canonical_table(entity_type: &str) -> Option<(&'static str, &'static str)> {
@@ -4098,11 +4282,90 @@ fn rebuild_task_dependencies_from_set(conn: &Connection, entity_id: &str) -> Res
     Ok(())
 }
 
+/// What happened to one downloaded mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApplyOutcome {
+    /// Merged into a canonical table; the version register now reflects it.
+    Applied,
+    /// A newer local write already wins; the register is left alone.
+    Superseded,
+    /// This build has no mapping for the entity type, so it is stored verbatim and retried after an
+    /// upgrade. Crucially this is NOT the same as "declared local-only": inbound classification must
+    /// stay two-valued, or a build that predates a type becoming replicated would silently discard
+    /// a peer's real records instead of holding them.
+    Deferred,
+}
+
+impl ApplyOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            ApplyOutcome::Applied => "applied",
+            ApplyOutcome::Superseded => "superseded",
+            ApplyOutcome::Deferred => "deferred_unknown_type",
+        }
+    }
+}
+
+/// Record a peer computer's public keys, pinning them on first use.
+///
+/// The signing key arrives from the server, so accepting a replacement would let a hostile or
+/// compromised server swap in its own key and defeat signature verification entirely. A changed key
+/// is therefore an error the student must resolve by re-approving the computer.
+fn upsert_peer_device(
+    conn: &Connection,
+    account_id: &str,
+    device: &sync_transport::PendingDevice,
+) -> Result<()> {
+    let existing = conn
+        .query_row(
+            "SELECT signing_public_key FROM sync_devices WHERE account_id=?1 AND device_id=?2",
+            params![account_id, device.device_id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if existing
+        .as_deref()
+        .is_some_and(|pinned| pinned != device.signing_public_key)
+    {
+        return Err(AppError::Invalid(
+            "A paired computer's signing key changed. Remove and re-approve that computer before synchronizing.".into(),
+        ));
+    }
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO sync_devices(account_id,device_id,public_key,signing_public_key,display_name,platform,authorized,revoked,first_seen_at,refreshed_at)
+         VALUES(?1,?2,?3,?4,?5,?6,1,0,?7,?7)
+         ON CONFLICT(account_id,device_id) DO UPDATE SET
+           public_key=excluded.public_key,display_name=excluded.display_name,
+           platform=excluded.platform,authorized=1,refreshed_at=excluded.refreshed_at",
+        params![
+            account_id,
+            device.device_id.to_string(),
+            device.public_key,
+            device.signing_public_key,
+            device.display_name,
+            device.platform,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+fn peer_signing_key(conn: &Connection, account_id: &str, device_id: Uuid) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT signing_public_key FROM sync_devices WHERE account_id=?1 AND device_id=?2",
+            params![account_id, device_id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
 fn apply_canonical_mutation(
     conn: &Connection,
     envelope: &sync_transport::EncryptedMutation,
     plaintext: &sync_transport::DecryptedMutation,
-) -> Result<bool> {
+) -> Result<ApplyOutcome> {
     let payload: CanonicalMutationV2 = serde_json::from_str(&plaintext.payload)
         .map_err(|_| AppError::Invalid("A synchronized canonical payload is invalid".into()))?;
     if payload.schema_version != 2
@@ -4147,130 +4410,71 @@ fn apply_canonical_mutation(
             &envelope.entity_id.to_string(),
             payload.snapshot.as_ref(),
         )?;
-        return Ok(false);
+        return Ok(ApplyOutcome::Superseded);
     }
 
-    if let Some((table, id_column)) = canonical_table(&envelope.entity_type) {
-        if envelope.tombstone {
-            if envelope.entity_type == "task" {
-                let completed = conn
-                    .query_row(
-                        "SELECT completed FROM tasks WHERE id=?1",
-                        params![envelope.entity_id.to_string()],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .optional()?
-                    .unwrap_or(0);
-                if completed == 0 {
-                    conn.execute(
-                        "DELETE FROM tasks WHERE id=?1",
-                        params![envelope.entity_id.to_string()],
-                    )?;
-                }
-            } else {
+    // No mapping means this build does not understand the type yet. Return before the register is
+    // touched, so the mutation can be replayed verbatim once a later build does understand it.
+    let Some((table, id_column)) = canonical_table(&envelope.entity_type) else {
+        return Ok(ApplyOutcome::Deferred);
+    };
+    if envelope.tombstone {
+        if envelope.entity_type == "task" {
+            let completed = conn
+                .query_row(
+                    "SELECT completed FROM tasks WHERE id=?1",
+                    params![envelope.entity_id.to_string()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            if completed == 0 {
                 conn.execute(
-                    &format!("DELETE FROM {table} WHERE {id_column}=?1"),
+                    "DELETE FROM tasks WHERE id=?1",
                     params![envelope.entity_id.to_string()],
                 )?;
             }
-        } else if let Some(mut snapshot) = payload.snapshot {
-            if envelope.entity_type == "task" {
-                let current = conn
-                    .query_row(
-                        "SELECT due_at,completed FROM tasks WHERE id=?1",
-                        params![envelope.entity_id.to_string()],
-                        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
-                    )
-                    .optional()?;
-                let proposed_due = snapshot
-                    .get("due_at")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_owned);
-                if let Some((current_due, completed)) = current {
-                    if current_due != proposed_due {
-                        sync_conflict(
-                            conn,
-                            &envelope.entity_type,
-                            &envelope.entity_id.to_string(),
-                            current_due.clone(),
-                            proposed_due.clone(),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )?;
-                        snapshot.insert(
-                            "due_at".into(),
-                            current_due
-                                .map(serde_json::Value::String)
-                                .unwrap_or(serde_json::Value::Null),
-                        );
-                        if completed != 0 {
-                            snapshot.insert("completed".into(), 1.into());
-                        }
-                        upsert_canonical_snapshot(
-                            conn,
-                            table,
-                            id_column,
-                            &envelope.entity_id.to_string(),
-                            &snapshot,
-                        )?;
-                    } else {
-                        if completed != 0 {
-                            snapshot.insert("completed".into(), 1.into());
-                        }
-                        upsert_canonical_snapshot(
-                            conn,
-                            table,
-                            id_column,
-                            &envelope.entity_id.to_string(),
-                            &snapshot,
-                        )?;
+        } else {
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE {id_column}=?1"),
+                params![envelope.entity_id.to_string()],
+            )?;
+        }
+    } else if let Some(mut snapshot) = payload.snapshot {
+        if envelope.entity_type == "task" {
+            let current = conn
+                .query_row(
+                    "SELECT due_at,completed FROM tasks WHERE id=?1",
+                    params![envelope.entity_id.to_string()],
+                    |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?;
+            let proposed_due = snapshot
+                .get("due_at")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            if let Some((current_due, completed)) = current {
+                if current_due != proposed_due {
+                    sync_conflict(
+                        conn,
+                        &envelope.entity_type,
+                        &envelope.entity_id.to_string(),
+                        current_due.clone(),
+                        proposed_due.clone(),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
+                    snapshot.insert(
+                        "due_at".into(),
+                        current_due
+                            .map(serde_json::Value::String)
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    if completed != 0 {
+                        snapshot.insert("completed".into(), 1.into());
                     }
-                } else {
-                    upsert_canonical_snapshot(
-                        conn,
-                        table,
-                        id_column,
-                        &envelope.entity_id.to_string(),
-                        &snapshot,
-                    )?;
-                }
-                rebuild_task_dependencies_from_set(conn, &envelope.entity_id.to_string())?;
-            } else if envelope.entity_type == "commitment" {
-                let current = conn
-                    .query_row(
-                        "SELECT starts_at,ends_at FROM commitments WHERE id=?1",
-                        params![envelope.entity_id.to_string()],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                    )
-                    .optional()?;
-                let proposed_start = snapshot
-                    .get("starts_at")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_owned);
-                let proposed_end = snapshot
-                    .get("ends_at")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_owned);
-                if current.as_ref().is_some_and(|(start, end)| {
-                    Some(start.as_str()) != proposed_start.as_deref()
-                        || Some(end.as_str()) != proposed_end.as_deref()
-                }) {
-                    let (start, end) = current.unwrap();
-                    sync_conflict(
-                        conn,
-                        &envelope.entity_type,
-                        &envelope.entity_id.to_string(),
-                        None,
-                        None,
-                        Some(start.clone()),
-                        proposed_start.clone(),
-                        Some(end.clone()),
-                        proposed_end.clone(),
-                    )?;
-                    snapshot.insert("starts_at".into(), start.into());
-                    snapshot.insert("ends_at".into(), end.into());
                     upsert_canonical_snapshot(
                         conn,
                         table,
@@ -4279,6 +4483,9 @@ fn apply_canonical_mutation(
                         &snapshot,
                     )?;
                 } else {
+                    if completed != 0 {
+                        snapshot.insert("completed".into(), 1.into());
+                    }
                     upsert_canonical_snapshot(
                         conn,
                         table,
@@ -4287,41 +4494,50 @@ fn apply_canonical_mutation(
                         &snapshot,
                     )?;
                 }
-            } else if envelope.entity_type == "academic_term" {
-                let current = conn
-                    .query_row(
-                        "SELECT starts_on,ends_on FROM academic_terms WHERE id=?1",
-                        params![envelope.entity_id.to_string()],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                    )
-                    .optional()?;
-                let proposed_start = snapshot
-                    .get("starts_on")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_owned);
-                let proposed_end = snapshot
-                    .get("ends_on")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_owned);
-                if current.as_ref().is_some_and(|(start, end)| {
-                    Some(start.as_str()) != proposed_start.as_deref()
-                        || Some(end.as_str()) != proposed_end.as_deref()
-                }) {
-                    let (start, end) = current.unwrap();
-                    sync_conflict(
-                        conn,
-                        &envelope.entity_type,
-                        &envelope.entity_id.to_string(),
-                        None,
-                        None,
-                        Some(start.clone()),
-                        proposed_start.clone(),
-                        Some(end.clone()),
-                        proposed_end.clone(),
-                    )?;
-                    snapshot.insert("starts_on".into(), start.into());
-                    snapshot.insert("ends_on".into(), end.into());
-                }
+            } else {
+                upsert_canonical_snapshot(
+                    conn,
+                    table,
+                    id_column,
+                    &envelope.entity_id.to_string(),
+                    &snapshot,
+                )?;
+            }
+            rebuild_task_dependencies_from_set(conn, &envelope.entity_id.to_string())?;
+        } else if envelope.entity_type == "commitment" {
+            let current = conn
+                .query_row(
+                    "SELECT starts_at,ends_at FROM commitments WHERE id=?1",
+                    params![envelope.entity_id.to_string()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let proposed_start = snapshot
+                .get("starts_at")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let proposed_end = snapshot
+                .get("ends_at")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            if current.as_ref().is_some_and(|(start, end)| {
+                Some(start.as_str()) != proposed_start.as_deref()
+                    || Some(end.as_str()) != proposed_end.as_deref()
+            }) {
+                let (start, end) = current.unwrap();
+                sync_conflict(
+                    conn,
+                    &envelope.entity_type,
+                    &envelope.entity_id.to_string(),
+                    None,
+                    None,
+                    Some(start.clone()),
+                    proposed_start.clone(),
+                    Some(end.clone()),
+                    proposed_end.clone(),
+                )?;
+                snapshot.insert("starts_at".into(), start.into());
+                snapshot.insert("ends_at".into(), end.into());
                 upsert_canonical_snapshot(
                     conn,
                     table,
@@ -4338,6 +4554,56 @@ fn apply_canonical_mutation(
                     &snapshot,
                 )?;
             }
+        } else if envelope.entity_type == "academic_term" {
+            let current = conn
+                .query_row(
+                    "SELECT starts_on,ends_on FROM academic_terms WHERE id=?1",
+                    params![envelope.entity_id.to_string()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let proposed_start = snapshot
+                .get("starts_on")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let proposed_end = snapshot
+                .get("ends_on")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            if current.as_ref().is_some_and(|(start, end)| {
+                Some(start.as_str()) != proposed_start.as_deref()
+                    || Some(end.as_str()) != proposed_end.as_deref()
+            }) {
+                let (start, end) = current.unwrap();
+                sync_conflict(
+                    conn,
+                    &envelope.entity_type,
+                    &envelope.entity_id.to_string(),
+                    None,
+                    None,
+                    Some(start.clone()),
+                    proposed_start.clone(),
+                    Some(end.clone()),
+                    proposed_end.clone(),
+                )?;
+                snapshot.insert("starts_on".into(), start.into());
+                snapshot.insert("ends_on".into(), end.into());
+            }
+            upsert_canonical_snapshot(
+                conn,
+                table,
+                id_column,
+                &envelope.entity_id.to_string(),
+                &snapshot,
+            )?;
+        } else {
+            upsert_canonical_snapshot(
+                conn,
+                table,
+                id_column,
+                &envelope.entity_id.to_string(),
+                &snapshot,
+            )?;
         }
     }
     conn.execute(
@@ -4347,7 +4613,48 @@ fn apply_canonical_mutation(
            hlc=excluded.hlc,device_id=excluded.device_id,tombstone=excluded.tombstone,mutation_id=excluded.mutation_id",
         params![envelope.entity_type, envelope.entity_id.to_string(), envelope.logical_timestamp, envelope.device_id.to_string(), i64::from(envelope.tombstone), envelope.mutation_id.to_string()],
     )?;
-    Ok(true)
+    Ok(ApplyOutcome::Applied)
+}
+
+/// Retry mutations held back by an earlier build that did not recognize their entity type.
+///
+/// Ordering by (logical_timestamp, device_id) reproduces the live last-writer-wins tie-break
+/// exactly, so a drained backlog converges to the same state as if it had been applied on arrival.
+fn drain_deferred_mutations(conn: &Connection, account_id: &str) -> Result<usize> {
+    let deferred = {
+        let mut statement = conn.prepare(
+            "SELECT mutation_id,envelope,operation,payload FROM sync_received_mutations
+             WHERE account_id=?1 AND outcome='deferred_unknown_type'
+             ORDER BY logical_timestamp,device_id,mutation_id",
+        )?;
+        let rows = statement
+            .query_map(params![account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut drained = 0_usize;
+    for (mutation_id, serialized, operation, payload) in deferred {
+        let envelope: sync_transport::EncryptedMutation = serde_json::from_str(&serialized)
+            .map_err(|_| AppError::Invalid("A staged sync envelope is invalid".into()))?;
+        let plaintext = sync_transport::DecryptedMutation { operation, payload };
+        let outcome = apply_canonical_mutation(conn, &envelope, &plaintext)?;
+        if outcome == ApplyOutcome::Deferred {
+            continue;
+        }
+        conn.execute(
+            "UPDATE sync_received_mutations SET outcome=?3,applied=1 WHERE account_id=?1 AND mutation_id=?2",
+            params![account_id, mutation_id, outcome.as_str()],
+        )?;
+        drained += 1;
+    }
+    Ok(drained)
 }
 
 #[tauri::command]
@@ -4388,6 +4695,24 @@ async fn pull_encrypted_mutations(
             cursor
         };
         let client = sync_transport::CloudSyncClient::compiled()?;
+        // Warm the pinned peer-key cache before pulling, so a newly approved computer's first
+        // mutations can be verified without a mid-loop round trip.
+        let peers = client.authorized_devices(&access_token, material.device_id)?;
+        {
+            let db = state.db.lock().unwrap();
+            for peer in &peers {
+                upsert_peer_device(&db, &account_id, peer)?;
+            }
+        }
+        {
+            // Anything an earlier build could not understand may be applicable now.
+            let mut db = state.db.lock().unwrap();
+            let transaction = db.transaction()?;
+            if drain_deferred_mutations(&transaction, &account_id)? > 0 {
+                regenerate_plan(&transaction, None)?;
+            }
+            transaction.commit()?;
+        }
         for _ in 0..10 {
             let response =
                 client.pull_mutations(&access_token, material.device_id, &cursor, 500)?;
@@ -4405,9 +4730,21 @@ async fn pull_encrypted_mutations(
             }
             let mut decoded = Vec::with_capacity(response.mutations.len());
             for envelope in response.mutations {
+                let signing_key = {
+                    let db = state.db.lock().unwrap();
+                    peer_signing_key(&db, &account_id, envelope.device_id)?
+                };
+                // A mutation from a computer whose key we have never pinned cannot be verified.
+                // Stop without advancing the cursor rather than trusting it or dropping it.
+                let Some(signing_key) = signing_key else {
+                    return Err(AppError::Invalid(
+                        "A change arrived from a computer this profile has not paired with. Approve that computer, then synchronize again.".into(),
+                    ));
+                };
                 let plaintext = sync_transport::decrypt_mutation(
                     &material.account_key,
                     account_uuid,
+                    &signing_key,
                     &envelope,
                 )?;
                 let serialized = serde_json::to_string(&envelope).map_err(|_| {
@@ -4438,17 +4775,28 @@ async fn pull_encrypted_mutations(
                         params![mutation_id],
                         |row| row.get::<_, i64>(0),
                     )? != 0;
+                    let outcome = if already_local {
+                        ApplyOutcome::Applied
+                    } else {
+                        apply_canonical_mutation(&transaction, &envelope, &plaintext)?
+                    };
                     transaction.execute(
-                        "INSERT OR IGNORE INTO sync_received_mutations(account_id,mutation_id,envelope,operation,payload,received_at,applied) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                        params![account_id, mutation_id, serialized, plaintext.operation, plaintext.payload, now, i64::from(already_local)],
+                        "INSERT OR IGNORE INTO sync_received_mutations(account_id,mutation_id,envelope,operation,payload,received_at,applied,outcome,entity_type,logical_timestamp,device_id)
+                         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                        params![
+                            account_id,
+                            mutation_id,
+                            serialized,
+                            plaintext.operation,
+                            plaintext.payload,
+                            now,
+                            i64::from(outcome != ApplyOutcome::Deferred),
+                            outcome.as_str(),
+                            envelope.entity_type,
+                            envelope.logical_timestamp,
+                            envelope.device_id.to_string()
+                        ],
                     )?;
-                    if !already_local {
-                        apply_canonical_mutation(&transaction, &envelope, &plaintext)?;
-                        transaction.execute(
-                            "UPDATE sync_received_mutations SET applied=1 WHERE account_id=?1 AND mutation_id=?2",
-                            params![account_id, mutation_id],
-                        )?;
-                    }
                 }
                 regenerate_plan(&transaction, None)?;
                 transaction.execute(
@@ -6848,6 +7196,11 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    /// A syntactically valid signature for tests that exercise merge behaviour directly. Signature
+    /// verification happens at the transport boundary, before apply_canonical_mutation is reached,
+    /// and is covered by the sync_transport tests.
+    const TEST_SIGNATURE: &str = "G0000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
     #[test]
     fn vault_ciphertext_never_contains_plaintext() {
         let key = random_key();
@@ -8127,14 +8480,7 @@ mod tests {
             params![mutation_id.to_string(), entity_id.to_string(), format!("1786700000000-0000000000-{}", material_device_id()), material_device_id(), payload],
         ).unwrap();
         let account_id = Uuid::new_v4();
-        let material = sync_crypto::SyncKeyMaterial {
-            account_key: Zeroizing::new([9_u8; 32]),
-            device_id: Uuid::parse_str(&material_device_id()).unwrap(),
-            public_key: "test-public-key".into(),
-            signing_public_key: "test-signing-public-key".into(),
-            device_private_key: Zeroizing::new([2_u8; 32]),
-            signing_private_key: Zeroizing::new(vec![1]),
-        };
+        let material = sync_crypto::SyncKeyMaterial::for_test(Uuid::parse_str(&material_device_id()).unwrap(), [9_u8; 32]);
 
         let first = prepare_sync_outbox(&mut conn, account_id, &material).unwrap();
         let second = prepare_sync_outbox(&mut conn, account_id, &material).unwrap();
@@ -8153,6 +8499,260 @@ mod tests {
         assert!(!stored.contains("Private homework"));
         assert!(!stored.contains("completion_changed"));
         assert!(!stored.contains("completed"));
+    }
+
+    /// Insert a mutation row directly, bypassing `mutation()`, so tests can stage arbitrary entity
+    /// types without needing a matching canonical row to snapshot.
+    fn insert_raw_mutation(
+        conn: &Connection,
+        entity_type: &str,
+        entity_id: Uuid,
+        counter: u32,
+    ) -> Uuid {
+        let mutation_id = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "schemaVersion": 2,
+            "entityType": entity_type,
+            "entityId": entity_id,
+            "operation": "updated",
+            "snapshot": {"id": entity_id.to_string()},
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO mutations(id,entity_type,entity_id,operation,hlc,device_id,tombstone,payload) VALUES(?1,?2,?3,'updated',?4,?5,0,?6)",
+            params![
+                mutation_id.to_string(),
+                entity_type,
+                entity_id.to_string(),
+                format!("178670000{counter:04}-0000000000-{}", material_device_id()),
+                material_device_id(),
+                payload
+            ],
+        )
+        .unwrap();
+        mutation_id
+    }
+
+    #[test]
+    fn local_only_mutations_never_enter_the_encrypted_outbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn = open_database(&directory.path().join("local-only.db"), &random_key()).unwrap();
+        conn.execute("DELETE FROM mutations", []).unwrap();
+        for (index, entity_type) in LOCAL_ONLY_ENTITY_TYPES.iter().enumerate() {
+            insert_raw_mutation(&conn, entity_type, Uuid::new_v4(), index as u32);
+        }
+        let account_id = Uuid::new_v4();
+        let material = sync_crypto::SyncKeyMaterial::for_test(
+            Uuid::parse_str(&material_device_id()).unwrap(),
+            [9_u8; 32],
+        );
+        assert!(
+            prepare_sync_outbox(&mut conn, account_id, &material)
+                .unwrap()
+                .is_empty(),
+            "local-only records must never be encrypted and uploaded"
+        );
+        assert_eq!(
+            pending_mutation_count(&conn, &account_id.to_string()).unwrap(),
+            0,
+            "the pending badge must not count work that will never be sent"
+        );
+    }
+
+    #[test]
+    fn local_only_outbox_filter_does_not_starve_the_batch() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn = open_database(&directory.path().join("starve.db"), &random_key()).unwrap();
+        conn.execute("DELETE FROM mutations", []).unwrap();
+        // The outbox page is 100 rows. If the entity-type filter ran in Rust after the SQL LIMIT,
+        // this replan churn would consume every page and the task below would never upload.
+        for index in 0..150 {
+            insert_raw_mutation(&conn, "plan_block", Uuid::new_v4(), index);
+        }
+        let task_id = Uuid::new_v4();
+        insert_raw_mutation(&conn, "task", task_id, 200);
+        let account_id = Uuid::new_v4();
+        let material = sync_crypto::SyncKeyMaterial::for_test(
+            Uuid::parse_str(&material_device_id()).unwrap(),
+            [9_u8; 32],
+        );
+        let batch = prepare_sync_outbox(&mut conn, account_id, &material).unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].entity_id, task_id);
+    }
+
+    #[test]
+    fn mutation_does_not_advance_the_register_for_local_only_types() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("register.db"), &random_key()).unwrap();
+        conn.execute("DELETE FROM sync_entity_versions", []).unwrap();
+        let block_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO plan_blocks(id,task_id,starts_at,ends_at,locked,completed) VALUES(?1,?2,'2030-01-01T10:00:00Z','2030-01-01T11:00:00Z',0,0)",
+            params![block_id, Uuid::new_v4().to_string()],
+        )
+        .ok();
+        mutation(&conn, "plan_block", &block_id, "started", "{}").unwrap();
+        let registered: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_entity_versions WHERE entity_type='plan_block'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            registered, 0,
+            "a never-replicated type must not leave a high water mark in the version register"
+        );
+    }
+
+    #[test]
+    fn unknown_entity_types_are_staged_without_advancing_the_register() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("staged.db"), &random_key()).unwrap();
+        let entity_id = Uuid::new_v4();
+        let envelope = sync_transport::EncryptedMutation {
+            mutation_id: Uuid::new_v4(),
+            account_id: Uuid::new_v4(),
+            device_id: Uuid::new_v4(),
+            logical_timestamp: format!("1786700000000-0000000001-{}", Uuid::new_v4()),
+            entity_id,
+            entity_type: "seminar_group".into(),
+            nonce: "N".repeat(32),
+            ciphertext: "C".repeat(64),
+            schema_version: 3,
+            signature: TEST_SIGNATURE.into(),
+            tombstone: false,
+        };
+        let plaintext = sync_transport::DecryptedMutation {
+            operation: "updated".into(),
+            payload: serde_json::json!({
+                "schemaVersion": 2,
+                "entityType": "seminar_group",
+                "entityId": entity_id,
+                "operation": "updated",
+                "snapshot": {"id": entity_id.to_string()},
+            })
+            .to_string(),
+        };
+        // A type this build does not know is held, not dropped: a newer peer's real data must
+        // survive until this computer is upgraded.
+        assert_eq!(
+            apply_canonical_mutation(&conn, &envelope, &plaintext).unwrap(),
+            ApplyOutcome::Deferred
+        );
+        let registered: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_entity_versions WHERE entity_type='seminar_group'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            registered, 0,
+            "deferring must not advance the register, or the retry after upgrade would look stale"
+        );
+    }
+
+    #[test]
+    fn deferred_mutations_drain_in_logical_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("drain.db"), &random_key()).unwrap();
+        let account_id = Uuid::new_v4().to_string();
+        let task_id = Uuid::new_v4();
+        let device_id = Uuid::new_v4();
+        conn.execute(
+            "INSERT INTO tasks(id,title,minutes,created_at) VALUES(?1,'Original',60,'2030-01-01T00:00:00Z')",
+            params![task_id.to_string()],
+        )
+        .unwrap();
+        // Staged out of order on purpose: draining must settle on the later logical timestamp.
+        for (counter, title) in [("0000000001", "Earlier"), ("0000000009", "Later")] {
+            let envelope = sync_transport::EncryptedMutation {
+                mutation_id: Uuid::new_v4(),
+                account_id: Uuid::parse_str(&account_id).unwrap(),
+                device_id,
+                logical_timestamp: format!("1786700000000-{counter}-{device_id}"),
+                entity_id: task_id,
+                entity_type: "task".into(),
+                nonce: "N".repeat(32),
+                ciphertext: "C".repeat(64),
+                schema_version: 3,
+                signature: TEST_SIGNATURE.into(),
+                tombstone: false,
+            };
+            let payload = serde_json::json!({
+                "schemaVersion": 2,
+                "entityType": "task",
+                "entityId": task_id,
+                "operation": "updated",
+                "snapshot": {"id": task_id.to_string(), "title": title, "minutes": 60, "created_at": "2030-01-01T00:00:00Z"},
+            })
+            .to_string();
+            conn.execute(
+                "INSERT INTO sync_received_mutations(account_id,mutation_id,envelope,operation,payload,received_at,applied,outcome,entity_type,logical_timestamp,device_id)
+                 VALUES(?1,?2,?3,'updated',?4,'2030-01-01T00:00:00Z',0,'deferred_unknown_type','task',?5,?6)",
+                params![
+                    account_id,
+                    envelope.mutation_id.to_string(),
+                    serde_json::to_string(&envelope).unwrap(),
+                    payload,
+                    envelope.logical_timestamp,
+                    device_id.to_string()
+                ],
+            )
+            .unwrap();
+        }
+        assert_eq!(drain_deferred_mutations(&conn, &account_id).unwrap(), 2);
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM tasks WHERE id=?1",
+                params![task_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "Later", "a drained backlog must converge like a live apply");
+        let still_deferred: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_received_mutations WHERE outcome='deferred_unknown_type'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_deferred, 0);
+    }
+
+    #[test]
+    fn peer_signing_keys_are_pinned_on_first_use() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("pinned.db"), &random_key()).unwrap();
+        let account_id = Uuid::new_v4().to_string();
+        let device_id = Uuid::new_v4();
+        let peer = sync_transport::PendingDevice {
+            device_id,
+            public_key: "P".repeat(43),
+            signing_public_key: "S".repeat(43),
+            display_name: "Alex's laptop".into(),
+            platform: "windows-x64".into(),
+        };
+        upsert_peer_device(&conn, &account_id, &peer).unwrap();
+        assert_eq!(
+            peer_signing_key(&conn, &account_id, device_id).unwrap(),
+            Some("S".repeat(43))
+        );
+        // A hostile server could otherwise swap in its own key and make verification meaningless.
+        let impostor = sync_transport::PendingDevice {
+            signing_public_key: "X".repeat(43),
+            ..peer.clone()
+        };
+        assert!(
+            upsert_peer_device(&conn, &account_id, &impostor).is_err(),
+            "a changed peer signing key must be refused, not silently accepted"
+        );
+        assert_eq!(
+            peer_signing_key(&conn, &account_id, device_id).unwrap(),
+            Some("S".repeat(43))
+        );
     }
 
     #[test]
@@ -8178,14 +8778,7 @@ mod tests {
         assert_eq!(device_id, target.to_string());
         assert_eq!(persistent_device_id(&conn).unwrap(), target.to_string());
 
-        let material = sync_crypto::SyncKeyMaterial {
-            account_key: Zeroizing::new([9_u8; 32]),
-            device_id: target,
-            public_key: "test-public-key".into(),
-            signing_public_key: "test-signing-public-key".into(),
-            device_private_key: Zeroizing::new([2_u8; 32]),
-            signing_private_key: Zeroizing::new(vec![1]),
-        };
+        let material = sync_crypto::SyncKeyMaterial::for_test(target, [9_u8; 32]);
         assert_eq!(
             prepare_sync_outbox(&mut conn, Uuid::parse_str(account_id).unwrap(), &material)
                 .unwrap()
@@ -8239,7 +8832,8 @@ mod tests {
                     entity_type: "task".into(),
                     nonce: "N".repeat(32),
                     ciphertext: "C".repeat(64),
-                    schema_version: 2,
+                    schema_version: 3,
+                    signature: TEST_SIGNATURE.into(),
                     tombstone: false,
                 },
                 sync_transport::DecryptedMutation {
@@ -8308,14 +8902,9 @@ mod tests {
 
     #[test]
     fn every_canonical_entity_type_is_either_replicated_or_explicitly_local() {
-        const LOCAL_ONLY: [&str; 6] = [
-            "plan",
-            "plan_block",
-            "document",
-            "reminder",
-            "notification_preferences",
-            "integration_connection",
-        ];
+        // Consumes the production constants rather than restating them, so the test cannot drift
+        // away from the lists the outbox and apply path actually use.
+        const LOCAL_ONLY: [&str; 6] = LOCAL_ONLY_ENTITY_TYPES;
         // Every entity type canonical_entity_snapshot can produce a payload for.
         const SNAPSHOTTABLE: [&str; 20] = [
             "task",
@@ -8365,6 +8954,21 @@ mod tests {
                     "{entity_type} would be dropped on apply without being declared local-only"
                 ),
             }
+        }
+        // The outbox SQL binds REPLICATED_ENTITY_TYPES literally, so it must agree with the
+        // predicate derived from canonical_table or uploads would silently omit a live type.
+        for entity_type in REPLICATED_ENTITY_TYPES {
+            assert!(
+                is_replicated_entity_type(entity_type),
+                "{entity_type} is listed for upload but has no canonical table"
+            );
+        }
+        for entity_type in SNAPSHOTTABLE {
+            assert_eq!(
+                is_replicated_entity_type(entity_type),
+                REPLICATED_ENTITY_TYPES.contains(&entity_type),
+                "{entity_type} disagrees between the upload list and the apply mapping"
+            );
         }
     }
 
@@ -8490,7 +9094,8 @@ mod tests {
                 entity_type,
                 nonce: "N".repeat(32),
                 ciphertext: "C".repeat(64),
-                schema_version: 2,
+                schema_version: 3,
+                signature: TEST_SIGNATURE.into(),
                 tombstone: false,
             };
             let decrypted = sync_transport::DecryptedMutation { operation, payload };
@@ -8559,7 +9164,8 @@ mod tests {
                     entity_type: "task".into(),
                     nonce: "N".repeat(32),
                     ciphertext: "C".repeat(64),
-                    schema_version: 2,
+                    schema_version: 3,
+                    signature: TEST_SIGNATURE.into(),
                     tombstone: false,
                 },
                 sync_transport::DecryptedMutation {

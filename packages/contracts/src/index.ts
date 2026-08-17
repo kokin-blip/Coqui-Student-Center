@@ -12,12 +12,43 @@ export const DeviceRegistration = z.object({
 });
 export type DeviceRegistration = z.infer<typeof DeviceRegistration>;
 
+/** A raw 64-byte Ed25519 signature, base64url without padding. */
+const ed25519Signature = z.string().regex(/^[A-Za-z0-9_-]{86}$/);
+
 export const EncryptedMutation = z.object({
   mutationId:z.string().uuid(), accountId:z.string().uuid(), deviceId:z.string().uuid(),
   logicalTimestamp:z.string().regex(/^\d{13}-\d{10}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/), entityId:z.string().uuid(), entityType:z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/),
-  nonce:opaqueBase64Url.max(128), ciphertext:opaqueBase64Url, schemaVersion:z.literal(2), tombstone:z.boolean().default(false)
+  nonce:opaqueBase64Url.max(128), ciphertext:opaqueBase64Url, schemaVersion:z.literal(3), signature:ed25519Signature, tombstone:z.boolean().default(false)
 });
 export type EncryptedMutation = z.infer<typeof EncryptedMutation>;
+
+/**
+ * The exact bytes a device signs when it authors an encrypted mutation.
+ *
+ * Authorship cannot rest on the AEAD alone: the associated data is authenticated under the shared
+ * ACCOUNT key, so any device holding it could re-encrypt different plaintext under another device's
+ * metadata. The signature therefore covers the routing metadata AND the nonce and ciphertext.
+ *
+ * This lives beside the schema so the field order cannot drift away from it. The Rust signer builds
+ * the same JSON via serde field order; a golden vector on both sides fails loudly if either moves.
+ */
+export function encryptedMutationSigningMessage(mutation:Omit<EncryptedMutation,"signature">):string{
+  return JSON.stringify({
+    aad:{
+      protocol:"student-center.encrypted-mutation.v3",
+      mutationId:mutation.mutationId,
+      accountId:mutation.accountId,
+      deviceId:mutation.deviceId,
+      logicalTimestamp:mutation.logicalTimestamp,
+      entityId:mutation.entityId,
+      entityType:mutation.entityType,
+      schemaVersion:mutation.schemaVersion,
+      tombstone:mutation.tombstone
+    },
+    nonce:mutation.nonce,
+    ciphertext:mutation.ciphertext
+  });
+}
 
 export const EncryptedObjectManifest = z.object({
   documentId:z.string().uuid(), encryptedMetadata:opaqueBase64Url, chunkHashes:z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(10_000),
@@ -31,7 +62,7 @@ export type EncryptedObjectChunk = z.infer<typeof EncryptedObjectChunk>;
 
 export const DeviceEnvelope = z.object({
   envelopeId:z.string().uuid(), targetDeviceId:z.string().uuid(), senderDeviceId:z.string().uuid(), encryptedAccountKey:opaqueBase64Url.max(4096),
-  signature:opaqueBase64Url.max(4096), createdAt:z.string().datetime(), expiresAt:z.string().datetime()
+  signature:ed25519Signature, createdAt:z.string().datetime(), expiresAt:z.string().datetime()
 });
 export type DeviceEnvelope = z.infer<typeof DeviceEnvelope>;
 

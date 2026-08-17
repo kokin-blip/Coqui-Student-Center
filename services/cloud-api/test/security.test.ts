@@ -42,3 +42,18 @@ test("device approval recovery uses stable envelope IDs",async()=>{
   assert.match(sql,/unique index/i);
   assert.doesNotMatch(sql,/service_role/i);
 });
+
+// The conformance suite cannot reach RLS or triggers, so the database half of the push gate is
+// asserted here as migration text. A live project is still required to prove it actually runs.
+test("signed authorized mutations restrict inserts to approved, unrevoked devices",async()=>{
+  const sql=await readFile(new URL("../../../supabase/migrations/202608160001_signed_authorized_mutations.sql",import.meta.url),"utf8");
+  assert.match(sql,/drop policy if exists "student center mutations accept only the current account"/i,"the permissive insert policy must be removed, not merely supplemented");
+  assert.match(sql,/create policy "student center mutations accept only authorized devices"/i);
+  assert.match(sql,/device\.approved_at is not null/i);
+  assert.match(sql,/device\.revoked_at is null/i);
+  assert.match(sql,/add column signature text not null check \(octet_length\(signature\) = 86\)/i);
+  assert.match(sql,/check \(schema_version = 3\)/i);
+  // A mutation ID must not be reusable with a different signature.
+  assert.match(sql,/existing\.signature is distinct from new\.signature/i);
+  assert.doesNotMatch(sql,/service_role/i);
+});

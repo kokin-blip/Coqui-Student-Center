@@ -502,7 +502,7 @@ export type EncryptedSyncStatus = {
   accountId: string;
   deviceId?: string;
   pendingMutations: number;
-  pendingDownloadedMutations: number;
+  unsupportedDownloadedMutations: number;
   lastPushedAt?: string;
   message: string;
 };
@@ -1247,14 +1247,21 @@ export async function signOutAccount() {
     : browserAccount();
 }
 export async function getSyncProtectionStatus(): Promise<SyncProtectionStatus> {
-  return isDesktop()
-    ? call<SyncProtectionStatus>("get_sync_protection_status")
-    : {
-        protected: false,
-        accountId: "11111111-1111-4111-8111-111111111111",
-        message:
-          "Create or enter a 24-word recovery code before encrypted sync can start.",
-      };
+  if (isDesktop()) return call<SyncProtectionStatus>("get_sync_protection_status");
+  // Staged downloads presuppose an established recovery code, so ?sync=staged implies protection.
+  if (new URLSearchParams(window.location.search).get("sync") === "staged")
+    return {
+      protected: true,
+      accountId: "11111111-1111-4111-8111-111111111111",
+      deviceId: "22222222-2222-4222-8222-222222222222",
+      message: "Recovery is protected on this device.",
+    };
+  return {
+    protected: false,
+    accountId: "11111111-1111-4111-8111-111111111111",
+    message:
+      "Create or enter a 24-word recovery code before encrypted sync can start.",
+  };
 }
 export async function beginSyncProtection(): Promise<RecoverySetup> {
   return isDesktop()
@@ -1324,16 +1331,20 @@ const browserSyncStatus = (connected = false): EncryptedSyncStatus => ({
   accountId: "11111111-1111-4111-8111-111111111111",
   deviceId: "22222222-2222-4222-8222-222222222222",
   pendingMutations: connected ? 3 : 4,
-  pendingDownloadedMutations: 0,
+  unsupportedDownloadedMutations: 0,
   lastPushedAt: connected ? new Date().toISOString() : undefined,
   message: connected
     ? "This device is registered. Pending changes can be encrypted and synchronized."
     : "Recovery is protected. Register this device to connect encrypted sync.",
 });
 export async function getEncryptedSyncStatus(): Promise<EncryptedSyncStatus> {
-  return isDesktop()
-    ? call<EncryptedSyncStatus>("get_encrypted_sync_status")
-    : browserSyncStatus(false);
+  if (isDesktop()) return call<EncryptedSyncStatus>("get_encrypted_sync_status");
+  // ?sync=staged renders the "changes from a newer version" state, which is otherwise only
+  // reachable by pairing with a computer running a build that replicates more entity types.
+  const mode = new URLSearchParams(window.location.search).get("sync");
+  if (mode === "staged")
+    return { ...browserSyncStatus(true), unsupportedDownloadedMutations: 2 };
+  return browserSyncStatus(false);
 }
 export async function connectEncryptedSync(): Promise<EncryptedSyncStatus> {
   return isDesktop()
@@ -1355,7 +1366,7 @@ export async function pullEncryptedMutations(): Promise<EncryptedSyncStatus> {
     : {
         ...browserSyncStatus(true),
         pendingMutations: 0,
-        pendingDownloadedMutations: 0,
+        unsupportedDownloadedMutations: 0,
         lastPushedAt: new Date().toISOString(),
       };
 }
