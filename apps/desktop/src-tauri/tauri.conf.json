@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Coqui Student Center",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "identifier": "app.studentcenter.desktop",
   "build": {
     "beforeDevCommand": "npm run dev --workspace @student-center/desktop-ui",
@@ -41,7 +41,7 @@
     "shortDescription": "A private, local-first college planning workspace",
     "longDescription": "Import academic work, build a realistic plan, choose the next action, and replan offline.",
     "windows": { "nsis": { "installMode": "currentUser" } },
-    "macOS": { "minimumSystemVersion": "12.0" },
+    "macOS": { "minimumSystemVersion": "12.0", "signingIdentity": "-" },
     "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
     "resources": { "resources/ocr/": "ocr/" }
   }
