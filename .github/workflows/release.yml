@@ -90,8 +90,16 @@ jobs:
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
       # No tauri.release.conf.json overlay: it sets createUpdaterArtifacts, which
       # fails the build outright unless TAURI_SIGNING_PRIVATE_KEY is present.
-      # This is an unsigned private-beta build, so updater artifacts are out.
+      # This private-beta build has no updater signing key, so updater artifacts
+      # are out. Unrelated to macOS code signing, which is configured in
+      # tauri.conf.json and enforced by the gate below.
       - run: npm run desktop:build -- ${{ matrix.args }}
+      # The last line of defence before an unopenable DMG becomes a public
+      # release asset. `signingIdentity: "-"` in tauri.conf.json is what makes
+      # the bundle sealed; this proves it actually happened.
+      - name: Enforce macOS signature gate
+        if: matrix.platform == 'macos-15'
+        run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }}
       - run: npm run release:checksums
       # fail_on_unmatched_files matters: without it a bundle that quietly did
       # not build yields a Release that is missing assets but reports success.

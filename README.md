@@ -50,7 +50,11 @@ npm test
 npm run desktop:dev
 ```
 
-Build the current platform installer with `npm run desktop:build`. Windows produces an unsigned x64 NSIS installer. Apple Silicon builds run on an ARM64 macOS runner and produce an ad-hoc/private-beta DMG until signing credentials are configured.
+Build the current platform installer with `npm run desktop:build`. Windows produces an unsigned x64 NSIS installer. Apple Silicon builds run on an ARM64 macOS runner and produce an ad-hoc signed DMG until Developer ID credentials are configured.
+
+`bundle.macOS.signingIdentity` is set to the `-` pseudo-identity, which makes the Tauri bundler run `codesign` over the assembled `.app` before it is packaged into the DMG. This is not cosmetic. Without it the Rust linker's automatic ad-hoc signature is the only one present, the bundle ships with no `Contents/_CodeSignature` seal, and macOS refuses to launch it with "the application is damaged and cannot be opened" — a state with no user-facing bypass. `npm run macos:verify-signature -- --target=aarch64-apple-darwin` proves the seal exists and every bundled Mach-O verifies, and runs as a mandatory gate in both CI and release before any DMG is published.
+
+Ad-hoc signing establishes integrity but not identity, so a downloaded build still has to be admitted once per machine: **System Settings → Privacy & Security → scroll to the blocked-app notice → Open Anyway**, then Open in the confirmation dialog. Control-clicking the app no longer bypasses this on macOS 15 and later. Notarized, warning-free downloads require an Apple Developer Program membership; swapping `-` for a real Developer ID identity and supplying `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` to the release workflow is the only change that requires.
 
 Release updater artifacts are deliberately separate from normal development/CI bundles. A release build must set `STUDENT_CENTER_UPDATER_ENDPOINT` and `STUDENT_CENTER_UPDATER_PUBLIC_KEY` at compile time, keep `TAURI_SIGNING_PRIVATE_KEY` and its password only in the release secret store, and merge `apps/desktop/src-tauri/tauri.release.conf.json` into the Tauri build. Without both embedded trust settings the installed app reports that no update channel is configured and performs no network request.
 
