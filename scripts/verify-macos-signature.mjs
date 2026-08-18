@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, openSync, readSync, closeSync, readdirSync, statSync } from "node:fs";
+import { existsSync, openSync, readSync, closeSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -108,9 +109,48 @@ function option(name) {
   return process.argv.find((argument) => argument.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
-export function bundlePath({ target, productName = "Coqui Student Center" }) {
+export function bundleDirectory({ target }) {
   const targetDirectory = target ? join("apps/desktop/src-tauri/target", target) : "apps/desktop/src-tauri/target";
-  return join(targetDirectory, "release/bundle/macos", `${productName}.app`);
+  return join(targetDirectory, "release/bundle");
+}
+
+// The staged .app cannot be inspected after a build: the bundler logs
+// "Cleaning .../bundle/macos/<name>.app" and deletes it once the DMG exists.
+// Reading it back out of the disk image is not a workaround for that — it is the
+// stronger check, because the DMG is the artifact that actually reaches a
+// student, and nothing else verifies what ended up inside it.
+export function verifyDiskImage({ dmgPath }) {
+  const dmg = resolve(dmgPath);
+  if (!existsSync(dmg)) {
+    return { dmg, signed: false, error: "the DMG was not found", checks: [] };
+  }
+  const mountPoint = mkdtempSync(join(tmpdir(), "student-center-dmg-"));
+  const attached = spawnSync(
+    "hdiutil",
+    ["attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mountPoint, dmg],
+    { encoding: "utf8" },
+  );
+  if (attached.status !== 0) {
+    rmSync(mountPoint, { recursive: true, force: true });
+    return { dmg, signed: false, error: `the DMG could not be mounted: ${attached.stderr?.trim()}`, checks: [] };
+  }
+  try {
+    const app = readdirSync(mountPoint).find((entry) => entry.endsWith(".app"));
+    if (!app) {
+      return { dmg, signed: false, error: "the DMG contains no .app bundle", checks: [] };
+    }
+    return { dmg, ...verifyBundleSignature({ appPath: join(mountPoint, app) }) };
+  } finally {
+    spawnSync("hdiutil", ["detach", mountPoint, "-quiet"], { encoding: "utf8" });
+    rmSync(mountPoint, { recursive: true, force: true });
+  }
+}
+
+export function findDiskImage({ target }) {
+  const directory = join(bundleDirectory({ target }), "dmg");
+  if (!existsSync(directory)) return undefined;
+  const dmg = readdirSync(directory).find((entry) => entry.endsWith(".dmg"));
+  return dmg ? join(directory, dmg) : undefined;
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -119,8 +159,17 @@ if (isMain) {
     console.error("The macOS signature gate can only run on macOS.");
     process.exitCode = 1;
   } else {
-    const appPath = option("--app") ?? bundlePath({ target: option("--target") });
-    const result = verifyBundleSignature({ appPath });
+    const target = option("--target");
+    const appPath = option("--app");
+    const dmgPath = option("--dmg") ?? (appPath ? undefined : findDiskImage({ target }));
+    let result;
+    if (appPath) {
+      result = verifyBundleSignature({ appPath });
+    } else if (dmgPath) {
+      result = verifyDiskImage({ dmgPath });
+    } else {
+      result = { signed: false, error: `no DMG was found under ${join(bundleDirectory({ target }), "dmg")}`, checks: [] };
+    }
     console.log(JSON.stringify(result, null, 2));
     if (!result.signed) {
       console.error(`macOS signature gate failed: ${result.error}.`);
