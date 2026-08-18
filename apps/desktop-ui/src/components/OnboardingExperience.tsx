@@ -28,6 +28,7 @@ import {
   selectAndImport,
   InstitutionSelection,
   CourseSuggestion,
+  CatalogSection,
   InstitutionSetupOptions,
   InstitutionCampusOption,
   AcademicTermPreset,
@@ -55,6 +56,14 @@ const timezones = [
   ["Sydney", "Australia/Sydney"],
 ] as const;
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// Catalog sections store 24-hour local times; students read their schedule in
+// the 12-hour form the registrar prints.
+const formatClock = (value: string) => {
+  const [hour, minute] = value.split(":").map(Number);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return value;
+  const suffix = hour < 12 ? "AM" : "PM";
+  return `${hour % 12 === 0 ? 12 : hour % 12}:${String(minute).padStart(2, "0")} ${suffix}`;
+};
 const courseColors = ["#3155B7", "#0B746B", "#9A5B8E", "#B8653B", "#5E6F2C"];
 
 function emptyCourse(index: number): OnboardingCourseInput {
@@ -112,6 +121,7 @@ export function OnboardingExperience({
   const [schools, setSchools] = useState<InstitutionSelection[]>([]);
   const [institutionOptions, setInstitutionOptions] = useState<InstitutionSetupOptions | null>(null);
   const [suggestions, setSuggestions] = useState<Record<number, CourseSuggestion[]>>({});
+  const [sectionPicker, setSectionPicker] = useState<{ courseIndex: number; suggestion: CourseSuggestion } | null>(null);
   const [importAfter, setImportAfter] = useState(false);
 
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) => {
@@ -211,6 +221,30 @@ export function OnboardingExperience({
     updateCourse(index, { code: query });
     if (!query.trim()) return setSuggestions((current) => ({ ...current, [index]: [] }));
     searchCourseSuggestions(draft.institution.id, query).then((items) => setSuggestions((current) => ({ ...current, [index]: items }))).catch((next) => setError(String(next)));
+  };
+  // Picking a catalog section fills the meeting outright. The section shape
+  // mirrors ClassMeetingInput, so nothing is derived or guessed here; the
+  // student can still edit every field afterwards.
+  const applySection = (courseIndex: number, suggestion: CourseSuggestion, section: CatalogSection) => {
+    const campusName = institutionOptions?.campuses.find((campus) => campus.id === section.campusId)?.name ?? "";
+    const location = [campusName, section.location].filter(Boolean).join(" · ");
+    updateCourse(courseIndex, {
+      code: suggestion.code,
+      title: suggestion.title,
+      meetings: [
+        ...draft.courses[courseIndex].meetings,
+        {
+          weekdays: section.weekdays,
+          startsAtLocal: section.startsAtLocal,
+          endsAtLocal: section.endsAtLocal,
+          component: section.component || "lecture",
+          location,
+          instructorName: section.instructor,
+        },
+      ],
+    });
+    setSectionPicker(null);
+    setSuggestions((current) => ({ ...current, [courseIndex]: [] }));
   };
   const addMeeting = (courseIndex: number) => updateCourse(courseIndex, {
     meetings: [...draft.courses[courseIndex].meetings, { weekdays: [1, 3, 5], startsAtLocal: "09:00", endsAtLocal: "09:50", component: "lecture", location: draft.institution.campusName ?? "", instructorName: "" }],
@@ -325,7 +359,8 @@ export function OnboardingExperience({
             <div className="course-builder">{draft.courses.map((course, courseIndex) => <article key={courseIndex} style={{ "--course-color": course.color } as React.CSSProperties}>
               <header><span>{course.code || `Course ${courseIndex + 1}`}</span>{draft.courses.length > 1 && <button aria-label={`Remove course ${courseIndex + 1}`} onClick={() => update("courses", draft.courses.filter((_, index) => index !== courseIndex))}><Trash2 /></button>}</header>
               <div className="form-grid"><label className="field">Course number<input value={course.code} onChange={(event) => findCourses(courseIndex, event.target.value)} placeholder="MAT 142" /></label><label className="field">Course name<input value={course.title} onChange={(event) => updateCourse(courseIndex, { title: event.target.value })} placeholder="College Mathematics" /></label></div>
-              {suggestions[courseIndex]?.length > 0 && <div className="course-suggestions">{suggestions[courseIndex].map((suggestion) => <button key={`${suggestion.source}-${suggestion.code}`} onClick={() => { updateCourse(courseIndex, { code: suggestion.code, title: suggestion.title }); setSuggestions((current) => ({ ...current, [courseIndex]: [] })); }}><span><strong>{suggestion.code} · {suggestion.title}</strong><small>{suggestion.sourceLabel}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em></button>)}</div>}
+              {suggestions[courseIndex]?.length > 0 && <div className="course-suggestions">{suggestions[courseIndex].map((suggestion) => <button key={`${suggestion.source}-${suggestion.code}`} onClick={() => { updateCourse(courseIndex, { code: suggestion.code, title: suggestion.title }); if (suggestion.sections?.length) { setSectionPicker({ courseIndex, suggestion }); } else { setSuggestions((current) => ({ ...current, [courseIndex]: [] })); } }}><span><strong>{suggestion.code} · {suggestion.title}</strong><small>{suggestion.sections?.length ? `${suggestion.sourceLabel} · ${suggestion.sections.length} ${suggestion.sections.length === 1 ? "section" : "sections"}` : suggestion.sourceLabel}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em></button>)}</div>}
+              {sectionPicker?.courseIndex === courseIndex && <fieldset className="setup-fieldset institution-options"><legend>Choose your section</legend><p className="field-help">Pick the one you are enrolled in and Coqui fills the days, times, location and instructor. Everything stays editable, and you can skip this and enter the time yourself.</p><div className="campus-options">{sectionPicker.suggestion.sections?.map((section) => <button key={section.lineNumber} onClick={() => applySection(courseIndex, sectionPicker.suggestion, section)}><Clock3 /><span><strong>{section.weekdays.length ? `${section.weekdays.map((day) => dayLabels[day]).join(" ")} · ${formatClock(section.startsAtLocal)}–${formatClock(section.endsAtLocal)}` : section.modality === "online" ? "Online — no set meeting time" : section.location}</strong><small>{[section.lineNumber, institutionOptions?.campuses.find((campus) => campus.id === section.campusId)?.name, section.location, section.instructor].filter(Boolean).join(" · ")}</small></span></button>)}</div><button className="ghost" onClick={() => { setSectionPicker(null); setSuggestions((current) => ({ ...current, [courseIndex]: [] })); }}>Skip — I'll enter the time myself</button></fieldset>}
               {course.meetings.map((meeting, meetingIndex) => <div className="meeting-builder" key={meetingIndex}><div className="day-chips">{dayLabels.map((day, dayIndex) => <button className={meeting.weekdays.includes(dayIndex) ? "active" : ""} onClick={() => updateMeeting(courseIndex, meetingIndex, { weekdays: meeting.weekdays.includes(dayIndex) ? meeting.weekdays.filter((value) => value !== dayIndex) : [...meeting.weekdays, dayIndex].sort() })} key={day}>{day}</button>)}</div><div className="form-grid compact"><label className="field">Starts<input type="time" value={meeting.startsAtLocal} onChange={(event) => updateMeeting(courseIndex, meetingIndex, { startsAtLocal: event.target.value })} /></label><label className="field">Ends<input type="time" value={meeting.endsAtLocal} onChange={(event) => updateMeeting(courseIndex, meetingIndex, { endsAtLocal: event.target.value })} /></label><label className="field">Type<select value={meeting.component} onChange={(event) => updateMeeting(courseIndex, meetingIndex, { component: event.target.value })}><option value="lecture">Lecture</option><option value="lab">Lab</option><option value="seminar">Seminar</option></select></label><label className="field">Location<input value={meeting.location} onChange={(event) => updateMeeting(courseIndex, meetingIndex, { location: event.target.value })} /></label><label className="field full">Instructor (optional)<input value={meeting.instructorName} onChange={(event) => updateMeeting(courseIndex, meetingIndex, { instructorName: event.target.value })} /></label></div></div>)}
               <button className="text-button add-meeting" onClick={() => addMeeting(courseIndex)}><Clock3 /> Add class time</button>
             </article>)}</div>

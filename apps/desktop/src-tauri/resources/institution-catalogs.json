@@ -1,9 +1,5779 @@
 [
   {
     "institutionId": "104151",
-    "termId": "",
-    "sourceLabel": "",
-    "sourceUrl": "",
-    "courses": []
+    "termId": "asu-fall-2026-c",
+    "sourceLabel": "ASU Class Search",
+    "sourceUrl": "https://catalog.apps.asu.edu/catalog/classes",
+    "courses": [
+      {
+        "code": "ABS 162",
+        "title": "Applied Art for Biological Sciences",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87991",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "polytechnic",
+            "location": "SANTN103",
+            "instructor": "Trisha Eardley",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ABS 302",
+        "title": "Ethical and Policy Issues in Biology",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "63766",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Julie Murphree",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AFR 200",
+        "title": "Introduction to Africana Studies",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "63903",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "WLSN214",
+            "instructor": "Aaron Mallory",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "64471",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Lisa Aubrey",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "77479",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Aaron Mallory",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AFR 210",
+        "title": "Introduction to African",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "74589",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Lisa Aubrey",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "77481",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "T. Chester",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AFR 301",
+        "title": "Race and Racism in Africa/African Diaspora",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "76952",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ED250",
+            "instructor": "Rashad Shabazz",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AFR 302",
+        "title": "History of Black Women in America",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87231",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "WLSN223",
+            "instructor": "Mako Ward",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AFR 305",
+        "title": "The Global History of the Trans-Atlantic Slave Trade",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "70621",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "T. Chester",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AFR 363",
+        "title": "African American History to",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "79920",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "WLSN226",
+            "instructor": "Jessica Viñas-Nelson",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AFR 364",
+        "title": "African American History Since 1865",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "79932",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jessica Viñas-Nelson",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81074",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Katherine Bynum",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AFR 370",
+        "title": "Family Ethnic and Cultural",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64465",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "WLSN105",
+            "instructor": "Rebecca White",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AGB 302",
+        "title": "International Management and Agribusiness",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "67423",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ashok Mishra",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "77077",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "polytechnic",
+            "location": "AGBC145",
+            "instructor": "Subarta Chakraborty",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AIS 265",
+        "title": "Reel Native: Indigenous Film and Television",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87517",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Pam Yabeny",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AIS 285",
+        "title": "Federal Indian Policy",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "84940",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Michelle Hale",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AIS 294",
+        "title": "Topic: Indigenous Perspectives on Health and Healing",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87734",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "STAUFA232",
+            "instructor": "Tennille Marley",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87484",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Pam Yabeny",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AIS 320",
+        "title": "American Indian Philosophies and World Views",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87736",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "STAUFA232",
+            "instructor": "David Martinez",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AIS 330",
+        "title": "Tribal Sovereignty and U.S.",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87523",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Pam Yabeny",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AIS 394",
+        "title": "Topic: Beyond the Apocalypse: Indigenous Storywork",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87738",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "WLSN233",
+            "instructor": "Stephanie Fitzgerald",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AIS 455",
+        "title": "Indigenous Rights, Material Culture and Museums",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "84945",
+            "component": "lecture",
+            "weekdays": [
+              1
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "CRTVC227",
+            "instructor": "Judy Kertész",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ALA 100",
+        "title": "Introduction to Environmental Design",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "63087",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Nikolas Smilovsky",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AME 111",
+        "title": "Introduction to Digital Culture",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64829",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "STAUFB125",
+            "instructor": "Stacey K",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78264",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jennifer Weiler",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AME 130",
+        "title": "Prototyping Dreams",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64399",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "STAUFB111",
+            "instructor": "Ed Finn",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69363",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Stacey Moran",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AME 294",
+        "title": "Topic: Greatest Hits/22nd Century: computing & media arts",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "88332",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sha Xin Wei",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "AMS 201",
+        "title": "Introduction to American Studies",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66079",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "west-valley",
+            "location": "CLCCL1-99",
+            "instructor": "Aaron Allen",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87961",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "ED210",
+            "instructor": "Sujey Vega",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AMS 336",
+        "title": "The American Southwest in Literature and Film",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85140",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "west-valley",
+            "location": "SANDS201",
+            "instructor": "Sherry Cisler",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "AMT 308",
+        "title": "Air Transportation",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60190",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "polytechnic",
+            "location": "AGBC154",
+            "instructor": "Kasey Stevenson",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ARA 195",
+        "title": "Art in My World",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "82053",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ted Decker",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARA 489",
+        "title": "Writing Art and Design Criticism",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "68021",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ted Decker",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 101",
+        "title": "Elementary Arabic I Th",
+        "credits": 5,
+        "sections": [
+          {
+            "lineNumber": "62736",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "DHL1-35",
+            "instructor": "Neimeh Mousa",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "66814",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DHL1-09",
+            "instructor": "Umar Sulayman",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71825",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Neimeh Mousa",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 194",
+        "title": "Topic: Arabic Culinary Journey: From Falafel to Shawarma",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85185",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Neimeh Mousa",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 250",
+        "title": "Middle East Culture in a Global Perspective",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "77345",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "",
+            "location": "ASU Sync",
+            "instructor": "Miral Mahgoub",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ARB 331",
+        "title": "Arabic/Islamic Culture and Literature",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "75060",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Souad Ali",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 335",
+        "title": "Arabic Culture and Islam",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "81459",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sarah Risha",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 336",
+        "title": "Introduction to the Qur'an",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "68595",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sarah Risha",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 351",
+        "title": "Classical Arabic Literature",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "81461",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Miral Mahgoub",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARB 394",
+        "title": "Topic: Arabic Film and Media",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "84792",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "DHL1-02",
+            "instructor": "Souad Ali",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ARC 431",
+        "title": "Contemporary Architecture and Urbanism 1970 to the Present",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66142",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "18:00",
+            "endsAtLocal": "19:15",
+            "campusId": "tempe",
+            "location": "CDN60",
+            "instructor": "Elena Rocchi",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ARC 434",
+        "title": "Great Cities",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64688",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Natalie Florence Severy",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARC 438",
+        "title": "Visual Thinking and Structures: Art, Science, Architecture and Life",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "82694",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Catherine Spellman",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 100",
+        "title": "Introduction to Art",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "61750",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Heather Bowyer",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "66203",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Marco Deyasi",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "77079",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "ART220",
+            "instructor": "Heather Bowyer",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ARS 101",
+        "title": "Art from Prehistory Through Middle Ages",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "62151",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Bentley Brown",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "71696",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "CDN68",
+            "instructor": "Heather Bowyer",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "77084",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Heather Bowyer",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 102",
+        "title": "Art from Renaissance to Modernism",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66422",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Bentley Brown",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "72368",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Marco Deyasi",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83905",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "WCPH190",
+            "instructor": "Marco Deyasi",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "90062",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Claudia Mesch",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 201",
+        "title": "Art of Asia",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "63377",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jinglin Li",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "75561",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "HLMK351",
+            "instructor": "Shen Qu",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ARS 202",
+        "title": "Art of Africa, Oceania, and the",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66542",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Marco Deyasi",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73582",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Marco Deyasi",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 250",
+        "title": "History of Photography",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66961",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Benjamin Young",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 300",
+        "title": "Introduction to Art",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "62564",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sherry Harlacher",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 402",
+        "title": "Art of Ancient Egypt",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "77086",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Nancy Serwint",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 438",
+        "title": "Art of the 20th Century I: Art Before 1960",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "84931",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Claudia Mesch",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 472",
+        "title": "Art of China",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66969",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jinglin Li",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ARS 473",
+        "title": "Art of Japan",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "69824",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "SS229",
+            "instructor": "Shen Qu",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ART 110",
+        "title": "Drawing as Seeing and Thinking",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "72437",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Daniella Napolitano",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "72436",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Daniella Napolitano",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 100",
+        "title": "Introduction to Global Health",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64323",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "LIBC7",
+            "instructor": "India Schneider-Crease",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76392",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jonathan Maupin",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "85803",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Magdalena Hurtado",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 102",
+        "title": "Introduction to Cultural",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64322",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "SCOB210",
+            "instructor": "Rhian Stotts",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ASB 202",
+        "title": "Immigration and Ethnic Relations in the U.S.",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "67530",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "polytechnic",
+            "location": "SANTN130",
+            "instructor": "Nura Mowzoon",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "85868",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "SCOB150",
+            "instructor": "Takeyuki (Gaku) Tsuda",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ASB 210",
+        "title": "Human Sexuality:",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "75530",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rose Sommerhauser",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "80250",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rose Sommerhauser",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 222",
+        "title": "Buried Cities and Lost Tribes",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60065",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "MUR201",
+            "instructor": "Charles Perreault",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "73308",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Laverne Dacosta",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73309",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Keith Hollinger",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73441",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "polytechnic",
+            "location": "AGBC140",
+            "instructor": "Keith Hollinger",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78583",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "polytechnic",
+            "location": "SANTN331",
+            "instructor": "Laverne Dacosta",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "81437",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Laverne Dacosta",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "85872",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Kostalena Michelaki",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "85874",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Matthew Kroot",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 223",
+        "title": "Aztecs, Incas and Mayas",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "81519",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Donna Nash",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81521",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ryan Smith",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 252",
+        "title": "Sports and Culture",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87844",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Robin Nelson",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 272",
+        "title": "Economic Justice",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85960",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Elisabeth Ilboudo Nebie",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 294",
+        "title": "Topic: Anthropology of",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85966",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rhian Stotts",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 301",
+        "title": "Global History of Health",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "76523",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sara Marsteller",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 305",
+        "title": "Poverty and Global Health",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "86097",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rhian Stotts",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 333",
+        "title": "Frauds, Myths and Mysteries",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "72502",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "LSA191",
+            "instructor": "Matthew Peeples",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80323",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sara Marsteller",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81515",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Aylar Abdolahzadeh",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 337",
+        "title": "Pyramids and Hieroglyphs:",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80326",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Joel Palka",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 340",
+        "title": "Migration and Culture",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "75095",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sangmi Lee",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 353",
+        "title": "Death and Dying in Cross-",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "61979",
+            "component": "lecture",
+            "weekdays": [
+              1
+            ],
+            "startsAtLocal": "18:00",
+            "endsAtLocal": "20:45",
+            "campusId": "west-valley",
+            "location": "CLCC170",
+            "instructor": "Ibrahim Naim",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "63978",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Yolanda Rodriguez",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "67540",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Yolanda Rodriguez",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "75996",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Yolanda Rodriguez",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "78596",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Emily Gallagher",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "80212",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "18:00",
+            "endsAtLocal": "20:45",
+            "campusId": "west-valley",
+            "location": "CLCC170",
+            "instructor": "Ibrahim Naim",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80328",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ryan Seidemann",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81531",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ryan Seidemann",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 378",
+        "title": "Globalization: Migration, Mass",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "77094",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Takeyuki (Gaku) Tsuda",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 383",
+        "title": "Religion and Sports",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80085",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Heather Wetherholt",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASB 447",
+        "title": "Citizenship, Nationalism and Identity",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "86951",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "west-valley",
+            "location": "SANDS202",
+            "instructor": "Sangmi Lee",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ASL 101",
+        "title": "American Sign Language I Tempe - TBA",
+        "credits": 4,
+        "sections": [
+          {
+            "lineNumber": "69148",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DH218",
+            "instructor": "Ronda Moriarty",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69150",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Kristin Retay",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69151",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Kristin Retay",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69152",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Kristin Retay",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69153",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Lindsey Patterson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71856",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "",
+            "location": "ASU Sync",
+            "instructor": "Austin Cary",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71979",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Lindsey Patterson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "73731",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH218",
+            "instructor": "Ronda Moriarty",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74502",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "DH103",
+            "instructor": "Ronda Moriarty",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74503",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Hannah Cheloha",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "82730",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "DHL1-09",
+            "instructor": "Kaitlin Hofer",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "84449",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Adrianna Marcsisak",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "84655",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Adrianna Marcsisak",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "84796",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Shannon Cary",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "89612",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "DH104",
+            "instructor": "Hannah Cheloha",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ASL 102",
+        "title": "American Sign Language II",
+        "credits": 4,
+        "sections": [
+          {
+            "lineNumber": "69154",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "",
+            "location": "ASU Sync",
+            "instructor": "Austin Cary",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69155",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "DH104",
+            "instructor": "Pam Howard",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "70889",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DHL1-31",
+            "instructor": "Pam Howard",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71017",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "DH104",
+            "instructor": "Pam Howard",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "85418",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Shannon Cary",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ASL 410",
+        "title": "Deaf Culture",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "79612",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Hannah Cheloha",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "BIO 312",
+        "title": "Bioethics",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66505",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "startsAtLocal": "10:10",
+            "endsAtLocal": "11:00",
+            "campusId": "tempe",
+            "location": "PSH152",
+            "instructor": "Nathan Engel-Hawbecker",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "BIO 317",
+        "title": "History of Science II",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "88620",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Kate MacCord",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "BIO 318",
+        "title": "History of Medicine",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80377",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "EDC117",
+            "instructor": "Emma Kitchen",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "BIO 416",
+        "title": "Biomedical Research Ethics",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "70962",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "STPV322",
+            "instructor": "Karin Ellison",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "BLE 220",
+        "title": "Foundations of Structured English Immersion",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "72315",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Carrie Cicotte",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "80408",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "ED336",
+            "instructor": "Alexandria Estrella-Bridges",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80409",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "ED340",
+            "instructor": "Alexandria Estrella-Bridges",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80410",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ED330",
+            "instructor": "Sarah Carranza",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80411",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "ED222",
+            "instructor": "Alicia Sanchez VanDenburg",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80412",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "ED328",
+            "instructor": "Alicia Sanchez VanDenburg",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80413",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "EDBL1-35",
+            "instructor": "Darci Tipton",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80414",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "EDB208",
+            "instructor": "Darci Tipton",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "82013",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "west-valley",
+            "location": "SANDS230",
+            "instructor": "Sarah Carranza",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "BME 213",
+        "title": "Ethical and Social Dimensions of Biomedical Engineering",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80815",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "SCOB228",
+            "instructor": "Olivia Burnsed",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CAS 302",
+        "title": "History and Philosophy of Complex Systems Science",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "81297",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ART240",
+            "instructor": "Kelle Dhein",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CAS 412",
+        "title": "Harnessing Complexity",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87290",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "ISTBXL1-14",
+            "instructor": "Erik Johnston",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CAS 494",
+        "title": "Topic: Ethics of Ownership?",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85962",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH135",
+            "instructor": "Joffa Applegate, Joan McGregor",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CDE 418",
+        "title": "Aging and the Life Course",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "65429",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Becky Ladd",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "CEL 100",
+        "title": "Great Ideas of Politics and Ethics",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "68735",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "WCPH560",
+            "instructor": "Nicholas O'Neill",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69059",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Abigail Thomas",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "69310",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "WLSN235",
+            "instructor": "Nicholas O'Neill",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71060",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "WLSN237",
+            "instructor": "Peter McNamara",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71816",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ISTBXL1-15",
+            "instructor": "Trevor Shelley",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CEL 194",
+        "title": "Topic: The American Way of",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "86035",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "EDBL1-12",
+            "instructor": "Nicholas O'Neill",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CEL 200",
+        "title": "Great Debates in American",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "69061",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "EDBL1-22",
+            "instructor": "Megan Brand",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69942",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Adam Seagrave",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73922",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "EDB212",
+            "instructor": "Liz Evans",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74631",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "EDBL1-12",
+            "instructor": "Aaron Kushner",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74632",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "COOR120",
+            "instructor": "Evan Lowe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "75019",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Adam Seagrave",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "75992",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "EDBL1-11",
+            "instructor": "Evan Lowe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76737",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "ED236",
+            "instructor": "Aaron Kushner",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78438",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "EDBL1-08",
+            "instructor": "Tyler Thomas",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78664",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "EDBL1-21",
+            "instructor": "Megan Brand",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80450",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ISTBXL1-14",
+            "instructor": "Jeff Davis",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80453",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "LSA109",
+            "instructor": "Tyler Thomas",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "84602",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Stephen Clouse",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "86401",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "WLSN237",
+            "instructor": "Tyler Thomas",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "86402",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "EDBL1-21",
+            "instructor": "Seth Leibsohn",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CHI 101",
+        "title": "Elementary Chinese I",
+        "credits": 5,
+        "sections": [
+          {
+            "lineNumber": "60279",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DH204",
+            "instructor": "Tianqi Zhu, Haoran Shen",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "72430",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:45",
+            "campusId": "tempe",
+            "location": "DH204",
+            "instructor": "Xia Zhang",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "75962",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Juan Du, Xia Zhang",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "78413",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Zhaofei Chen, Xiaochen Guo",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "COM 222",
+        "title": "Argumentation",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60132",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "STAUFA317",
+            "instructor": "Megan Towles",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "64615",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "STAUFA317",
+            "instructor": "Megan Towles",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78287",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rosa Farmer",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "85634",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Renee Maday",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "85882",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "STAUFA317",
+            "instructor": "Adam Symonds",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87176",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "STAUFA15",
+            "instructor": "Megan Towles",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87177",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "WLSN253",
+            "instructor": "Megan Towles",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87178",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "CDN62",
+            "instructor": "Megan Towles",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88007",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Michael Walker",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "90365",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Renee Maday",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "COM 225",
+        "title": "Public Speaking and Presentations Dtphx - TBA",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60133",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "startsAtLocal": "10:10",
+            "endsAtLocal": "11:00",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Dean Batson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60136",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH105",
+            "instructor": "Caylor Jarvis",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60137",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "EDBL1-06",
+            "instructor": "Faizat Oladunni Asifat",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60138",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Kojo Antwi",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60139",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "18:00",
+            "endsAtLocal": "20:45",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Evans Ankrah",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60140",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "18:00",
+            "endsAtLocal": "20:45",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Brittney Grotz",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60141",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Mary Katreeb",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "61449",
+            "component": "lecture",
+            "weekdays": [
+              1
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT207",
+            "instructor": "Colette Jung",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "61485",
+            "component": "lecture",
+            "weekdays": [
+              1
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "downtown-phoenix",
+            "location": "AZCNTR325",
+            "instructor": "Renee Maday",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "61757",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "EDBL1-11",
+            "instructor": "Andrea Gunoe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "62032",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "polytechnic",
+            "location": "PICHO246",
+            "instructor": "Steven Garry",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "62620",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "west-valley",
+            "location": "SANDS321",
+            "instructor": "Dayna Kloeber",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "62823",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "EDBL1-06",
+            "instructor": "Andrea Gunoe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "66140",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "west-valley",
+            "location": "SANDS321",
+            "instructor": "Kenneth Kunkel",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "66540",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "EDBL1-06",
+            "instructor": "Mary Joseph",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "67260",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Evans Ankrah",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "67844",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "west-valley",
+            "location": "SANDS321",
+            "instructor": "Cynthia Gaffney",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "68084",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Kojo Antwi",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69226",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT213",
+            "instructor": "Ian Derk",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "71637",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Stephany Rojas Hidalgo",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "72838",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Agnes Amoakwa",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74009",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Andrea Gunoe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74357",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT207",
+            "instructor": "Colette Jung",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "75356",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "STAUFA301",
+            "instructor": "Andrea Gunoe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76652",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "west-valley",
+            "location": "SANDS321",
+            "instructor": "Elise Poll",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "79829",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "polytechnic",
+            "location": "PRLTA210",
+            "instructor": "Jennifer Robinson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88001",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT213",
+            "instructor": "Ian Derk",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "90586",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:05",
+            "endsAtLocal": "17:50",
+            "campusId": "downtown-phoenix",
+            "location": "AZCNTR335",
+            "instructor": "Staff",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "90697",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "STAUFA232",
+            "instructor": "Nick Steinmetz",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "COM 259",
+        "title": "Communication in Business Course Catalog Search Tempe - WLSN225",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "62234",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Steven Garry",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "64847",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "18:00",
+            "endsAtLocal": "20:45",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Randall Duren",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "66354",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "west-valley",
+            "location": "SANDS223",
+            "instructor": "Trinity Winton",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "67965",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "west-valley",
+            "location": "CLCC113",
+            "instructor": "Trinity Winton",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "77704",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "COOR195",
+            "instructor": "Ebuka Okoli",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "77705",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "EDBL1-22",
+            "instructor": "Sarra Ben Slama",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "77706",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rezaul Karim",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "77707",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Yuqi Xiao",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "78051",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Stacey Miner",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78099",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "George Bryant",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "79830",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jennifer Robinson",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "80896",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Patrick McDonald",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81370",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "EDBL1-32",
+            "instructor": "George Bryant",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "81372",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "CDN62",
+            "instructor": "Randall Duren",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "81373",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "",
+            "instructor": "Dean Batson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "81550",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Patrick McDonald",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83230",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "startsAtLocal": "12:20",
+            "endsAtLocal": "13:10",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Dean Batson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "83683",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "COORL1-18",
+            "instructor": "Stacey Miner",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "83693",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Maria Cordischi",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83868",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "DH218",
+            "instructor": "Amy Przytula Vynalek",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "83952",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "WLSN228",
+            "instructor": "Stephany Rojas Hidalgo",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "85880",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "ED320",
+            "instructor": "Patrick McDonald",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87696",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Maria Cordischi",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87697",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Yezi He",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87698",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Erin Berman",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87699",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Adam Smith",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87700",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Chantel Solomon",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87701",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Chantel Solomon",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87703",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Evan Billingsley",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87726",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Chantel Solomon",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87727",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Susana Valenzuela",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87728",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Evan Billingsley",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87729",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Henrietta Otoo",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87730",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Shelby Singh",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87797",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "west-valley",
+            "location": "SANDS204",
+            "instructor": "Trinity Winton",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "87809",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Darbie Hall",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "89178",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Stacey Miner",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89200",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "STAUFA315",
+            "instructor": "Dean Batson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89475",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "EDB208",
+            "instructor": "Dean Batson",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89571",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Darbie Hall",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "89598",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "SS211",
+            "instructor": "Amy Przytula Vynalek",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89599",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "SS314",
+            "instructor": "Alison Trego",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89610",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DHL1-10",
+            "instructor": "Alexis Valianos",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89632",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "STAUFA15",
+            "instructor": "Sarah Havlicek",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "90295",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "STAUFA114",
+            "instructor": "Brittney Grotz",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "90305",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH102",
+            "instructor": "Henrietta Otoo",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "COM 263",
+        "title": "Communication Across",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60145",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "EDBL1-21",
+            "instructor": "Tomide Oloruntobi",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "64286",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "west-valley",
+            "location": "SANDS213",
+            "instructor": "Aaron Romans",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "65466",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Tomide Oloruntobi",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "67845",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "west-valley",
+            "location": "SANDS233",
+            "instructor": "Aaron Romans",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "81399",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Susana Valenzuela",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81400",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Uttaran Dutta",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "COM 371",
+        "title": "Language, Culture and",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "69765",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Colette Jung",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "90489",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Colette Jung",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "COM 463",
+        "title": "Intercultural Communication",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "71566",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "COOR186",
+            "instructor": "Charissa Stone",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "73029",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "STAUFA232",
+            "instructor": "Pauline Cheong",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "COM 471",
+        "title": "Global Media and Cultural",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85104",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "west-valley",
+            "location": "SANDS204",
+            "instructor": "Catalina Cayetano",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CON 201",
+        "title": "Global Construction Workforce",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "82987",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "19:15",
+            "campusId": "tempe",
+            "location": "HLMK533",
+            "instructor": "Siyuan Song",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CRJ 294",
+        "title": "Topic: International",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80862",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "downtown-phoenix",
+            "location": "UCENTL1-63",
+            "instructor": "Marina Zaloznaya",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "CSE 240",
+        "title": "Introduction to Programming Languages",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "66923",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ISTBX101",
+            "instructor": "Justin Selgrad",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "73872",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "CDN68",
+            "instructor": "Yinong Chen",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74348",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "LIBC5",
+            "instructor": "Erik Trickel",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74349",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "LIBC5",
+            "instructor": "Erik Trickel",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76683",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "ISTBX101",
+            "instructor": "David Claveau",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "77625",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "west-valley",
+            "location": "SANDS131",
+            "instructor": "Eric Eckert",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88092",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "polytechnic",
+            "location": "PRLTA202",
+            "instructor": "Ajay Bansal",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "DCE 201",
+        "title": "Dance, Culture, and Global",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64531",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Carley Conder",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ECN 306",
+        "title": "Survey of International",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "68207",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "tempe",
+            "location": "BAC316",
+            "instructor": "Ahmad Alkhawaja",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "75138",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ahmad Alkhawaja",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "ECN 360",
+        "title": "Economic Development",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64483",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "BAL1-25",
+            "instructor": "Manjira Datta",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "ETH 100",
+        "title": "Ethnic and Indigenous Lives",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60523",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Gloria Cuadraz",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "FIS 337",
+        "title": "Innovation and Global",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "70885",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Yassine Dguidegue",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "FRE 105",
+        "title": "African Sci-fi",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "81735",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ED220",
+            "instructor": "Isaac Joslin",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "FRE 201",
+        "title": "Intermediate French I",
+        "credits": 4,
+        "sections": [
+          {
+            "lineNumber": "60540",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH104",
+            "instructor": "Julieta Paulesc",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "60541",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DH209",
+            "instructor": "Audrey Chery",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "61747",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Audrey Chery",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "FSE 150",
+        "title": "Perspectives on Grand Course Catalog Search Tempe - ECGG101",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "64266",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ECGG101",
+            "instructor": "Haolin Zhu",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "65839",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ECGG101",
+            "instructor": "Amy Trowbridge",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "74143",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "polytechnic",
+            "location": "PRLTA202",
+            "instructor": "Bala Vignesh Sundaram",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76300",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "",
+            "instructor": "Amy Trowbridge",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76301",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "ECGG101",
+            "instructor": "Haolin Zhu",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "FSH 300",
+        "title": "Global Fashion Industry",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "88460",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT279",
+            "instructor": "Christine Leffeler, Carmen",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88461",
+            "component": "lecture",
+            "weekdays": [
+              3
+            ],
+            "startsAtLocal": "16:30",
+            "endsAtLocal": "17:45",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT279",
+            "instructor": "Christine Leffeler, Carmen",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88463",
+            "component": "lecture",
+            "weekdays": [
+              1
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "",
+            "location": "CCG400",
+            "instructor": "Christine Leffeler",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88466",
+            "component": "lecture",
+            "weekdays": [
+              1
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "",
+            "location": "CCG400",
+            "instructor": "Carmen Littlefield",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88468",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Christine Leffeler",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "88469",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Carmen Littlefield",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "GCU 102",
+        "title": "Introduction to Human",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "61450",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Christopher Clanahan",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73487",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Wael Hassinan",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "79564",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "COOR5536",
+            "instructor": "Rashad Shabazz",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "GCU 113",
+        "title": "United States and Arizona",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "90419",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jonathan Kelman",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "90420",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jonathan Kelman",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "GCU 325",
+        "title": "Geography of Europe",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80843",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "COOR5536",
+            "instructor": "Duncan Shaeffer",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "GCU 328",
+        "title": "Geography of Middle East and",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "67931",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Kaelin Groom",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "GCU 364",
+        "title": "Energy in the Global Arena",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "72216",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "COOR184",
+            "instructor": "Martin J. (Mike) Pasqualetti",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "GER 101",
+        "title": "Elementary German I",
+        "credits": 4,
+        "sections": [
+          {
+            "lineNumber": "60548",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "DH203",
+            "instructor": "Duncan Lien",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "72905",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DHL1-03",
+            "instructor": "Jamie Zelechowski",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "73737",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Kristi McAuliffe",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "90144",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "SS208",
+            "instructor": "Duncan Lien",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "GER 102",
+        "title": "Elementary German II",
+        "credits": 4,
+        "sections": [
+          {
+            "lineNumber": "73738",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jamie Zelechowski",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "75028",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "DH203",
+            "instructor": "Duncan Lien",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "GER 311",
+        "title": "Express Yourself in German",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60550",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "DH135",
+            "instructor": "Sara Lee",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "GER 312",
+        "title": "Explore German Culture",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "70644",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "ECGG315",
+            "instructor": "Natalie Lozinski-Veach",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "HCD 232",
+        "title": "American Health Institutions",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "88813",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Elizabeth Kizer",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "89411",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Joshua Anbar",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "HCD 303",
+        "title": "Global Health Care Systems",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "69570",
+            "component": "lecture",
+            "weekdays": [
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "downtown-phoenix",
+            "location": "CRONK121",
+            "instructor": "Rizwana Biviji",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "69929",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rizwana Biviji",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "70133",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Staff",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73050",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "west-valley",
+            "location": "SANDS234",
+            "instructor": "Nnenna Agu",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "78317",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Ehi Azugbene",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "78998",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Rajendra Karkee",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "HCR 230",
+        "title": "Culture and Health",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "60581",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Danielle Martin",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "62710",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT234",
+            "instructor": "Grace Derboghossian",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "70085",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Farzana Sarder",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "72116",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Steven McCorkle",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "HST 109",
+        "title": "United States to 1865",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "62739",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "LSE104",
+            "instructor": "Maurice Crandall",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "62740",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "COOR170",
+            "instructor": "Jonathan Barth",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "66009",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "James Hrdlicka",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "67304",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "startsAtLocal": "10:10",
+            "endsAtLocal": "11:00",
+            "campusId": "west-valley",
+            "location": "CLCC199",
+            "instructor": "Robert Sharman",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "77313",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "startsAtLocal": "10:10",
+            "endsAtLocal": "11:00",
+            "campusId": "polytechnic",
+            "location": "SANTN132",
+            "instructor": "Valerie Adams",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "79765",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Karin Enloe",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "79796",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Daniele Bolelli",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "81008",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Brock Ruggles",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83345",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "J Schermerhorn",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87294",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Peter Van Cleave",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "HST 333",
+        "title": "African American History to",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "79961",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "WLSN226",
+            "instructor": "Jessica Viñas-Nelson",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "HST 415",
+        "title": "Debating the Constitution",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "80665",
+            "component": "lecture",
+            "weekdays": [
+              2
+            ],
+            "startsAtLocal": "16:50",
+            "endsAtLocal": "19:35",
+            "campusId": "tempe",
+            "location": "DH109",
+            "instructor": "Donald Critchlow, John Lopez",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "JUS 445",
+        "title": "Surveillance and Society",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "86012",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "WLSN226",
+            "instructor": "Jessica Katzenstein",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "MVS 100",
+        "title": "Introduction to Military Studies",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "76635",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "polytechnic",
+            "location": "SANTN130",
+            "instructor": "Benjamen Goff",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "PAF 112",
+        "title": "Public Service and American",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "70412",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Sean Bowie",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "72318",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "downtown-phoenix",
+            "location": "CRONK122",
+            "instructor": "James Wright",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "75430",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "SS105",
+            "instructor": "Alberto Olivas",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "76582",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Kiana Sears",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "80455",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "LIBC34",
+            "instructor": "Alberto Olivas",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "80456",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT271",
+            "instructor": "Angel Molina",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "81056",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "downtown-phoenix",
+            "location": "UCENT279",
+            "instructor": "William Gates",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "82967",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Asher Gulliford",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "88810",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "12:00",
+            "endsAtLocal": "13:15",
+            "campusId": "tempe",
+            "location": "HLMK359",
+            "instructor": "Joshua Uebelherr",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "88814",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "LIBC10",
+            "instructor": "Allison JoAnn Lester",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "PAF 411",
+        "title": "Law in Action",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "88624",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Margaretha Bentley",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "PHI 307",
+        "title": "Philosophy of Law",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "67045",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jacob Affolter",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "67622",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Michelle Saint",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "79778",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "tempe",
+            "location": "EDC117",
+            "instructor": "Jimmy Licon",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "82805",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jacob Affolter",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "89881",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "SCOB252",
+            "instructor": "Peter de Marneffe",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89887",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Jacob Affolter",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "POS 110",
+        "title": "American Government and",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "61089",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "EDC117",
+            "instructor": "Paul Lewis",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "61607",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "downtown-phoenix",
+            "location": "CRONK128",
+            "instructor": "Harrison Carter",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "66180",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "David Ebner",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "73971",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Mark Simpson",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "77884",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Scott Spehr",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83673",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Stella Rouse",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87458",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Chris Johnson",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "87460",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Chris Johnson",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "88712",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "west-valley",
+            "location": "CLCCL1-99",
+            "instructor": "Robert Poe",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "POS 230",
+        "title": "Current Issues in National",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "87971",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Richie Romero",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "POS 310",
+        "title": "American National",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "65365",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "George Watson",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "68534",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Steven McCance",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83065",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Steven McCance",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "86948",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Richie Romero",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "POS 313",
+        "title": "The Congress",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "86277",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "15:00",
+            "endsAtLocal": "16:15",
+            "campusId": "tempe",
+            "location": "BDH211",
+            "instructor": "Steven Smith",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "POS 314",
+        "title": "The American Presidency",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "77885",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Scott Spehr",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "83726",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Seth Rachlin",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "POS 316",
+        "title": "American Political Institutions",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "68583",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Mark Simpson",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "POS 471",
+        "title": "Constitutional Law I",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "85990",
+            "component": "lecture",
+            "weekdays": [
+              1,
+              3
+            ],
+            "startsAtLocal": "13:30",
+            "endsAtLocal": "14:45",
+            "campusId": "tempe",
+            "location": "COORL1-10",
+            "instructor": "Valerie Hoekstra",
+            "modality": "in-person"
+          }
+        ]
+      },
+      {
+        "code": "REL 204",
+        "title": "Religious Freedom",
+        "credits": 3,
+        "sections": [
+          {
+            "lineNumber": "88778",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Spencer Kunz",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "88780",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Leah Sarat",
+            "modality": "online"
+          }
+        ]
+      },
+      {
+        "code": "SWU 182",
+        "title": "Religious Freedom Social Services Perspective of",
+        "sections": [
+          {
+            "lineNumber": "89125",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "",
+            "instructor": "Heather Wetherholt",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "63140",
+            "component": "lecture",
+            "weekdays": [],
+            "startsAtLocal": "",
+            "endsAtLocal": "",
+            "campusId": "",
+            "location": "iCourse",
+            "instructor": "Robin Hoskins",
+            "modality": "online"
+          },
+          {
+            "lineNumber": "88997",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "09:00",
+            "endsAtLocal": "10:15",
+            "campusId": "tempe",
+            "location": "DH103",
+            "instructor": "Kyle Gresenz",
+            "modality": "in-person"
+          },
+          {
+            "lineNumber": "89157",
+            "component": "lecture",
+            "weekdays": [
+              2,
+              4
+            ],
+            "startsAtLocal": "10:30",
+            "endsAtLocal": "11:45",
+            "campusId": "downtown-phoenix",
+            "location": "CRONK440",
+            "instructor": "Bahney Dedolph",
+            "modality": "in-person"
+          }
+        ]
+      }
+    ]
   }
 ]

@@ -265,12 +265,27 @@ export type InstitutionSetupOptions = {
   campuses: InstitutionCampusOption[];
   terms: AcademicTermPreset[];
 };
+export type CatalogSection = {
+  lineNumber: string;
+  component: string;
+  weekdays: number[];
+  startsAtLocal: string;
+  endsAtLocal: string;
+  campusId: string;
+  location: string;
+  instructor: string;
+  modality: string;
+};
 export type CourseSuggestion = {
   code: string;
   title: string;
   source: "canvas" | "catalog" | "local" | "generic" | string;
   sourceLabel: string;
   confidence: number;
+  credits?: number | null;
+  // Only catalog-sourced suggestions carry these. Picking one fills a class
+  // meeting outright instead of leaving the student to retype their schedule.
+  sections?: CatalogSection[];
 };
 export type TimezoneSuggestion = {
   timezone: string;
@@ -773,9 +788,27 @@ export async function searchInstitutions(query: string): Promise<InstitutionSele
 }
 export async function searchCourseSuggestions(institutionId: string, query: string): Promise<CourseSuggestion[]> {
   if (isDesktop()) return call("search_course_suggestions", { institutionId, query });
-  const patterns = [["MAT 142", "College Mathematics"], ["ENG 101", "First-Year Composition"], ["ENG 102", "Research and Writing"], ["BIO 181", "General Biology I"], ["PSY 101", "Introduction to Psychology"], ["STA 201", "Introduction to Statistics"]];
   const needle = query.trim().toUpperCase();
-  return patterns.filter(([code, title]) => code.includes(needle) || title.toUpperCase().includes(needle)).map(([code, title]) => ({ code, title, source: "generic", sourceLabel: "General course pattern", confidence: 0.62 }));
+  // Two real ASU sections so the section picker can be exercised in the browser;
+  // the packaged app reads the bundled catalog instead. Kept small on purpose —
+  // this is a development fixture, not a second catalog to maintain.
+  const catalog: CourseSuggestion[] = institutionId === asuSetupOptions.institutionId ? [{
+    code: "CSE 240",
+    title: "Introduction to Programming Languages",
+    source: "catalog",
+    sourceLabel: "ASU Class Search",
+    confidence: 0.99,
+    credits: 3,
+    sections: [
+      { lineNumber: "66923", component: "lecture", weekdays: [1, 3], startsAtLocal: "13:30", endsAtLocal: "14:45", campusId: "tempe", location: "ISTBX101", instructor: "Justin Selgrad", modality: "in-person" },
+      { lineNumber: "77625", component: "lecture", weekdays: [2, 4], startsAtLocal: "10:30", endsAtLocal: "11:45", campusId: "west-valley", location: "SANDS131", instructor: "Eric Eckert", modality: "in-person" },
+    ],
+  }] : [];
+  const patterns = [["MAT 142", "College Mathematics"], ["ENG 101", "First-Year Composition"], ["ENG 102", "Research and Writing"], ["BIO 181", "General Biology I"], ["PSY 101", "Introduction to Psychology"], ["STA 201", "Introduction to Statistics"]];
+  return [
+    ...catalog.filter((course) => course.code.includes(needle) || course.title.toUpperCase().includes(needle)),
+    ...patterns.filter(([code, title]) => code.includes(needle) || title.toUpperCase().includes(needle)).map(([code, title]) => ({ code, title, source: "generic", sourceLabel: "General course pattern", confidence: 0.62 })),
+  ];
 }
 const asuSetupOptions: InstitutionSetupOptions = {
   institutionId: "104151",
