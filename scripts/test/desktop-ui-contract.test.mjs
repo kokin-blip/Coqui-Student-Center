@@ -45,6 +45,22 @@ test("first-run UI is a four-stage local onboarding flow with no demo review", (
   assert.match(native, /schemaVersion: 11/);
 });
 
+// A student can attend several ASU campuses at once, so the campus step is a
+// set rather than a single choice. The first pick stays primary because it fills
+// the location on new class meetings, and "Online or multiple campuses" is a
+// statement that no single campus applies, so it never combines with one.
+test("campus selection is multi-select with a primary and an exclusive flexible option", () => {
+  assert.match(onboarding, /campusIds/);
+  assert.match(onboarding, /const toggleCampus =/);
+  assert.match(onboarding, /aria-pressed=\{position >= 0\}/);
+  assert.match(onboarding, /Primary/);
+  // Deselecting must be reachable, otherwise a mis-tap is unrecoverable.
+  assert.match(onboarding, /selected\.filter\(\(id\) => id !== campus\.id\)/);
+  // Picking the flexible option replaces the set instead of joining it.
+  assert.match(onboarding, /if \(isFlexible\) next = \[campus\.id\]/);
+  assert.doesNotMatch(onboarding, /<legend>Primary campus<\/legend>/);
+});
+
 // Which panels belong to which tab is now decided in WorkspaceView. The
 // behavioural assertion lives in apps/desktop-ui/test/workspace-tabs.test.tsx,
 // which renders both tabs; this only guards against the panels drifting back

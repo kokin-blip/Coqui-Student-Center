@@ -179,6 +179,11 @@ struct InstitutionSearchResult {
     official_domain: String,
     catalog_provider_status: String,
     custom: bool,
+    // Set when the query matched a campus rather than the institution name, so
+    // searching "Tempe" can select Arizona State with that campus already
+    // chosen instead of dropping the student on an unexplained result.
+    matched_campus_id: String,
+    matched_campus_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2518,18 +2523,134 @@ fn institution_setup_providers() -> Result<&'static [InstitutionSetupOptions]> {
         .ok_or_else(|| AppError::Invalid("bundled institution setup providers are invalid".into()))
 }
 
+const INSTITUTION_RESULT_LIMIT: usize = 12;
+
+/// True when `needle` appears in `haystack` starting at a word boundary.
+///
+/// Plain `contains` is why searching "asu" used to return "Beyond Measure
+/// Barbering Institute" and "Treasure Coast Technical College" while missing
+/// every Arizona State campus: "measure" contains "asu" mid-word. Anchoring to a
+/// boundary keeps short acronym-shaped queries useful.
+fn matches_at_word_boundary(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.match_indices(needle).any(|(index, _)| {
+        index == 0
+            || !haystack.as_bytes()[index - 1].is_ascii_alphanumeric()
+    })
+}
+
+/// Initials of the significant words, so "asu" reaches "Arizona State
+/// University" and "ucla" reaches "University of California-Los Angeles".
+fn institution_acronym(name: &str) -> String {
+    name.split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| {
+            !word.is_empty()
+                && !matches!(
+                    word.to_ascii_lowercase().as_str(),
+                    "of" | "the" | "and" | "at" | "in" | "for" | "a"
+                )
+        })
+        .filter_map(|word| word.chars().next())
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
+}
+
+/// Relevance score plus the campus that produced the match, if any.
+///
+/// Ordering by score rather than by directory order is the fix for the original
+/// report: ASU has 17 directory entries, and the twelve that sort first are all
+/// small satellite locations, so the main campus entry -- the only one carrying
+/// campus and term presets -- was cut off before it could ever be shown.
+fn score_institution(
+    entry: &InstitutionDirectoryEntry,
+    needle: &str,
+    campuses: &[InstitutionCampusOption],
+) -> Option<(i32, Option<InstitutionCampusOption>)> {
+    if needle.is_empty() {
+        return Some((0, None));
+    }
+    let name = entry.name.to_ascii_lowercase();
+    let acronym = institution_acronym(&entry.name);
+
+    let name_score = if name == needle {
+        Some(1000)
+    } else if name.starts_with(needle) {
+        Some(850)
+    } else if acronym == needle {
+        Some(700)
+    } else if acronym.starts_with(needle) {
+        Some(640)
+    } else if matches_at_word_boundary(&name, needle) {
+        Some(560)
+    } else if matches_at_word_boundary(&entry.domain.to_ascii_lowercase(), needle) {
+        Some(300)
+    } else {
+        None
+    };
+
+    // A campus hit is worth more than a loose name hit: a student typing
+    // "Tempe" means the ASU campus, not "Brookline College-Tempe".
+    let campus_hit = campuses.iter().find_map(|campus| {
+        let campus_name = campus.name.to_ascii_lowercase();
+        let city = campus.city.to_ascii_lowercase();
+        if campus_name == needle {
+            Some((620, campus.clone()))
+        } else if matches_at_word_boundary(&campus_name, needle) {
+            Some((580, campus.clone()))
+        } else if city == needle {
+            Some((540, campus.clone()))
+        } else {
+            None
+        }
+    });
+
+    let (score, campus) = match (name_score, campus_hit) {
+        (Some(name), Some((campus_score, campus))) if campus_score > name => {
+            (campus_score, Some(campus))
+        }
+        (Some(name), Some((_, campus))) => (name, Some(campus)),
+        (Some(name), None) => (name, None),
+        (None, Some((campus_score, campus))) => (campus_score, Some(campus)),
+        (None, None) => return None,
+    };
+
+    // Entries with campus and term presets are the ones a student can actually
+    // finish setup with, so they outrank branch locations that only carry a name.
+    let boost = if campuses.is_empty() { 0 } else { 160 };
+    Some((score + boost, campus))
+}
+
 fn search_institutions_in(query: &str) -> Result<Vec<InstitutionSearchResult>> {
     let entries = institution_directory()?;
+    let providers = institution_setup_providers()?;
     let needle = query.trim().to_ascii_lowercase();
-    let mut matches = entries
+    let mut scored = entries
         .iter()
-        .filter(|entry| {
-            needle.is_empty()
-                || entry.name.to_ascii_lowercase().contains(&needle)
-                || entry.domain.contains(&needle)
+        .filter_map(|entry| {
+            let campuses = providers
+                .iter()
+                .find(|provider| provider.institution_id == entry.id)
+                .map(|provider| provider.campuses.as_slice())
+                .unwrap_or(&[]);
+            score_institution(entry, &needle, campuses)
+                .map(|(score, campus)| (score, entry, campus))
         })
-        .take(12)
-        .map(|entry| InstitutionSearchResult {
+        .collect::<Vec<_>>();
+    // Shorter names break ties towards the canonical entry rather than a branch
+    // that merely repeats it; the name comparison keeps the order stable.
+    scored.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.name.len().cmp(&right.1.name.len()))
+            .then_with(|| left.1.name.cmp(&right.1.name))
+    });
+    let mut matches = scored
+        .into_iter()
+        .take(INSTITUTION_RESULT_LIMIT)
+        .map(|(_, entry, campus)| InstitutionSearchResult {
             id: entry.id.clone(),
             name: entry.name.clone(),
             country: entry.country.clone(),
@@ -2541,6 +2662,13 @@ fn search_institutions_in(query: &str) -> Result<Vec<InstitutionSearchResult>> {
                 "unavailable".into()
             },
             custom: false,
+            matched_campus_id: campus
+                .as_ref()
+                .map(|campus| campus.id.clone())
+                .unwrap_or_default(),
+            matched_campus_name: campus
+                .map(|campus| campus.name)
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
     if !query.trim().is_empty()
@@ -2559,6 +2687,8 @@ fn search_institutions_in(query: &str) -> Result<Vec<InstitutionSearchResult>> {
             official_domain: String::new(),
             catalog_provider_status: "local_fallback".into(),
             custom: true,
+            matched_campus_id: String::new(),
+            matched_campus_name: String::new(),
         });
     }
     Ok(matches)
@@ -9242,6 +9372,83 @@ mod tests {
         assert!(asu.terms[0]
             .source_url
             .starts_with("https://registrar.asu.edu/"));
+    }
+
+    // The reported bug: ASU has 17 directory entries and the twelve that sorted
+    // first were all satellite locations, so the main campus entry -- the only
+    // one carrying the campus picker and registrar term dates -- was cut off.
+    #[test]
+    fn searching_for_a_university_ranks_the_campus_bearing_entry_first() {
+        for query in ["arizona state", "arizona state university", "asu"] {
+            let results = search_institutions_in(query).unwrap();
+            assert_eq!(
+                results[0].id, "104151",
+                "{query:?} should surface the entry with campus and term presets, got {:?}",
+                results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn searching_for_a_campus_name_selects_that_campus() {
+        for (query, campus) in [
+            ("tempe", "Tempe"),
+            ("downtown phoenix", "Downtown Phoenix"),
+            ("west valley", "West Valley"),
+        ] {
+            let results = search_institutions_in(query).unwrap();
+            let asu = results
+                .iter()
+                .find(|result| result.id == "104151")
+                .unwrap_or_else(|| panic!("{query:?} did not reach Arizona State"));
+            assert_eq!(asu.matched_campus_name, campus);
+            assert!(!asu.matched_campus_id.is_empty());
+        }
+    }
+
+    // "measure" and "treasure" contain "asu"; a plain substring search returned
+    // barbering and technical colleges while hiding every Arizona State campus.
+    #[test]
+    fn short_queries_do_not_match_mid_word() {
+        let results = search_institutions_in("asu").unwrap();
+        assert!(
+            !results
+                .iter()
+                .any(|result| result.name.contains("Beyond Measure")
+                    || result.name.contains("Treasure Coast")),
+            "mid-word matches leaked in: {:?}",
+            results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    // Profiles saved before multi-campus support hold no campusIds. They must
+    // keep loading with their single campus intact rather than losing it.
+    #[test]
+    fn institution_selections_saved_before_multi_campus_still_load() {
+        let legacy = r#"{"id":"104151","name":"Arizona State University","country":"US","source":"college_scorecard","catalogProviderStatus":"unavailable","custom":false,"campusId":"tempe","campusName":"Tempe"}"#;
+        let selection: profile::InstitutionSelection = serde_json::from_str(legacy).unwrap();
+        assert_eq!(selection.campus_id, "tempe");
+        assert_eq!(selection.campus_name, "Tempe");
+        assert!(selection.campus_ids.is_empty());
+
+        let multi = r#"{"id":"104151","name":"Arizona State University","country":"US","source":"college_scorecard","catalogProviderStatus":"unavailable","custom":false,"campusId":"tempe","campusName":"Tempe","campusIds":["tempe","west-valley","downtown-phoenix"],"campusNames":["Tempe","West Valley","Downtown Phoenix"]}"#;
+        let selection: profile::InstitutionSelection = serde_json::from_str(multi).unwrap();
+        assert_eq!(selection.campus_ids.len(), 3);
+        // The primary stays first so it keeps driving class-meeting defaults.
+        assert_eq!(selection.campus_id, selection.campus_ids[0]);
+        let encoded = serde_json::to_string(&selection).unwrap();
+        assert!(encoded.contains("\"campusIds\""));
+    }
+
+    #[test]
+    fn acronyms_resolve_to_the_institution_they_abbreviate() {
+        assert_eq!(institution_acronym("Arizona State University"), "asu");
+        assert_eq!(
+            institution_acronym("University of California-Los Angeles"),
+            "ucla"
+        );
+        assert!(matches_at_word_boundary("arizona state university", "state"));
+        assert!(!matches_at_word_boundary("beyond measure", "asu"));
     }
 
     fn material_device_id() -> String {

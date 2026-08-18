@@ -56,10 +56,18 @@ pub struct InstitutionSelection {
     pub official_domain: Option<String>,
     pub catalog_provider_status: String,
     pub custom: bool,
+    /// Primary campus. Drives the default class-meeting location and the setup
+    /// summary, so it stays a single value even when several are attended.
     #[serde(default)]
     pub campus_id: String,
     #[serde(default)]
     pub campus_name: String,
+    /// Every campus the student attends, primary first. Empty on profiles saved
+    /// before multi-campus support; treat `campus_id` as the sole entry then.
+    #[serde(default)]
+    pub campus_ids: Vec<String>,
+    #[serde(default)]
+    pub campus_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

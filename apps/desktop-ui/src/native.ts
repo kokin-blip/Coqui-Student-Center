@@ -229,8 +229,17 @@ export type InstitutionSelection = {
   officialDomain?: string;
   catalogProviderStatus: string;
   custom: boolean;
+  // Primary campus: drives the default class-meeting location and the summary.
   campusId?: string;
   campusName?: string;
+  // Every campus attended, primary first. Empty on profiles saved before
+  // multi-campus support, where campusId is the sole entry.
+  campusIds?: string[];
+  campusNames?: string[];
+  // Present on search results when the query matched a campus rather than the
+  // institution name, so selecting "Tempe" can pre-choose that campus.
+  matchedCampusId?: string;
+  matchedCampusName?: string;
 };
 export type InstitutionCampusOption = {
   id: string;
@@ -752,7 +761,13 @@ const browserInstitutions: InstitutionSelection[] = [
 export async function searchInstitutions(query: string): Promise<InstitutionSelection[]> {
   if (isDesktop()) return call("search_institutions", { query });
   const needle = query.trim().toLowerCase();
-  const matches = browserInstitutions.filter((item) => !needle || item.name.toLowerCase().includes(needle));
+  // Campus names are searchable natively, so the browser fallback matches them
+  // too; without this a developer typing "Tempe" sees nothing here and a
+  // pre-selected ASU campus in the packaged app.
+  const campusFor = (item: InstitutionSelection) => (item.id === asuSetupOptions.institutionId ? asuSetupOptions.campuses : []).find((campus) => needle && campus.name.toLowerCase().includes(needle));
+  const matches = browserInstitutions
+    .filter((item) => !needle || item.name.toLowerCase().includes(needle) || Boolean(campusFor(item)))
+    .map((item) => { const campus = campusFor(item); return campus ? { ...item, matchedCampusId: campus.id, matchedCampusName: campus.name } : item; });
   if (needle && !matches.some((item) => item.name.toLowerCase() === needle)) matches.push({ id: `custom:${needle.replaceAll(" ", "-")}`, name: query.trim(), country: "Other", source: "custom", catalogProviderStatus: "local_fallback", custom: true });
   return structuredClone(matches.slice(0, 12));
 }
