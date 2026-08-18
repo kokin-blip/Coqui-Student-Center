@@ -1475,7 +1475,7 @@ export async function downloadSyncedDocument(documentId: string) {
     ? call<boolean>("download_synced_document", { documentId })
     : Boolean(documentId);
 }
-export async function addTask(title: string, minutes: number, dueAt?: string) {
+export async function addTask(title: string, minutes: number, dueAt?: string, courseId?: string) {
   if (!isDesktop()) {
     const id = crypto.randomUUID();
     const startsAt = browserAt(19);
@@ -1483,7 +1483,7 @@ export async function addTask(title: string, minutes: number, dueAt?: string) {
     browserSeed.blocks.push({id,taskId:id,startsAt,endsAt,title,kind:"study",completed:false,locked:false,sessionIndex:0,location:"",reasonCodes:[dueAt?"deadline_soon":"feasible_window"]});
     return structuredClone(browserSeed);
   }
-  return call<Dashboard>("add_task", { title, minutes, dueAt });
+  return call<Dashboard>("add_task", { title, minutes, dueAt, courseId });
 }
 export async function toggleTask(id: string) {
   if (!isDesktop()) {

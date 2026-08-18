@@ -1311,16 +1311,32 @@ fn canonical_entity_snapshot(
     table_snapshot(conn, table.0, table.1, entity_id)
 }
 
-fn insert_task(conn: &Connection, title: &str, minutes: i64, due: Option<&str>) -> Result<String> {
+fn insert_task(
+    conn: &Connection,
+    title: &str,
+    minutes: i64,
+    due: Option<&str>,
+    course_id: Option<&str>,
+) -> Result<String> {
     if title.trim().is_empty() || !(5..=480).contains(&minutes) {
         return Err(AppError::Invalid(
             "task title and a 5–480 minute estimate are required".into(),
         ));
     }
     let id = Uuid::new_v4().to_string();
+    // Quick capture could not name a course until now, so everything added from
+    // the topbar landed unattached even when the student knew the course.
+    let course_id = course_id.map(str::trim).filter(|value| !value.is_empty());
     conn.execute(
-        "INSERT INTO tasks(id,title,minutes,due_at,created_at) VALUES(?1,?2,?3,?4,?5)",
-        params![id, title.trim(), minutes, due, Utc::now().to_rfc3339()],
+        "INSERT INTO tasks(id,title,minutes,due_at,course_id,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+        params![
+            id,
+            title.trim(),
+            minutes,
+            due,
+            course_id,
+            Utc::now().to_rfc3339()
+        ],
     )?;
     mutation(conn, "task", &id, "created", "{}")?;
     Ok(id)
@@ -5339,10 +5355,11 @@ fn add_task(
     title: String,
     minutes: i64,
     due_at: Option<String>,
+    course_id: Option<String>,
 ) -> Result<Dashboard> {
     state.require_unlocked()?;
     let db = state.db.lock().unwrap();
-    insert_task(&db, &title, minutes, due_at.as_deref())?;
+    insert_task(&db, &title, minutes, due_at.as_deref(), course_id.as_deref())?;
     regenerate_plan(&db, None)?;
     dashboard(&db, &state.ocr)
 }

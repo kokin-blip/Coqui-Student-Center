@@ -153,6 +153,8 @@ import {
   listLegacyQuarantine,
   restoreLegacyQuarantine,
   purgeLegacyQuarantine,
+  searchCourseSuggestions,
+  CourseSuggestion,
 } from "./native";
 import {
   beginSyncProtection,
@@ -260,6 +262,17 @@ export function StudentCenter() {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskMinutes, setTaskMinutes] = useState(30);
   const [taskDue, setTaskDue] = useState("");
+  const [taskCourseId, setTaskCourseId] = useState("");
+  // Quick capture lives above the workspace view, so the course list is not
+  // already loaded here. Fetched when the modal opens rather than on every
+  // dashboard refresh, since most sessions never open it.
+  const [quickAddCourses, setQuickAddCourses] = useState<CourseRecord[]>([]);
+  useEffect(() => {
+    if (modal !== "task") return;
+    getLocalWorkspace()
+      .then((snapshot) => setQuickAddCourses(snapshot.courses))
+      .catch(() => setQuickAddCourses([]));
+  }, [modal]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIndex, setSearchIndex] = useState<WorkspaceSnapshot | null>(null);
   const [canvasUrl, setCanvasUrl] = useState("");
@@ -2130,6 +2143,25 @@ export function StudentCenter() {
               onChange={(e) => setTaskDue(e.target.value)}
             />
           </label>
+          {/* Quick capture dropped the course even when the student knew it,
+              leaving assignments unattached. Only enrolled courses are offered:
+              an assignment for a class you are not taking is not a real case. */}
+          {quickAddCourses.length > 0 && (
+            <label className="field">
+              Course (optional)
+              <select
+                value={taskCourseId}
+                onChange={(e) => setTaskCourseId(e.target.value)}
+              >
+                <option value="">No course</option>
+                {quickAddCourses.map((record) => (
+                  <option key={record.id} value={record.id}>
+                    {record.code ? `${record.code} · ${record.title}` : record.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="modal-actions">
             <button className="outline" onClick={() => setModal(null)}>
               Cancel
@@ -2144,11 +2176,13 @@ export function StudentCenter() {
                       taskTitle.trim(),
                       taskMinutes,
                       taskDue ? new Date(taskDue).toISOString() : undefined,
+                      taskCourseId || undefined,
                     ),
                   "Assignment saved and planned locally.",
                 ).then(() => {
                   setTaskTitle("");
                   setTaskDue("");
+                  setTaskCourseId("");
                   setModal(null);
                 })
               }
@@ -3159,6 +3193,9 @@ function WorkspaceView({
   const [busy, setBusy] = useState(false);
   const [courseEdit, setCourseEdit] = useState<CourseRecord | null>(null);
   const [course, setCourse] = useState<CourseInput>({ title: "", code: "" });
+  // Adding a course mid-semester had no autocomplete at all, so a code typed
+  // here never reached the school catalog that onboarding already uses.
+  const [courseSuggestions, setCourseSuggestions] = useState<CourseSuggestion[]>([]);
   const emptyTask: TaskInput = {
     title: "",
     kind: "assignment",
@@ -3850,16 +3887,47 @@ function WorkspaceView({
                     Code
                     <input
                       value={course.code}
-                      onChange={(event) =>
-                        setCourse((current) => ({
-                          ...current,
-                          code: event.target.value,
-                        }))
-                      }
+                      onChange={(event) => {
+                        const code = event.target.value;
+                        setCourse((current) => ({ ...current, code }));
+                        const institutionId = workspace?.institution?.id ?? "";
+                        if (!code.trim() || !institutionId) {
+                          setCourseSuggestions([]);
+                          return;
+                        }
+                        searchCourseSuggestions(institutionId, code)
+                          .then(setCourseSuggestions)
+                          .catch(() => setCourseSuggestions([]));
+                      }}
                       placeholder="ENG 102"
                     />
                   </label>
                 </div>
+                {courseSuggestions.length > 0 && (
+                  <div className="course-suggestions">
+                    {courseSuggestions.map((suggestion) => (
+                      <button
+                        key={`${suggestion.source}-${suggestion.code}`}
+                        onClick={() => {
+                          setCourse({ code: suggestion.code, title: suggestion.title });
+                          setCourseSuggestions([]);
+                        }}
+                      >
+                        <span>
+                          <strong>
+                            {suggestion.code} · {suggestion.title}
+                          </strong>
+                          <small>
+                            {suggestion.sections?.length
+                              ? `${suggestion.sourceLabel} · add class times from Timetable`
+                              : suggestion.sourceLabel}
+                          </small>
+                        </span>
+                        <em>{Math.round(suggestion.confidence * 100)}%</em>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="modal-actions">
                   {courseEdit && (
                     <button
@@ -3867,6 +3935,7 @@ function WorkspaceView({
                       onClick={() => {
                         setCourseEdit(null);
                         setCourse({ title: "", code: "" });
+                        setCourseSuggestions([]);
                       }}
                     >
                       Cancel
@@ -3883,6 +3952,7 @@ function WorkspaceView({
                       ).then(() => {
                         setCourseEdit(null);
                         setCourse({ title: "", code: "" });
+                        setCourseSuggestions([]);
                       })
                     }
                   >
