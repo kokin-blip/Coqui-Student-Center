@@ -186,6 +186,58 @@ struct InstitutionSearchResult {
     matched_campus_name: String,
 }
 
+/// One scheduled meeting of a course, shaped to drop straight into
+/// `profile::ClassMeetingInput` so picking a section fills a class time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogSection {
+    #[serde(default)]
+    line_number: String,
+    #[serde(default)]
+    component: String,
+    #[serde(default)]
+    weekdays: Vec<i64>,
+    #[serde(default)]
+    starts_at_local: String,
+    #[serde(default)]
+    ends_at_local: String,
+    #[serde(default)]
+    campus_id: String,
+    #[serde(default)]
+    location: String,
+    #[serde(default)]
+    instructor: String,
+    #[serde(default)]
+    modality: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogCourse {
+    code: String,
+    title: String,
+    #[serde(default)]
+    credits: Option<f64>,
+    #[serde(default)]
+    sections: Vec<CatalogSection>,
+}
+
+/// A school's course list. Deliberately school-agnostic: a second institution is
+/// another entry, not another code path.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstitutionCatalog {
+    institution_id: String,
+    #[serde(default)]
+    term_id: String,
+    #[serde(default)]
+    source_label: String,
+    #[serde(default)]
+    source_url: String,
+    #[serde(default)]
+    courses: Vec<CatalogCourse>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CourseSuggestion {
@@ -194,6 +246,12 @@ struct CourseSuggestion {
     source: String,
     source_label: String,
     confidence: f64,
+    #[serde(default)]
+    credits: Option<f64>,
+    /// Empty unless the suggestion came from a catalog that carries meeting
+    /// times. The UI offers these so a pick can fill days, times and location.
+    #[serde(default)]
+    sections: Vec<CatalogSection>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2501,6 +2559,28 @@ fn get_timezone_suggestion(state: tauri::State<AppState>) -> Result<TimezoneSugg
 static INSTITUTION_DIRECTORY: OnceLock<Option<Vec<InstitutionDirectoryEntry>>> = OnceLock::new();
 static INSTITUTION_SETUP_PROVIDERS: OnceLock<Option<Vec<InstitutionSetupOptions>>> =
     OnceLock::new();
+static INSTITUTION_CATALOGS: OnceLock<Option<Vec<InstitutionCatalog>>> = OnceLock::new();
+
+/// Course lists for the schools that have one, keyed by institution.
+///
+/// `include_str!` is deliberate while these are hand-curated and small, matching
+/// how the setup providers ship. A full term's class list is a different order of
+/// magnitude and must move to `bundle.resources` + the resource directory before
+/// it lands, so a student never carries every school's catalog in their binary.
+fn institution_catalogs() -> Result<&'static [InstitutionCatalog]> {
+    INSTITUTION_CATALOGS
+        .get_or_init(|| {
+            serde_json::from_str(include_str!("../resources/institution-catalogs.json")).ok()
+        })
+        .as_deref()
+        .ok_or_else(|| AppError::Invalid("bundled course catalog is invalid".into()))
+}
+
+fn institution_catalog_for(institution_id: &str) -> Result<Option<&'static InstitutionCatalog>> {
+    Ok(institution_catalogs()?
+        .iter()
+        .find(|catalog| catalog.institution_id == institution_id))
+}
 
 fn institution_directory() -> Result<&'static [InstitutionDirectoryEntry]> {
     INSTITUTION_DIRECTORY
@@ -2708,7 +2788,7 @@ async fn search_institutions(
 #[tauri::command]
 fn search_course_suggestions(
     state: tauri::State<AppState>,
-    _institution_id: String,
+    institution_id: String,
     query: String,
 ) -> Result<Vec<CourseSuggestion>> {
     state.require_unlocked()?;
@@ -2744,8 +2824,51 @@ fn search_course_suggestions(
             } else {
                 0.96
             },
+            credits: None,
+            sections: Vec::new(),
         })
         .collect::<Vec<_>>();
+
+    // The student's own school, which this command ignored entirely until now:
+    // the parameter was bound to `_institution_id` and nothing read it, so an ASU
+    // student searching "CSE 240" could only ever match the generic list below.
+    if let Some(catalog) = institution_catalog_for(&institution_id)? {
+        let lowered = needle.to_ascii_lowercase();
+        for course in &catalog.courses {
+            if results.len() >= 8 {
+                break;
+            }
+            let code = course.code.to_ascii_lowercase();
+            let title = course.title.to_ascii_lowercase();
+            // Same boundary rule as the school search: a three-letter subject code
+            // must not match the middle of an unrelated word.
+            if !(matches_at_word_boundary(&code, &lowered)
+                || matches_at_word_boundary(&title, &lowered))
+            {
+                continue;
+            }
+            if results
+                .iter()
+                .any(|item| item.code.eq_ignore_ascii_case(&course.code))
+            {
+                continue;
+            }
+            results.push(CourseSuggestion {
+                code: course.code.clone(),
+                title: course.title.clone(),
+                source: "catalog".into(),
+                source_label: if catalog.source_label.is_empty() {
+                    "School catalog".into()
+                } else {
+                    catalog.source_label.clone()
+                },
+                confidence: 0.99,
+                credits: course.credits,
+                sections: course.sections.clone(),
+            });
+        }
+    }
+
     let generics = [
         ("MAT 142", "College Mathematics"),
         ("MAT 151", "College Algebra"),
@@ -2769,6 +2892,8 @@ fn search_course_suggestions(
                 source: "generic".into(),
                 source_label: "General course pattern".into(),
                 confidence: 0.62,
+                credits: None,
+                sections: Vec::new(),
             });
         }
     }
@@ -9419,6 +9544,44 @@ mod tests {
             "mid-word matches leaked in: {:?}",
             results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
         );
+    }
+
+    // search_course_suggestions bound its institution parameter to
+    // `_institution_id` and never read it, so course suggestions were identical
+    // for every school. This guards the seam that fix introduced.
+    #[test]
+    fn course_catalogs_are_keyed_by_institution() {
+        let catalogs = institution_catalogs().unwrap();
+        assert!(
+            institution_catalog_for("104151").unwrap().is_some(),
+            "the school with campus and term presets should have a catalog entry"
+        );
+        assert!(
+            institution_catalog_for("000000").unwrap().is_none(),
+            "an unknown school must not inherit another school's courses"
+        );
+        for catalog in catalogs {
+            assert!(!catalog.institution_id.is_empty());
+            for course in &catalog.courses {
+                // A code with no title would render as a blank suggestion.
+                assert!(!course.code.trim().is_empty(), "catalog course needs a code");
+                assert!(
+                    !course.title.trim().is_empty(),
+                    "catalog course {} needs a title",
+                    course.code
+                );
+            }
+            // Shipping courses without saying where they came from is what the
+            // rest of this app refuses to do; keep the catalog to that standard.
+            if !catalog.courses.is_empty() {
+                assert!(
+                    !catalog.source_label.trim().is_empty()
+                        && !catalog.source_url.trim().is_empty(),
+                    "catalog {} ships courses without provenance",
+                    catalog.institution_id
+                );
+            }
+        }
     }
 
     // Profiles saved before multi-campus support hold no campusIds. They must
