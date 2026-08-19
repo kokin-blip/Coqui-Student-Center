@@ -41,7 +41,8 @@ pub struct ScheduleContext<'a> {
     pub source_locator: String,
     /// Course codes the student already has. Used only to judge confidence — a
     /// code nobody recognises is a hint the read went wrong, never a reason to
-    /// drop a class the student can see on their own screen.
+    /// drop a class the student can see on their own screen. Empty is fine and
+    /// simply means the check has nothing to say.
     pub known_courses: Vec<String>,
 }
 
@@ -380,7 +381,14 @@ pub fn read_schedule(segment: &Segment, context: &ScheduleContext) -> ScheduleRe
         _ => ScheduleReading::default(),
     };
     if reading.candidates.is_empty() {
+        // The list reader gets its turn, but the grid reader's diagnosis is kept:
+        // "the times are only in the left-hand column" is worth far more to a
+        // student than the generic message the fallback would leave behind.
+        let diagnosis = std::mem::take(&mut reading.warnings);
         reading = read_list(&rows, &vocabulary, context);
+        if reading.candidates.is_empty() {
+            reading.warnings.extend(diagnosis);
+        }
     }
 
     reading.candidates.truncate(MAX_MEETINGS);
@@ -412,6 +420,81 @@ fn find_header_row(rows: &[Row], vocabulary: &WeekdayVocabulary) -> Option<usize
     })
 }
 
+/// The hours ruler down the left of a week view.
+///
+/// A real calendar prints its times once, in a gutter, and puts nothing but the
+/// course and room inside each block. So the times are not in the blocks and
+/// cannot be read from them — they have to come from the ruler and the block's
+/// position against it.
+struct TimeRuler {
+    /// `(centre y, minutes since midnight)`, ascending by y.
+    points: Vec<(i64, u32)>,
+}
+
+impl TimeRuler {
+    fn from_rows(rows: &[Row], right_bound: i64) -> Self {
+        let mut points: Vec<(i64, u32)> = rows
+            .iter()
+            .filter_map(|row| {
+                let gutter: Vec<&OcrToken> = row
+                    .tokens
+                    .iter()
+                    .filter(|token| token.center_x() < right_bound)
+                    .collect();
+                if gutter.is_empty() {
+                    return None;
+                }
+                let words: Vec<&str> = gutter.iter().map(|t| t.text.as_str()).collect();
+                let stitched = join_meridiems(&words);
+                let minutes = stitched.iter().find_map(|word| to_minutes(word))?;
+                let y = gutter.iter().map(|token| token.center_y()).sum::<i64>()
+                    / gutter.len() as i64;
+                Some((y, minutes))
+            })
+            .collect();
+        points.sort_by_key(|(y, _)| *y);
+        points.dedup_by_key(|(_, minutes)| *minutes);
+        Self { points }
+    }
+
+    /// Minutes per pixel and the intercept, by least squares over the ruler.
+    ///
+    /// A fit rather than a nearest-neighbour lookup because the labels are
+    /// evenly spaced and individually noisy; the line through all of them is
+    /// steadier than any two of them.
+    fn fit(&self) -> Option<(f64, f64)> {
+        if self.points.len() < 3 {
+            return None;
+        }
+        let n = self.points.len() as f64;
+        let mean_y = self.points.iter().map(|(y, _)| *y as f64).sum::<f64>() / n;
+        let mean_m = self.points.iter().map(|(_, m)| *m as f64).sum::<f64>() / n;
+        let mut covariance = 0.0;
+        let mut variance = 0.0;
+        for (y, minutes) in &self.points {
+            let dy = *y as f64 - mean_y;
+            covariance += dy * (*minutes as f64 - mean_m);
+            variance += dy * dy;
+        }
+        if variance <= f64::EPSILON {
+            return None;
+        }
+        let slope = covariance / variance;
+        // A calendar runs downwards at a sane number of minutes per pixel.
+        if slope <= 0.0 || slope > 5.0 {
+            return None;
+        }
+        Some((slope, mean_m - slope * mean_y))
+    }
+}
+
+/// A run of rows in one day-column that read as a single class.
+struct Block {
+    rows: Vec<Row>,
+    top: i64,
+    bottom: i64,
+}
+
 fn read_grid(
     rows: &[Row],
     header_index: usize,
@@ -419,10 +502,10 @@ fn read_grid(
     context: &ScheduleContext,
 ) -> ScheduleReading {
     let header = &rows[header_index];
-    // Each weekday header anchors a column. The column's horizontal span runs to
-    // halfway towards its neighbours, which is what lets a block be assigned by
-    // overlap rather than by its left edge alone.
-    let mut columns: Vec<(u8, i64, i64)> = header
+    // Each weekday header anchors a column, and a column's span runs to halfway
+    // towards its neighbours, so a block is assigned by where it sits rather
+    // than by its left edge alone.
+    let mut columns: Vec<(u8, i64)> = header
         .tokens
         .iter()
         .filter_map(|token| {
@@ -430,16 +513,17 @@ fn read_grid(
                 .header_weekday(&token.text)
                 .map(|weekday| (weekday, token.center_x()))
         })
-        .map(|(weekday, center)| (weekday, center, center))
         .collect();
-    columns.sort_by_key(|(_, center, _)| *center);
-    let centers: Vec<i64> = columns.iter().map(|(_, center, _)| *center).collect();
+    columns.sort_by_key(|(_, center)| *center);
+    let centers: Vec<i64> = columns.iter().map(|(_, center)| *center).collect();
     let bounds: Vec<(u8, i64, i64)> = columns
         .iter()
         .enumerate()
-        .map(|(index, (weekday, center, _))| {
+        .map(|(index, (weekday, center))| {
             let left = if index == 0 {
-                i64::MIN / 4
+                // The first column's left edge is real, not infinite: everything
+                // to its left is the ruler.
+                center - (centers.get(1).copied().unwrap_or(*center + 200) - center) / 2
             } else {
                 (centers[index - 1] + center) / 2
             };
@@ -451,47 +535,162 @@ fn read_grid(
             (*weekday, left, right)
         })
         .collect();
+    let gutter_bound = bounds.first().map(|(_, left, _)| *left).unwrap_or(0);
+
+    let body: Vec<&Row> = rows.iter().skip(header_index + 1).collect();
+    let owned: Vec<Row> = body
+        .iter()
+        .map(|row| Row {
+            tokens: row.tokens.clone(),
+        })
+        .collect();
+    let ruler = TimeRuler::from_rows(&owned, gutter_bound);
+
+    // Gather each day-column's blocks before reading any of them, because the
+    // drawing offset is shared and can only be recovered from all of them.
+    let mut pending: Vec<(u8, Block)> = Vec::new();
+    for (weekday, left, right) in &bounds {
+        let column: Vec<OcrToken> = owned
+            .iter()
+            .flat_map(|row| row.tokens.iter())
+            .filter(|token| token.center_x() >= *left && token.center_x() < *right)
+            .cloned()
+            .collect();
+        for block in blocks_in_column(&column) {
+            pending.push((*weekday, block));
+        }
+    }
 
     let mut reading = ScheduleReading::default();
-    let mut blocks: Vec<(u8, Vec<OcrToken>)> = Vec::new();
-    for row in rows.iter().skip(header_index + 1) {
-        for token in &row.tokens {
-            let center = token.center_x();
-            // A token left of the first column is the time gutter, which is read
-            // from the block itself rather than from the ruler.
-            let Some((weekday, _, _)) = bounds
+    let mut blocks_without_times = 0;
+
+    for (weekday, block) in &pending {
+        let text = block
+            .rows
+            .iter()
+            .map(|row| row.text())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let stitched = join_meridiems(&words);
+        let words: Vec<&str> = stitched.iter().map(String::as_str).collect();
+        let Some(course) = course_code(&words) else {
+            continue;
+        };
+
+        // The time has to be printed in the block. A block's height is a drawn
+        // rectangle and OCR only ever sees the words inside it, so where the
+        // class *ends* is not recoverable from the ruler however carefully the
+        // start is fitted — and a class with an invented duration is worse than
+        // one this declines to read.
+        let Some((starts, ends)) = block_time_range(block) else {
+            blocks_without_times += 1;
+            continue;
+        };
+        if starts >= ends || !(EARLIEST_MINUTE..=LATEST_MINUTE).contains(&starts) {
+            continue;
+        }
+
+        let confidence = block
+            .rows
+            .iter()
+            .flat_map(|row| row.tokens.iter())
+            .map(|token| token.confidence)
+            .sum::<f64>()
+            / block
+                .rows
                 .iter()
-                .find(|(_, left, right)| center >= *left && center < *right)
-            else {
-                continue;
-            };
-            match blocks.last_mut() {
-                Some((existing, tokens)) if existing == weekday => tokens.push(token.clone()),
-                _ => blocks.push((*weekday, vec![token.clone()])),
-            }
-        }
-    }
+                .map(|row| row.tokens.len())
+                .sum::<usize>()
+                .max(1) as f64;
 
-    // Tokens in one day-column that sit close together vertically are one class.
-    let mut grouped: Vec<(u8, Vec<OcrToken>)> = Vec::new();
-    for (weekday, tokens) in blocks {
-        match grouped.iter_mut().find(|(day, _)| *day == weekday) {
-            Some((_, existing)) => existing.extend(tokens),
-            None => grouped.push((weekday, tokens)),
-        }
-    }
-
-    for (weekday, tokens) in grouped {
-        for meeting in meetings_from_column(&tokens, context) {
-            reading.candidates.push(meeting.into_candidate(
-                vec![weekday],
-                &context.timezone,
-                &context.source_locator,
+        let mut warnings = Vec::new();
+        // A misread digit turns PSY 101 into PSY 401, which is a wrong course
+        // rather than a missing one, and nothing downstream can tell.
+        if confidence < 0.75 {
+            warnings.push(format!(
+                "\"{course}\" was read with low confidence. Check the course code."
             ));
         }
+
+        reading.candidates.push(ExtractedCandidate {
+            kind: "class_meeting".into(),
+            title: course.clone(),
+            course,
+            evidence: text,
+            source_locator: context.source_locator.clone(),
+            source_uid: String::new(),
+            confidence: confidence.clamp(0.0, 1.0),
+            weekdays: vec![i64::from(*weekday)],
+            starts_at_local: format_clock(starts),
+            ends_at_local: format_clock(ends),
+            timezone: context.timezone.clone(),
+            warnings,
+            ..ExtractedCandidate::default()
+        });
     }
+
+    // Saying which kind of unreadable this is matters: a student who knows the
+    // times are only in the left-hand column knows to try the other reader,
+    // where a bare "nothing found" tells them nothing.
+    if reading.candidates.is_empty() && blocks_without_times > 0 && ruler.fit().is_some() {
+        reading.warnings.push(
+            "This looks like a week view whose class times are only in the left-hand column. \
+             Coqui can read which days each class meets but not how long it runs, so it has not \
+             guessed. Try the AI reader, or type the times in."
+                .into(),
+        );
+    }
+
     merge_identical_meetings(&mut reading.candidates);
     reading
+}
+
+/// Split a day-column into blocks, one per class.
+///
+/// A block is a run of rows sitting close together; the gap to the next class is
+/// several times a line's height.
+fn blocks_in_column(tokens: &[OcrToken]) -> Vec<Block> {
+    let rows = cluster_rows(tokens);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut heights: Vec<i64> = tokens.iter().map(|token| token.height).collect();
+    heights.sort_unstable();
+    let median = heights[heights.len() / 2].max(1);
+    let split = median * 3;
+
+    let mut blocks: Vec<Block> = Vec::new();
+    for row in rows {
+        let top = row.tokens.iter().map(|token| token.top).min().unwrap_or(0);
+        let bottom = row.tokens.iter().map(|token| token.bottom()).max().unwrap_or(0);
+        match blocks.last_mut() {
+            Some(block) if top - block.bottom <= split => {
+                block.bottom = block.bottom.max(bottom);
+                block.rows.push(row);
+            }
+            _ => blocks.push(Block {
+                rows: vec![row],
+                top,
+                bottom,
+            }),
+        }
+    }
+    blocks
+}
+
+/// A time range printed inside the block itself, when the calendar prints one.
+fn block_time_range(block: &Block) -> Option<(u32, u32)> {
+    let text = block
+        .rows
+        .iter()
+        .map(|row| row.text())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let stitched = join_meridiems(&words);
+    let words: Vec<&str> = stitched.iter().map(String::as_str).collect();
+    time_range(&words)
 }
 
 /// A class read out of one day-column of a grid.
@@ -500,7 +699,6 @@ struct Meeting {
     course: String,
     starts: u32,
     ends: u32,
-    location: String,
     evidence: String,
     confidence: f64,
 }
@@ -526,11 +724,7 @@ impl Meeting {
             starts_at_local: format_clock(self.starts),
             ends_at_local: format_clock(self.ends),
             timezone: timezone.into(),
-            warnings: if self.location.is_empty() {
-                Vec::new()
-            } else {
-                Vec::new()
-            },
+            warnings: Vec::new(),
             ..ExtractedCandidate::default()
         }
     }
@@ -600,7 +794,6 @@ fn meeting_from_rows(rows: &[&Row]) -> Option<Meeting> {
         course,
         starts,
         ends,
-        location: String::new(),
         // Evidence has to be a literal span of the OCR text, because that is what
         // the review queue quotes back and what the managed-AI path is checked
         // against. Building it from the tokens keeps that true by construction.
@@ -662,7 +855,6 @@ fn read_list(
                 course,
                 starts,
                 ends,
-                location: String::new(),
                 evidence: text,
                 confidence: confidence.clamp(0.0, 1.0),
             }
@@ -961,17 +1153,49 @@ mod tests {
 
     // Every fixture is the same three classes in a different layout, so a
     // difference in the answer is a difference in layout handling.
+    //
+    // These are real Tesseract output over real rendered screenshots, not token
+    // streams written to suit the reader. The generator is
+    // scripts/fixtures/render-schedule-images.py; the previous synthetic
+    // fixtures passed while the reader could not read a single real grid.
     #[test]
     fn every_schedule_fixture_reads_to_its_expected_meetings() {
-        for name in [
-            "asu-my-classes-list",
-            "canvas-calendar-week",
-            "google-calendar-week",
-            "phone-capture-3x",
-            "dark-mode-week",
-        ] {
+        for name in ["week-grid", "week-grid-3x", "google-week", "class-list"] {
             assert_matches_fixture(name);
         }
+    }
+
+    // A block's height is a drawn rectangle and OCR only ever sees the words
+    // inside it, so a calendar that prints its hours only down the side says
+    // when a class starts and never how long it runs. Declining is the correct
+    // answer, and saying which kind of unreadable it is turns a dead end into a
+    // next step.
+    #[test]
+    fn a_week_view_with_times_only_in_the_gutter_declines_and_explains() {
+        let reading = read_fixture("week-grid-gutter-only");
+        assert!(reading.candidates.is_empty());
+        assert!(!reading.confident);
+        let said = reading.warnings.join(" ");
+        assert!(
+            said.contains("left-hand column"),
+            "the reader has to say why: {said:?}"
+        );
+    }
+
+    // Measured, not assumed. Tesseract wants dark text on a light page, and a
+    // dark-mode capture defeats it even after inversion; `invert_if_dark` in
+    // imports.rs helps real captures but does not rescue this one. Declining is
+    // still the right answer, and this pins that it declines rather than
+    // inventing a timetable out of five recognised words.
+    #[test]
+    fn a_dark_mode_capture_declines_rather_than_guessing() {
+        let reading = read_fixture("week-grid-dark");
+        assert!(
+            reading.candidates.is_empty(),
+            "read {:?} out of a capture Tesseract could not resolve",
+            reading.candidates
+        );
+        assert!(!reading.confident);
     }
 
     // A parser that hallucinates structure from noise is worse than one that
@@ -992,8 +1216,8 @@ mod tests {
     // proportional to the text size is what makes that true.
     #[test]
     fn a_higher_density_screen_changes_nothing() {
-        let laptop = read_fixture("canvas-calendar-week");
-        let phone = read_fixture("phone-capture-3x");
+        let laptop = read_fixture("week-grid");
+        let phone = read_fixture("week-grid-3x");
         let summarise = |reading: &ScheduleReading| {
             let mut rows: Vec<_> = reading
                 .candidates
@@ -1009,7 +1233,7 @@ mod tests {
     // A grid draws one class once per day-column. It is one class.
     #[test]
     fn a_class_drawn_in_three_columns_is_one_weekly_pattern() {
-        let reading = read_fixture("canvas-calendar-week");
+        let reading = read_fixture("week-grid");
         let psy = reading
             .candidates
             .iter()
@@ -1031,7 +1255,7 @@ mod tests {
     // span of what was read rather than a summary of it.
     #[test]
     fn evidence_is_text_that_was_actually_on_the_page() {
-        let reading = read_fixture("asu-my-classes-list");
+        let reading = read_fixture("class-list");
         for candidate in &reading.candidates {
             assert!(!candidate.evidence.trim().is_empty());
             assert!(
@@ -1043,14 +1267,7 @@ mod tests {
         }
     }
 
-    // Dark mode reads with lower per-word confidence and the answer is the same.
-    // Confidence is about recognition; consistency is about layout.
-    #[test]
-    fn low_confidence_recognition_still_reads_a_consistent_schedule() {
-        let reading = read_fixture("dark-mode-week");
-        assert!(reading.confident, "a consistent schedule stands on its own");
-        assert!(reading.candidates.iter().all(|c| c.confidence < 0.8));
-    }
+
 
     // The signal that decides whether the AI reader is offered. Two classes in
     // one place at one time means the layout was misread, whatever the OCR

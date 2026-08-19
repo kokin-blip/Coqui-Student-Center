@@ -6510,8 +6510,19 @@ fn ingest_document(
     // read with that registrar's weekday spellings. A student at a school nobody
     // has described gets an empty list and the reader's English defaults.
     let layouts = student_schedule_layouts(&db);
-    let extraction =
-        imports::extract_document(source, &bytes, &name, &timezone, &state.ocr, &layouts);
+    // Codes the student already has. A screenshot whose courses match none of
+    // them is a hint the read went wrong, so the reader offers a second opinion
+    // rather than presenting a confident answer.
+    let known_courses = enrolled_course_codes(&db);
+    let extraction = imports::extract_document(
+        source,
+        &bytes,
+        &name,
+        &timezone,
+        &state.ocr,
+        &layouts,
+        &known_courses,
+    );
     let (status, extraction_error) = match &extraction {
         Ok(result) if result.candidates.is_empty() => (
             "needs_attention",
@@ -6854,6 +6865,17 @@ async fn read_schedule_with_ai(
     })
     .await
     .map_err(|error| AppError::Invalid(error.to_string()))?
+}
+
+/// Course codes already on this profile.
+fn enrolled_course_codes(db: &Connection) -> Vec<String> {
+    db.prepare("SELECT code FROM courses WHERE code != ''")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
 }
 
 /// Schedule layouts for the school on this profile, if it has a descriptor.

@@ -578,6 +578,7 @@ pub fn extract_document(
     timezone: &str,
     ocr: &OcrRuntime,
     layouts: &[crate::school_provider::ScheduleLayout],
+    known_courses: &[String],
 ) -> Result<Extraction, ImportError> {
     let kind = detect_document(bytes, file_name)?;
     let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
@@ -641,7 +642,29 @@ pub fn extract_document(
                 scratch = file;
                 scratch.path()
             };
-            let segment = ocr_image(image_path, "image", ocr)?;
+            let mut segment = ocr_image(image_path, "image", ocr)?;
+
+            // Tesseract expects dark text on a light page. A dark-mode capture is
+            // the exact inverse and comes back as a handful of pipes and stray
+            // letters, so a dark image is inverted and read again. Measured, not
+            // assumed: the dark fixture read five words before this existed.
+            if let Some(inverted) = invert_if_dark(bytes) {
+                if let Ok(mut file) = tempfile::Builder::new()
+                    .prefix("student-center-invert-")
+                    .suffix(".png")
+                    .tempfile()
+                {
+                    if std::io::Write::write_all(&mut file, &inverted).is_ok() {
+                        if let Ok(lighter) = ocr_image(file.path(), "image", ocr) {
+                            // Whichever reading recognised more, wins. Inverting a
+                            // page that only looked dark must not make things worse.
+                            if lighter.tokens.len() > segment.tokens.len() {
+                                segment = lighter;
+                            }
+                        }
+                    }
+                }
+            }
 
             // A screenshot of a schedule is the common case, so the layout
             // reader runs first. It declines rather than guesses, and when it
@@ -652,7 +675,7 @@ pub fn extract_document(
                     layouts,
                     timezone: timezone.into(),
                     source_locator: format!("{file_name} · schedule"),
-                    known_courses: Vec::new(),
+                    known_courses: known_courses.to_vec(),
                 },
             );
             if reading.candidates.is_empty() {
@@ -1458,6 +1481,69 @@ pub fn parse_tesseract_tsv_for_test(tsv: &str, locator: &str) -> Result<Segment,
     parse_tesseract_tsv(tsv, locator)
 }
 
+/// Invert a predominantly dark PNG, or return `None` when there is no reason to.
+///
+/// Only PNG, because that is what a screenshot is on both macOS and Windows and
+/// what the clipboard carries; a dark JPEG photograph of a screen is out of
+/// scope and reads poorly for other reasons anyway.
+fn invert_if_dark(bytes: &[u8]) -> Option<Vec<u8>> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    if info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    let channels = match info.color_type {
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Indexed => return None,
+    };
+    let opaque = matches!(
+        info.color_type,
+        png::ColorType::Rgb | png::ColorType::Grayscale
+    );
+    let pixels = &buffer[..info.buffer_size()];
+
+    // Sample rather than sum: a screenshot is millions of pixels and the answer
+    // is the same from a thousandth of them.
+    let stride = (pixels.len() / channels / 4_000).max(1) * channels;
+    let mut total = 0u64;
+    let mut counted = 0u64;
+    for pixel in pixels.chunks_exact(channels).step_by(stride / channels) {
+        let luminance = if channels >= 3 {
+            (u64::from(pixel[0]) * 299 + u64::from(pixel[1]) * 587 + u64::from(pixel[2]) * 114)
+                / 1000
+        } else {
+            u64::from(pixel[0])
+        };
+        total += luminance;
+        counted += 1;
+    }
+    if counted == 0 || total / counted >= 110 {
+        return None;
+    }
+
+    let mut inverted = pixels.to_vec();
+    for pixel in inverted.chunks_exact_mut(channels) {
+        let colour = if opaque { channels } else { channels - 1 };
+        for value in &mut pixel[..colour] {
+            *value = 255 - *value;
+        }
+    }
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, info.width, info.height);
+        encoder.set_color(info.color_type);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&inverted).ok()?;
+    }
+    Some(out)
+}
+
 fn parse_tesseract_tsv(tsv: &str, locator: &str) -> Result<Segment, ImportError> {
     let mut lines: BTreeMap<(u32, u32, u32, u32), Vec<(u32, String)>> = BTreeMap::new();
     let mut confidences = Vec::new();
@@ -1626,6 +1712,7 @@ mod tests {
                 "broken.pdf",
                 "Etc/UTC",
                 &OcrRuntime::discover(None),
+                &[],
                 &[]
             ),
             Err(ImportError::Malformed(_))
@@ -1734,6 +1821,47 @@ mod tests {
         let recall = correct as f64 / expected.len() as f64;
         assert!(precision >= 0.95, "critical-date precision was {precision}");
         assert!(recall >= 0.90, "critical-date recall was {recall}");
+    }
+
+    // Tesseract wants dark text on a light page; a dark-mode capture is the
+    // exact inverse. Inverting is cheap and guarded — the caller keeps the
+    // inverted reading only when it recognised more — so a page that merely
+    // looked dark cannot be made worse by it.
+    #[test]
+    fn a_dark_capture_is_inverted_and_a_light_one_is_left_alone() {
+        fn png(shade: u8) -> Vec<u8> {
+            let mut out = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut out, 8, 8);
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_depth(png::BitDepth::Eight);
+                let mut writer = encoder.write_header().unwrap();
+                writer.write_image_data(&vec![shade; 8 * 8 * 3]).unwrap();
+            }
+            out
+        }
+
+        let dark = png(20);
+        let inverted = invert_if_dark(&dark).expect("a dark page is inverted");
+        // Decoding the result proves it is a real PNG and that the pixels moved.
+        let mut reader = png::Decoder::new(std::io::Cursor::new(&inverted))
+            .read_info()
+            .unwrap();
+        let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buffer).unwrap();
+        assert_eq!(buffer[..info.buffer_size()][0], 235);
+
+        assert!(
+            invert_if_dark(&png(240)).is_none(),
+            "a light page is left alone"
+        );
+        assert!(
+            invert_if_dark(&png(160)).is_none(),
+            "a merely mid-toned page is left alone"
+        );
+        // Anything that is not a plain 8-bit PNG is declined rather than guessed
+        // at; a JPEG photograph of a screen reads poorly for other reasons.
+        assert!(invert_if_dark(b"not a png").is_none());
     }
 
     #[test]
@@ -1879,6 +2007,7 @@ mod tests {
             "America/Phoenix",
             &OcrRuntime::discover(None),
             &[],
+            &[],
         )
         .unwrap()
         .candidates;
@@ -1902,6 +2031,7 @@ mod tests {
             "course.pptx",
             "America/Phoenix",
             &OcrRuntime::discover(None),
+            &[],
             &[],
         )
         .unwrap()
