@@ -123,15 +123,17 @@ pub struct NoClassDate {
 ///
 /// The `kind` picks the parser; the remaining fields configure it. A school that
 /// publishes an `.ics` needs nothing but a URL. One that publishes an HTML table
-/// needs a selector and a date format. Adding a school is a JSON edit.
+/// needs a row pattern and a date format. Adding a school is a JSON edit.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CalendarSource {
     pub url: String,
     pub kind: CalendarSourceKind,
-    /// CSS selector for the element holding the dates. Ignored for `Ics`.
+    /// A regex bounding the region of the page worth reading, applied after
+    /// tags are stripped. Not a CSS selector: registrar calendars are often not
+    /// tables, often not well-formed, and a DOM parser earns less than it costs.
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub selector: String,
+    pub section_pattern: String,
     /// `chrono` format string, e.g. `%B %-d, %Y` for "August 20, 2026".
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date_format: String,
@@ -157,7 +159,7 @@ pub struct CatalogSource {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub selector: String,
+    pub section_pattern: String,
     /// Why this school is `None`, shown to the student instead of a dead end.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,

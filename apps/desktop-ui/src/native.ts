@@ -271,6 +271,36 @@ export type InstitutionSetupOptions = {
   campuses: InstitutionCampusOption[];
   terms: AcademicTermPreset[];
 };
+// Mirrors school_calendar::TermChange. One field of one term, with the value
+// that is bundled and the value the registrar now publishes, so a student can
+// see what would move before anything moves.
+export type TermChange = {
+  termId: string;
+  termName: string;
+  field: string;
+  current: string;
+  proposed: string;
+  evidence: string;
+};
+export type NoClassDate = {
+  startsOn: string;
+  endsOn: string;
+  label: string;
+};
+// Mirrors school_calendar::CalendarDiff. A refresh returns differences, never a
+// mutation: a term date is a critical academic date, and a page that changed
+// under us is not authority to move someone's finals.
+export type CalendarDiff = {
+  institutionId: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  fetchedAt: string;
+  changedTerms: TermChange[];
+  addedNoClassDates: NoClassDate[];
+  // Rows that were read but matched no term boundary. Shown rather than dropped,
+  // so a school worded differently looks unmatched instead of looking silent.
+  unmatched: { label: string; startsOn: string; endsOn: string; sessionCode: string }[];
+};
 export type CatalogSection = {
   lineNumber: string;
   component: string;
@@ -856,6 +886,29 @@ const asuSetupOptions: InstitutionSetupOptions = {
 export async function getInstitutionSetupOptions(institutionId: string): Promise<InstitutionSetupOptions> {
   if (isDesktop()) return call("get_institution_setup_options", { institutionId });
   return structuredClone(institutionId === asuSetupOptions.institutionId ? asuSetupOptions : { institutionId, campuses: [], terms: [] });
+}
+/**
+ * Ask the school's registrar what it currently publishes.
+ *
+ * Optional in every sense: it is only reachable from an explicit action, it
+ * returns differences rather than applying them, and every failure — no network,
+ * a blocked host, a school that publishes nothing — leaves setup running on the
+ * bundled dates exactly as before. Callers should treat a rejection as "nothing
+ * to show" rather than as an error worth interrupting anyone over.
+ */
+export async function refreshSchoolCalendar(institutionId: string): Promise<CalendarDiff> {
+  if (isDesktop()) return call("refresh_school_calendar", { institutionId });
+  // Browser test mode has no network path at all, so it reports the same shape a
+  // school with nothing to refresh reports.
+  return {
+    institutionId,
+    sourceLabel: "",
+    sourceUrl: "",
+    fetchedAt: new Date().toISOString(),
+    changedTerms: [],
+    addedNoClassDates: [],
+    unmatched: [],
+  };
 }
 export async function saveOnboardingDraft(draft: OnboardingDraft) {
   if (!isDesktop()) {

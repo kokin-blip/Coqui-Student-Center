@@ -199,7 +199,13 @@ test("the school descriptor states its sources as data rather than in code", () 
   const asu = institutionProviders.find((provider) => provider.institutionId === "104151");
   assert.equal(asu.schemaVersion, 1);
   assert.equal(asu.calendarSource.url, "https://registrar.asu.edu/academic-calendar");
-  assert.equal(asu.calendarSource.kind, "html-table");
+  // The registrar page is a run of headings and bolded labels, not a table.
+  assert.equal(asu.calendarSource.kind, "html-list");
+  // How to read it is data too. Without these the app knows the address of a
+  // page it cannot make any sense of.
+  assert.ok(asu.calendarSource.rowPattern.includes("(?P<label>"));
+  assert.ok(asu.calendarSource.rowPattern.includes("(?P<start>"));
+  assert.ok(asu.calendarSource.dateFormat);
 
   // ASU's class search answers 401 anonymously and authenticates through
   // weblogin. "none" is the honest answer and has to stay a supported state.

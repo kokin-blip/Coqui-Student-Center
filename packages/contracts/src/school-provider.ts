@@ -74,8 +74,13 @@ export type CalendarSourceKind = z.infer<typeof CalendarSourceKind>;
 export const CalendarSource = z.object({
   url: z.string().trim().min(1).max(2048),
   kind: CalendarSourceKind,
-  /** CSS selector for the element holding the dates. Ignored for `ics`. */
-  selector: z.string().trim().max(500).default(""),
+  /**
+   * A regex bounding the region of the page worth reading, applied after tags
+   * are stripped. Not a CSS selector: registrar calendars are frequently not
+   * tables and frequently not well-formed, so a DOM parser earns less than the
+   * dependency costs.
+   */
+  sectionPattern: z.string().trim().max(500).default(""),
   /** A `chrono` format string, e.g. `%B %-d, %Y` for "August 20, 2026". */
   dateFormat: z.string().trim().max(100).default(""),
   /** Regex with named groups `label`, `start` and optionally `end`. */
@@ -94,7 +99,7 @@ export type CatalogSourceKind = z.infer<typeof CatalogSourceKind>;
 export const CatalogSource = z.object({
   kind: CatalogSourceKind,
   url: z.string().trim().max(2048).default(""),
-  selector: z.string().trim().max(500).default(""),
+  sectionPattern: z.string().trim().max(500).default(""),
   /** Why this school has no catalog, shown instead of a dead end. */
   note: z.string().trim().max(500).default(""),
 }).strict();

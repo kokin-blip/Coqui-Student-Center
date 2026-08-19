@@ -10,6 +10,7 @@ mod pdf_renderer;
 mod pin;
 mod planner;
 mod profile;
+mod school_calendar;
 mod school_provider;
 mod sync_crypto;
 mod sync_transport;
@@ -3031,6 +3032,52 @@ fn institution_setup_options_for(institution_id: String) -> Result<InstitutionSe
             institution_id,
             ..InstitutionSetupOptions::default()
         }))
+}
+
+/// The full descriptor for a school, for the paths that need more than the setup
+/// screen does.
+fn school_provider_for(institution_id: &str) -> Option<&'static SchoolProvider> {
+    institution_setup_providers()
+        .ok()?
+        .iter()
+        .find(|provider| provider.institution_id == institution_id)
+}
+
+/// Read a school's published academic calendar and report how it differs from
+/// the bundled snapshot.
+///
+/// This never writes. A term date is a critical academic date, and a page that
+/// changed under us is not authority to move someone's finals — the student
+/// reviews the diff and decides. Failing is also fine: with no network, a
+/// blocked host, or a school that publishes nothing, onboarding carries on with
+/// the bundled dates exactly as it did before this command existed.
+#[tauri::command]
+async fn refresh_school_calendar(
+    state: tauri::State<'_, AppState>,
+    institution_id: String,
+) -> Result<school_calendar::CalendarDiff> {
+    state.require_unlocked()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = school_provider_for(&institution_id)
+            .ok_or(school_calendar::CalendarError::NoSource)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        let source = provider
+            .calendar_source
+            .as_ref()
+            .ok_or(school_calendar::CalendarError::NoSource)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        let body = school_calendar::fetch_calendar(source)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        let entries = school_calendar::parse_calendar(&body, source)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        Ok(school_calendar::diff_calendar(
+            provider,
+            &entries,
+            Utc::now().to_rfc3339(),
+        ))
+    })
+    .await
+    .map_err(|error| AppError::Invalid(error.to_string()))?
 }
 
 #[tauri::command]
@@ -7688,6 +7735,7 @@ fn main() {
             search_institutions,
             search_course_suggestions,
             get_institution_setup_options,
+            refresh_school_calendar,
             save_onboarding_draft,
             complete_onboarding,
             get_local_workspace,

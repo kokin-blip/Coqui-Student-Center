@@ -86,6 +86,8 @@ jobs:
         run: npm run ocr:verify -- --target=${{ matrix.ocr_target }} --require-ready
       - name: Enforce course catalog gate
         run: npm run catalog:verify
+      - name: Verify bundled academic calendars
+        run: npm run calendar:verify
       - name: Test native app with prepared OCR runtime
         env:
           STUDENT_CENTER_OCR_RUNTIME: ${{ github.workspace }}/apps/desktop/src-tauri/resources/ocr/${{ matrix.ocr_target }}

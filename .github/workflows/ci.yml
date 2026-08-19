@@ -33,6 +33,7 @@ jobs:
       # bad run yields plausible JSON rather than an error. Pure data validation,
       # so it belongs here rather than on the platform legs.
       - run: npm run catalog:verify
+      - run: npm run calendar:verify
 
   # Two from-source Tesseract builds plus two native packaging runs. Restricted
   # to pull requests, the default branch, and manual dispatch: running this on

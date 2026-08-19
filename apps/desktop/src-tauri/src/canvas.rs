@@ -486,7 +486,9 @@ fn validate_token(token: &str) -> Result<(), CanvasError> {
     Ok(())
 }
 
-fn resolve_public_addresses(host: &str) -> Result<Vec<SocketAddr>, CanvasError> {
+/// Shared with `school_calendar`, which fetches a different kind of public page
+/// under the same rules. One implementation, so the two cannot drift apart.
+pub(crate) fn resolve_public_addresses(host: &str) -> Result<Vec<SocketAddr>, CanvasError> {
     let mut addresses = (host, 443)
         .to_socket_addrs()
         .map_err(|error| CanvasError::Dns(error.to_string()))?
@@ -501,7 +503,7 @@ fn resolve_public_addresses(host: &str) -> Result<Vec<SocketAddr>, CanvasError> 
     Ok(addresses)
 }
 
-fn is_public_ip(ip: IpAddr) -> bool {
+pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let [a, b, _, _] = ip.octets();

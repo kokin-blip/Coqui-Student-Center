@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+  A trimmed stand-in for https://registrar.asu.edu/academic-calendar, kept so the
+  descriptor's row pattern is tested against the shape it has to survive rather
+  than against a shape invented to suit it.
+
+  The real page is not a table. It is a run of headings with bolded labels, a
+  session letter, and a date, and several rows carry long explanatory clauses
+  between the label and the date. Both of those are reproduced here, along with a
+  <script> block full of date-shaped strings, because a parser that reads those
+  as calendar rows is a parser that invents holidays.
+
+  The term boundary dates match
+  apps/desktop/src-tauri/resources/institution-setup-providers.json, so a clean
+  parse produces an empty diff. Tests edit this copy to simulate a registrar
+  moving a date.
+
+  The holiday and break rows are ILLUSTRATIVE. They exercise single-day and
+  multi-day no-class parsing and are not verified against the real registrar,
+  which is exactly why they are not written into the bundled descriptor: a
+  planner that skips a study day for a holiday the school does not observe is
+  wrong in the same way as one that schedules through a real holiday. Running
+  calendar:prepare against the live page is what fills noClassDates in.
+-->
+<html lang="en">
+  <head>
+    <title>Academic Calendar | ASU</title>
+    <style>
+      .calendar-row::after { content: "August 20, 2026"; }
+    </style>
+    <script>
+      var analytics = { term: "Fall 2026", classesBegin: "August 31, 2026" };
+      window.dataLayer = [{ event: "Classes begin September 1, 2026" }];
+    </script>
+  </head>
+  <body>
+    <header><nav><a href="/">ASU Home</a> <a href="/academic-calendar">Academic Calendar</a></nav></header>
+    <main>
+      <h1>Academic Calendar</h1>
+
+      <h2>Fall 2026</h2>
+      <div class="calendar-row">
+        <p><strong>Classes begin</strong> <span>Session C</span> <span>August 20, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Drop deadline</strong>&mdash;this is the last day to drop a class without
+        receiving a grade of &lsquo;W&rsquo; on your transcript. <span>Session C</span>
+        <span>August 26, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Labor Day holiday</strong> <span>September 7, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Fall break</strong> <span>October 10, 2026 &ndash; October 13, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Thanksgiving holiday</strong> <span>November 26, 2026 &ndash; November 27, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Classes end</strong>&mdash;last day to process transactions.
+        <span>Session C</span> <span>December 4, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Final exams begin</strong> <span>Session C</span> <span>December 7, 2026</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Session ends</strong> <span>Session C</span> <span>December 12, 2026</span></p>
+      </div>
+
+      <h2>Spring 2027</h2>
+      <div class="calendar-row">
+        <p><strong>Classes begin</strong> <span>Session C</span> <span>January 11, 2027</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Spring break</strong> <span>March 6, 2027 &ndash; March 14, 2027</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Classes end</strong> <span>Session C</span> <span>April 30, 2027</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Final exams begin</strong> <span>Session C</span> <span>May 3, 2027</span></p>
+      </div>
+      <div class="calendar-row">
+        <p><strong>Session ends</strong> <span>Session C</span> <span>May 8, 2027</span></p>
+      </div>
+    </main>
+    <footer><p>Contact the University Registrar</p></footer>
+  </body>
+</html>

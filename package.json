@@ -22,6 +22,8 @@
     "macos:verify-signature": "node scripts/verify-macos-signature.mjs",
     "catalog:prepare": "node scripts/prepare-course-catalog.mjs",
     "catalog:verify": "node scripts/verify-course-catalog.mjs",
+    "calendar:prepare": "node scripts/prepare-academic-calendar.mjs",
+    "calendar:verify": "node scripts/verify-academic-calendar.mjs",
     "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
     "desktop:build": "tauri build --config apps/desktop/src-tauri/tauri.conf.json",
     "cloud:dev": "npm run dev --workspace @student-center/cloud-api"

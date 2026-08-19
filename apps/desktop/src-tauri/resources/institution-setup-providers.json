@@ -19,7 +19,10 @@
     ],
     "calendarSource": {
       "url": "https://registrar.asu.edu/academic-calendar",
-      "kind": "html-table"
+      "kind": "html-list",
+      "sectionPattern": "Academic Calendar",
+      "dateFormat": "%B %-d, %Y",
+      "rowPattern": "(?m)^\\s*(?P<label>[A-Z][A-Za-z][A-Za-z /'’-]{1,60}?)\\s*(?:[—–][^\\n]*?)?\\s*(?:Session\\s+(?P<session>[A-Z])\\s+)?(?P<start>[A-Z][a-z]{2,8} \\d{1,2}, \\d{4})(?:\\s*[–—-]\\s*(?P<end>[A-Z][a-z]{2,8} \\d{1,2}, \\d{4}))?"
     },
     "catalogSource": {
       "kind": "none",
