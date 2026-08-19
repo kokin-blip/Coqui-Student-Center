@@ -107,6 +107,7 @@ import {
   listenForOcrStatus,
   OcrStatus,
   listenForFileDrops,
+  readScheduleWithAi,
   listenForNavigation,
   lockApp,
   listDocuments,
@@ -1729,6 +1730,39 @@ export function StudentCenter() {
                   ))
                 ) : (
                   <p>No academic facts were extracted from this source.</p>
+                )}
+                {/* Offered only for an image, and only ever offered: the app
+                    never sends a picture of a student's screen on its own
+                    initiative, and the copy has to read that way rather than
+                    burying it in a settings toggle. */}
+                {documents.find((document) => document.id === vaultEvidence.documentId)
+                  ?.mime.startsWith("image/") && (
+                  <div className="ai-reread">
+                    <p>
+                      <ShieldCheck aria-hidden="true" /> Coqui read this
+                      screenshot on your computer. If the class times came out
+                      wrong, it can ask the managed AI to try again — that sends{" "}
+                      <strong>this image and the text read from it</strong> off
+                      your computer. Everything it proposes still needs your
+                      review, and you never have to do this.
+                    </p>
+                    <button
+                      className="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const result = await readScheduleWithAi(
+                            vaultEvidence.documentId,
+                            true,
+                          );
+                          setModal("review");
+                          return result.dashboard;
+                        }, "Managed AI proposed classes for review; nothing was added to your plan.")
+                      }
+                    >
+                      Ask AI to re-read this screenshot
+                    </button>
+                  </div>
                 )}
               </div>
             )}

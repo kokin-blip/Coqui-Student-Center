@@ -2709,3 +2709,24 @@ textarea:focus-visible {
   margin: 0 0 10px;
   font: 800 12px Manrope;
 }
+
+/* The screenshot re-read offer. Deliberately quiet and deliberately wordy: this
+   is the only flow that sends a picture of the student's own screen anywhere,
+   and the sentence saying so is the point of the panel. */
+.ai-reread {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+.ai-reread p {
+  font-size: var(--text-meta);
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.ai-reread svg {
+  width: 14px;
+  vertical-align: -2px;
+  margin-right: 4px;
+}

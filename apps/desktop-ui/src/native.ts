@@ -1725,6 +1725,16 @@ export async function importDocumentPath(path: string) {
  * not the Tauri clipboard plugin: reacting to a paste needs no permission to read
  * the clipboard whenever it likes.
  */
+/**
+ * Ask the managed model to structure a schedule the local reader could not.
+ *
+ * Opt-in per import, never called on the app's own initiative, and refused
+ * outright without consent. This is the first flow that sends a picture of the
+ * student's own screen anywhere, and the calling UI has to say so plainly.
+ */
+export async function readScheduleWithAi(documentId: string, consent: boolean) {
+  return call<ManagedAiResult>("read_schedule_with_ai", { documentId, consent });
+}
 export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
   return call<Dashboard>("import_document_bytes", { fileName, bytes: Array.from(bytes) });
 }

@@ -6674,6 +6674,166 @@ fn screenshot_retention(db: &Connection) -> String {
     .unwrap_or_else(|_| "shred_when_settled".into())
 }
 
+/// Read a stored image back out of the vault.
+fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) -> Result<Vec<u8>> {
+    let (vault_path, wrapped_key, key_nonce, content_nonce, mime): (
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = db
+        .query_row(
+            "SELECT vault_path,wrapped_key,key_nonce,content_nonce,mime FROM documents WHERE id=?1",
+            params![document_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Invalid("document not found".into()))?;
+    if vault_path.is_empty() {
+        return Err(AppError::Invalid(
+            "the original image is no longer stored; nothing was sent".into(),
+        ));
+    }
+    if !mime.starts_with("image/") {
+        return Err(AppError::Invalid(
+            "only an image can be read as a schedule".into(),
+        ));
+    }
+    let document_key = decrypt(
+        &state.master_key,
+        &decode_nonce(&key_nonce)?,
+        &B64.decode(wrapped_key).map_err(|_| AppError::Crypto)?,
+    )?;
+    let document_key: [u8; 32] = document_key.try_into().map_err(|_| AppError::Crypto)?;
+    let encrypted = fs::read(&vault_path)?;
+    decrypt(&document_key, &decode_nonce(&content_nonce)?, &encrypted)
+}
+
+/// Ask the managed model to structure a schedule the local reader could not.
+///
+/// Opt-in per import and never invoked on the app's own initiative. This is the
+/// first flow that sends a picture of the student's own screen anywhere, so it
+/// takes the same explicit consent every other managed-AI call takes and states
+/// plainly what leaves the machine.
+///
+/// The image never travels alone: the excerpt is the OCR text this machine
+/// produced from that same image, and every candidate's evidence is checked to
+/// be a literal span of it. The model's job is to group text we already hold,
+/// not to read pixels unsupervised.
+#[tauri::command]
+async fn read_schedule_with_ai(
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    consent: bool,
+) -> Result<ManagedAiResult> {
+    if !consent {
+        return Err(AppError::Invalid(
+            "explicit consent is required before sending an image".into(),
+        ));
+    }
+    Uuid::parse_str(&document_id)
+        .map_err(|_| AppError::Invalid("document identifier is invalid".into()))?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.require_unlocked()?;
+        let (bytes, excerpt) = {
+            let db = state.db.lock().unwrap();
+            let bytes = decrypt_document_bytes(&state, &db, &document_id)?;
+            // The excerpt is rebuilt from the same evidence the review queue
+            // already quotes, so what grounds the response is text the student
+            // can see rather than anything invented for the request.
+            let mut statement = db.prepare(
+                "SELECT evidence FROM import_candidates WHERE document_id=?1 ORDER BY id",
+            )?;
+            let excerpt = statement
+                .query_map(params![document_id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .join("\n");
+            (bytes, excerpt)
+        };
+        let excerpt = excerpt.trim().to_string();
+        if excerpt.is_empty() {
+            return Err(AppError::Invalid(
+                "this image had no readable text to check the result against".into(),
+            ));
+        }
+        let image = managed_ai::AiImage::encode(&bytes)?;
+        let (account_id, access_token) = signed_in_account_and_token(&state)?;
+        let client = managed_ai::ManagedAiClient::compiled()?;
+        let response = client.request(
+            &access_token,
+            managed_ai::AiCapability::DocumentExtraction,
+            &excerpt,
+            "en-US",
+            Some(&image),
+        )?;
+        if response.account_id != account_id {
+            return Err(AppError::ManagedAi(
+                managed_ai::ManagedAiError::InvalidResponse,
+            ));
+        }
+
+        let db = state.db.lock().unwrap();
+        let timezone = db
+            .query_row("SELECT value FROM settings WHERE key='timezone'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap_or_else(|_| "Etc/UTC".into());
+        let candidates_created = response.candidates.len();
+        for (index, candidate) in response.candidates.iter().enumerate() {
+            let kind = local_candidate_kind(&candidate.kind);
+            db.execute(
+                "INSERT INTO import_candidates(
+                   id,document_id,kind,title,course,evidence,source_locator,source_type,source_uid,
+                   observed_at,confidence,warnings,status,weekdays,starts_at_local,ends_at_local,timezone
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,'managed_ai',?8,?9,?10,?11,'pending',?12,?13,?14,?15)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    document_id,
+                    kind,
+                    candidate.title,
+                    candidate.course.clone().unwrap_or_default(),
+                    candidate.evidence,
+                    "Managed AI · schedule",
+                    format!("ai-schedule:{document_id}:{index}"),
+                    Utc::now().to_rfc3339(),
+                    candidate.confidence,
+                    serde_json::to_string(&candidate.warnings).unwrap_or_else(|_| "[]".into()),
+                    serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_| "[]".into()),
+                    candidate.starts_at_local.clone().unwrap_or_default(),
+                    candidate.ends_at_local.clone().unwrap_or_default(),
+                    if kind == "class_meeting" { timezone.as_str() } else { "" },
+                ],
+            )?;
+        }
+        let dashboard = dashboard_with_notice(
+            &db,
+            &state.ocr,
+            Some(format!(
+                "Managed AI proposed {candidates_created} class{} for review; nothing was added to your plan.",
+                if candidates_created == 1 { "" } else { "es" }
+            )),
+        )?;
+        Ok(ManagedAiResult {
+            dashboard,
+            explanation: response.explanation,
+            candidates_created,
+            model: response.model,
+        })
+    })
+    .await
+    .map_err(|error| AppError::Invalid(error.to_string()))?
+}
+
 /// Schedule layouts for the school on this profile, if it has a descriptor.
 fn student_schedule_layouts(db: &Connection) -> Vec<school_provider::ScheduleLayout> {
     let Ok(raw) = db.query_row(
@@ -7957,6 +8117,7 @@ fn main() {
             request_managed_ai,
             import_document,
             import_document_bytes,
+            read_schedule_with_ai,
             list_documents,
             get_document_evidence,
             approve_candidates,
