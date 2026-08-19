@@ -286,6 +286,9 @@ export type CourseSuggestion = {
   // Only catalog-sourced suggestions carry these. Picking one fills a class
   // meeting outright instead of leaving the student to retype their schedule.
   sections?: CatalogSection[];
+  // Which term the sections describe. Bundled sections go stale when the term
+  // turns over and the meeting times alone do not reveal that.
+  termLabel?: string;
 };
 export type TimezoneSuggestion = {
   timezone: string;
@@ -799,6 +802,7 @@ export async function searchCourseSuggestions(institutionId: string, query: stri
     sourceLabel: "ASU Class Search",
     confidence: 0.99,
     credits: 3,
+    termLabel: "Fall 2026 — Session C",
     sections: [
       { lineNumber: "66923", component: "lecture", weekdays: [1, 3], startsAtLocal: "13:30", endsAtLocal: "14:45", campusId: "tempe", location: "ISTBX101", instructor: "Justin Selgrad", modality: "in-person" },
       { lineNumber: "77625", component: "lecture", weekdays: [2, 4], startsAtLocal: "10:30", endsAtLocal: "11:45", campusId: "west-valley", location: "SANDS131", instructor: "Eric Eckert", modality: "in-person" },

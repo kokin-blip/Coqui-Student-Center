@@ -252,6 +252,11 @@ struct CourseSuggestion {
     /// times. The UI offers these so a pick can fill days, times and location.
     #[serde(default)]
     sections: Vec<CatalogSection>,
+    /// Which term the sections describe, resolved to the registrar's own wording
+    /// where possible. Bundled sections go stale the moment the term turns over,
+    /// and a student cannot tell that from the meeting times alone.
+    #[serde(default)]
+    term_label: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2841,6 +2846,7 @@ fn search_course_suggestions(
                 0.96
             },
             credits: None,
+            term_label: String::new(),
             sections: Vec::new(),
         })
         .collect::<Vec<_>>();
@@ -2850,6 +2856,19 @@ fn search_course_suggestions(
     // student searching "CSE 240" could only ever match the generic list below.
     if let Some(catalog) = institution_catalog_for(&institution_id)? {
         let lowered = needle.to_ascii_lowercase();
+        // The term presets already carry the registrar's wording for this id, so
+        // the catalog does not repeat it and cannot contradict it.
+        let term_label = institution_setup_providers()?
+            .iter()
+            .find(|provider| provider.institution_id == catalog.institution_id)
+            .and_then(|provider| {
+                provider
+                    .terms
+                    .iter()
+                    .find(|term| term.id == catalog.term_id)
+                    .map(|term| term.name.clone())
+            })
+            .unwrap_or_else(|| catalog.term_id.clone());
         for course in &catalog.courses {
             if results.len() >= 8 {
                 break;
@@ -2879,6 +2898,7 @@ fn search_course_suggestions(
                     catalog.source_label.clone()
                 },
                 confidence: 0.99,
+                term_label: term_label.clone(),
                 credits: course.credits,
                 sections: course.sections.clone(),
             });
@@ -2909,6 +2929,7 @@ fn search_course_suggestions(
                 source_label: "General course pattern".into(),
                 confidence: 0.62,
                 credits: None,
+                term_label: String::new(),
                 sections: Vec::new(),
             });
         }

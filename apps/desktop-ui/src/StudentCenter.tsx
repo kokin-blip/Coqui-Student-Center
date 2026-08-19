@@ -3919,7 +3919,7 @@ function WorkspaceView({
                           </strong>
                           <small>
                             {suggestion.sections?.length
-                              ? `${suggestion.sourceLabel} · add class times from Timetable`
+                              ? `${suggestion.sourceLabel}${suggestion.termLabel ? ` · ${suggestion.termLabel}` : ""} · add class times from Timetable`
                               : suggestion.sourceLabel}
                           </small>
                         </span>
