@@ -2,6 +2,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import {
+  type AiImage,
   AiStructureRequest,
   AiStructureResult,
   DeviceEnvelope,
@@ -34,7 +35,18 @@ export type AiProviderResult={
   inputTokens?:number;
   outputTokens?:number;
 };
-export type AiProvider=(input:{capability:AiStructureRequest["capability"];excerpt:string;locale:string})=>Promise<AiProviderResult>;
+export type AiProvider=(input:{
+  capability:AiStructureRequest["capability"];
+  excerpt:string;
+  locale:string;
+  /**
+   * Present only when the student explicitly attached one. It accompanies the
+   * excerpt rather than replacing it: the excerpt is text the desktop app
+   * extracted locally, and evidence is checked against that text, so the model
+   * groups what we already hold instead of reading pixels unsupervised.
+   */
+  image?:AiImage;
+})=>Promise<AiProviderResult>;
 
 const academicCandidateSchema={
   type:"object",additionalProperties:false,
@@ -42,7 +54,7 @@ const academicCandidateSchema={
     candidates:{type:"array",maxItems:100,items:{
       type:"object",additionalProperties:false,
       properties:{
-        kind:{type:"string",enum:["task","commitment","assignment","exam"]},
+        kind:{type:"string",enum:["task","commitment","assignment","exam","class_meeting","academic_event"]},
         title:{type:"string",minLength:1,maxLength:240},
         course:{type:["string","null"],maxLength:200},
         durationMinutes:{type:["integer","null"],minimum:5,maximum:480},
@@ -51,21 +63,40 @@ const academicCandidateSchema={
         endsAt:{type:["string","null"]},
         evidence:{type:"string",minLength:1,maxLength:2000},
         confidence:{type:"number",minimum:0,maximum:1},
-        warnings:{type:"array",maxItems:20,items:{type:"string",minLength:1,maxLength:300}}
+        warnings:{type:"array",maxItems:20,items:{type:"string",minLength:1,maxLength:300}},
+        // The weekly half of a class. 0 = Sunday. Only a class_meeting may carry
+        // these; the Zod schema below rejects them on any other kind, and the
+        // desktop client rejects them again.
+        weekdays:{type:"array",maxItems:7,items:{type:"integer",minimum:0,maximum:6}},
+        startsAtLocal:{type:["string","null"],pattern:"^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+        endsAtLocal:{type:["string","null"],pattern:"^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+        location:{type:["string","null"],maxLength:200},
+        component:{type:["string","null"],maxLength:200},
+        modality:{type:["string","null"],maxLength:200},
+        sectionNumber:{type:["string","null"],maxLength:200}
       },
-      required:["kind","title","course","durationMinutes","dueAt","startsAt","endsAt","evidence","confidence","warnings"]
+      // `strict:true` requires every property to be listed, so a new field has
+      // to appear here as well as in the properties above.
+      required:["kind","title","course","durationMinutes","dueAt","startsAt","endsAt","evidence","confidence","warnings",
+                "weekdays","startsAtLocal","endsAtLocal","location","component","modality","sectionNumber"]
     }},
     explanation:{type:["string","null"],maxLength:4000}
   },
   required:["candidates","explanation"]
 } as const;
 
-function capabilityInstruction(capability:AiStructureRequest["capability"]){
+function capabilityInstruction(capability:AiStructureRequest["capability"],hasImage:boolean){
   const common="Use only facts explicitly supported by the supplied excerpt. Evidence must be a short verbatim span from that excerpt. Never invent or silently disambiguate dates. Return null for unknown fields and add a warning for ambiguity.";
+  // The image is a layout aid, not a second source. The excerpt is the OCR text
+  // of that same image, extracted on the student's machine, and the desktop
+  // client rejects any candidate whose evidence is not a substring of it. Saying
+  // so plainly is what keeps the model from "reading" text that is not there.
+  const image=hasImage?" An image of the same source is attached. Use it only to work out which pieces of the excerpt belong together — for example that a time in a left-hand gutter and a course code in a column describe one class. Every value you emit must still come from the excerpt text.":"";
+  const schedule=" A weekly class is kind class_meeting: give weekdays as integers with 0 = Sunday, and startsAtLocal and endsAtLocal as HH:MM on a 24-hour clock. Never give a class a dueAt. Leave weekdays empty only when the section is asynchronous online, and then set modality to \"online\".";
   switch(capability){
-    case "brain_dump":return `${common} Convert the student's brain dump into proposed tasks or commitments.`;
-    case "document_extraction":return `${common} Extract only academic planning facts: assignments, exams, tasks, and commitments.`;
-    case "task_decomposition":return `${common} Propose concrete, bounded subtasks and realistic duration estimates.`;
+    case "brain_dump":return `${common}${image} Convert the student's brain dump into proposed tasks or commitments.`;
+    case "document_extraction":return `${common}${image} Extract only academic planning facts: assignments, exams, tasks, commitments, and weekly class meetings.${schedule}`;
+    case "task_decomposition":return `${common}${image} Propose concrete, bounded subtasks and realistic duration estimates.`;
     case "explanation":return `${common} Return no candidates and explain the supplied deterministic planner facts in concise student-friendly language.`;
   }
 }
@@ -78,14 +109,35 @@ function configuredAiProvider():AiProvider|undefined{
       model:process.env.OPENAI_MODEL??"gpt-5.6-terra",
       store:false,
       input:[
-        {role:"system",content:capabilityInstruction(input.capability)},
-        {role:"user",content:input.excerpt}
+        {role:"system",content:capabilityInstruction(input.capability,input.image!==undefined)},
+        input.image
+          ? {role:"user",content:[
+              {type:"input_text",text:input.excerpt},
+              {type:"input_image",detail:"high",image_url:`data:${input.image.mimeType};base64,${input.image.data}`}
+            ]}
+          : {role:"user",content:input.excerpt}
       ],
       text:{format:{type:"json_schema",name:"student_center_review",strict:true,schema:academicCandidateSchema}}
     });
     return {outputText:response.output_text,model:response.model,inputTokens:response.usage?.input_tokens,outputTokens:response.usage?.output_tokens};
   };
 }
+
+/**
+ * PNG and JPEG signatures, mirroring `sniff_image` in managed_ai.rs.
+ *
+ * The declared `mimeType` is not trusted. Both ends sniff independently so
+ * neither is the only thing standing between this endpoint and an arbitrary
+ * file upload, which is the same reason the desktop client re-checks a response
+ * the server already validated.
+ */
+function sniffImage(bytes:Buffer):"image/png"|"image/jpeg"|undefined{
+  if(bytes.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])))return "image/png";
+  if(bytes.subarray(0,3).equals(Buffer.from([0xff,0xd8,0xff])))return "image/jpeg";
+  return undefined;
+}
+
+const MAX_IMAGE_BYTES=8*1024*1024;
 
 function errorStatus(error:unknown){
   if(error instanceof RepositoryConflict)return 409;
@@ -105,7 +157,12 @@ export function buildApp(options:AppOptions={}){
   const repository=new AuthorizingSyncRepository(options.repository??new MemorySyncRepository());
   const verifyAccessToken=options.verifyAccessToken;
   const aiProvider=options.aiProvider??configuredAiProvider();
-  const app=Fastify({bodyLimit:8*1024*1024,logger:{redact:["req.headers.authorization","req.body.excerpt","req.body.ciphertext","req.body.mutations[*].ciphertext","req.body.encryptedAccountKey","req.body.signature"],serializers:{req(req){return {method:req.method,url:req.url};}}}});
+  // 12 MiB, not 8: an 8 MiB image is about 10.7 MiB once base64-encoded, and the
+  // excerpt rides in the same body. A limit below that would reject a legal
+  // request as a malformed one.
+  // `req.body.image.data` is redacted for the same reason `excerpt` is, and more
+  // so — it is a picture of the student's own screen and must never reach a log.
+  const app=Fastify({bodyLimit:12*1024*1024,logger:{redact:["req.headers.authorization","req.body.excerpt","req.body.image.data","req.body.ciphertext","req.body.mutations[*].ciphertext","req.body.encryptedAccountKey","req.body.signature"],serializers:{req(req){return {method:req.method,url:req.url};}}}});
 
   async function requireAuth(req:FastifyRequest,reply:FastifyReply):Promise<AuthIdentity|null>{
     if(!verifyAccessToken){reply.code(503).send({error:"account services are not configured"});return null;}
@@ -233,6 +290,13 @@ export function buildApp(options:AppOptions={}){
   app.post("/v1/ai/structure",async(req,reply)=>{
     const auth=await requireAuth(req,reply);if(!auth)return;
     const input=AiStructureRequest.safeParse(req.body);if(!input.success)return reply.code(400).send({error:"invalid AI request"});
+    if(input.data.image){
+      const bytes=Buffer.from(input.data.image.data,"base64");
+      // The bytes decide, not the declared type, and the cap is enforced on the
+      // decoded length rather than the base64 length that carried it.
+      if(bytes.length>MAX_IMAGE_BYTES)return reply.code(400).send({error:"the attached image is too large"});
+      if(sniffImage(bytes)!==input.data.image.mimeType)return reply.code(400).send({error:"the attachment must be a PNG or JPEG image"});
+    }
     if(!aiProvider)return reply.code(503).send({error:"managed AI is not configured"});
     try{
       const providerResult=await aiProvider(input.data);

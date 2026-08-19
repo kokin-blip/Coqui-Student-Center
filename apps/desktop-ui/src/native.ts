@@ -265,11 +265,53 @@ export type AcademicTermPreset = {
   details: string;
   sourceLabel: string;
   sourceUrl: string;
+  // Two sessions of one term end on different days, so the registrar's own
+  // session letter is what tells them apart on screen.
+  sessionCode?: string;
+  // Holidays and breaks. Empty until a calendar harvest has run against the
+  // school's live page; the app does not invent them.
+  noClassDates?: NoClassDate[];
 };
 export type InstitutionSetupOptions = {
   institutionId: string;
   campuses: InstitutionCampusOption[];
   terms: AcademicTermPreset[];
+  // When the bundled snapshot was produced. Shown beside the dates it filled in,
+  // because "from the registrar" and "from the registrar, in August" are
+  // different claims and only one of them is checkable.
+  generatedAt?: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
+};
+// Mirrors school_calendar::TermChange. One field of one term, with the value
+// that is bundled and the value the registrar now publishes, so a student can
+// see what would move before anything moves.
+export type TermChange = {
+  termId: string;
+  termName: string;
+  field: string;
+  current: string;
+  proposed: string;
+  evidence: string;
+};
+export type NoClassDate = {
+  startsOn: string;
+  endsOn: string;
+  label: string;
+};
+// Mirrors school_calendar::CalendarDiff. A refresh returns differences, never a
+// mutation: a term date is a critical academic date, and a page that changed
+// under us is not authority to move someone's finals.
+export type CalendarDiff = {
+  institutionId: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  fetchedAt: string;
+  changedTerms: TermChange[];
+  addedNoClassDates: NoClassDate[];
+  // Rows that were read but matched no term boundary. Shown rather than dropped,
+  // so a school worded differently looks unmatched instead of looking silent.
+  unmatched: { label: string; startsOn: string; endsOn: string; sessionCode: string }[];
 };
 export type CatalogSection = {
   lineNumber: string;
@@ -765,7 +807,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 11,
+      schemaVersion: 13,
       onboarding: onboardingMode ? structuredClone(browserOnboardingState) : null,
       dashboard: onboardingMode ? null : structuredClone(browserSeed),
     };
@@ -840,6 +882,9 @@ export async function searchCourseSuggestions(institutionId: string, query: stri
 }
 const asuSetupOptions: InstitutionSetupOptions = {
   institutionId: "104151",
+  generatedAt: "2026-08-19",
+  sourceLabel: "ASU University Registrar",
+  sourceUrl: "https://registrar.asu.edu/academic-calendar",
   campuses: [
     { id: "tempe", name: "Tempe", city: "Tempe", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
     { id: "downtown-phoenix", name: "Downtown Phoenix", city: "Phoenix", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
@@ -856,6 +901,29 @@ const asuSetupOptions: InstitutionSetupOptions = {
 export async function getInstitutionSetupOptions(institutionId: string): Promise<InstitutionSetupOptions> {
   if (isDesktop()) return call("get_institution_setup_options", { institutionId });
   return structuredClone(institutionId === asuSetupOptions.institutionId ? asuSetupOptions : { institutionId, campuses: [], terms: [] });
+}
+/**
+ * Ask the school's registrar what it currently publishes.
+ *
+ * Optional in every sense: it is only reachable from an explicit action, it
+ * returns differences rather than applying them, and every failure — no network,
+ * a blocked host, a school that publishes nothing — leaves setup running on the
+ * bundled dates exactly as before. Callers should treat a rejection as "nothing
+ * to show" rather than as an error worth interrupting anyone over.
+ */
+export async function refreshSchoolCalendar(institutionId: string): Promise<CalendarDiff> {
+  if (isDesktop()) return call("refresh_school_calendar", { institutionId });
+  // Browser test mode has no network path at all, so it reports the same shape a
+  // school with nothing to refresh reports.
+  return {
+    institutionId,
+    sourceLabel: "",
+    sourceUrl: "",
+    fetchedAt: new Date().toISOString(),
+    changedTerms: [],
+    addedNoClassDates: [],
+    unmatched: [],
+  };
 }
 export async function saveOnboardingDraft(draft: OnboardingDraft) {
   if (!isDesktop()) {
@@ -895,7 +963,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 11,
+      schemaVersion: 13,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -1662,6 +1730,28 @@ export async function selectAndImport(): Promise<Dashboard | null> {
 }
 export async function importDocumentPath(path: string) {
   return call<Dashboard>("import_document", { path });
+}
+/**
+ * Import an image the app was handed rather than one it read off disk.
+ *
+ * This is the clipboard path. A pasted screenshot has no file to point at, so
+ * the bytes come off the DOM `paste` event and go straight to the native side,
+ * which encrypts and extracts them exactly as it does a chosen file. Deliberately
+ * not the Tauri clipboard plugin: reacting to a paste needs no permission to read
+ * the clipboard whenever it likes.
+ */
+/**
+ * Ask the managed model to structure a schedule the local reader could not.
+ *
+ * Opt-in per import, never called on the app's own initiative, and refused
+ * outright without consent. This is the first flow that sends a picture of the
+ * student's own screen anywhere, and the calling UI has to say so plainly.
+ */
+export async function readScheduleWithAi(documentId: string, consent: boolean) {
+  return call<ManagedAiResult>("read_schedule_with_ai", { documentId, consent });
+}
+export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
+  return call<Dashboard>("import_document_bytes", { fileName, bytes: Array.from(bytes) });
 }
 export async function listDocuments(query = "") {
   if (!isDesktop()) {

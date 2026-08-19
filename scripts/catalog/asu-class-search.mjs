@@ -16,7 +16,10 @@ import { readFileSync } from "node:fs";
 // assembled from the row plus the first code that follows it.
 const DAY_INDEX = { su: 0, m: 1, t: 2, w: 3, th: 4, f: 5, sa: 6 };
 
-function parseDays(value) {
+// Exported so the cross-language golden vector in scripts/test/schedule-reader.test.mjs
+// can pin this against its Rust port in apps/desktop/src-tauri/src/schedule_reader.rs.
+// The two cannot share code, so the table is what keeps them honest.
+export function parseDays(value) {
   const days = [];
   let rest = value.replace(/\s+/g, "");
   while (rest.length) {
@@ -33,7 +36,7 @@ function parseDays(value) {
   return days;
 }
 
-function to24Hour(value) {
+export function to24Hour(value) {
   const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(value.trim());
   if (!match) return "";
   let hour = Number(match[1]) % 12;

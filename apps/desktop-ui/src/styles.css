@@ -694,6 +694,13 @@ input:focus-visible {
   place-items: center;
   color: var(--teal);
 }
+/* A dashed target that never reacts reads as decoration rather than a place to
+   drop something. */
+.dropzone.dragging {
+  border-color: var(--teal);
+  border-style: solid;
+  background: color-mix(in srgb, var(--teal) 8%, var(--bg-surface));
+}
 .dropzone svg {
   width: 28px;
   margin-bottom: 9px;
@@ -2701,4 +2708,43 @@ textarea:focus-visible {
 .agenda-fallback-title {
   margin: 0 0 10px;
   font: 800 12px Manrope;
+}
+
+/* The screenshot re-read offer. Deliberately quiet and deliberately wordy: this
+   is the only flow that sends a picture of the student's own screen anywhere,
+   and the sentence saying so is the point of the panel. */
+.ai-reread {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+.ai-reread p {
+  font-size: var(--text-meta);
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.ai-reread svg {
+  width: 14px;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+/* The screenshot import inside onboarding. Sits above the manual course builder
+   rather than replacing it: typing everything in by hand stays a complete path,
+   and has to look like one. */
+.screenshot-step {
+  padding: 14px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 14px;
+  margin-bottom: 14px;
+}
+.screenshot-step > label > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.screenshot-step svg {
+  width: 15px;
 }

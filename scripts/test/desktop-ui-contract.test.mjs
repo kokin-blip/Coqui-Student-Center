@@ -30,6 +30,14 @@ const institutionProviders = JSON.parse(await readFile(
   new URL("../../apps/desktop/src-tauri/resources/institution-setup-providers.json", import.meta.url),
   "utf8",
 ));
+const mainRs = await readFile(
+  new URL("../../apps/desktop/src-tauri/src/main.rs", import.meta.url),
+  "utf8",
+);
+const firstRunSpec = await readFile(
+  new URL("../../e2e/specs/first-run.spec.mjs", import.meta.url),
+  "utf8",
+);
 
 test("first-run UI is a four-stage local onboarding flow with no demo review", () => {
   for (const copy of [
@@ -42,7 +50,22 @@ test("first-run UI is a four-stage local onboarding flow with no demo review", (
     assert.match(onboarding, new RegExp(copy));
   }
   assert.doesNotMatch(onboarding, /Alex Morgan|demoReviewRequired|demoCandidates/);
-  assert.match(native, /schemaVersion: 11/);
+  // Derived from the Rust constant rather than written out here. Pinning the
+  // number in this file is what let the browser fixtures and the e2e assertion
+  // sit on 11 for a whole release after the schema moved to 12.
+  const schemaVersion = Number(/const CURRENT_SCHEMA_VERSION: i64 = (\d+);/.exec(mainRs)?.[1]);
+  assert.ok(schemaVersion > 0, "CURRENT_SCHEMA_VERSION must be readable from main.rs");
+  assert.match(native, new RegExp(`schemaVersion: ${schemaVersion},`));
+  assert.doesNotMatch(
+    native,
+    new RegExp(`schemaVersion: (?!${schemaVersion},)\\d+,`),
+    "every browser fixture must report the current schema version",
+  );
+  assert.match(
+    firstRunSpec,
+    new RegExp(`assert\\.equal\\(bootstrap\\.schemaVersion, ${schemaVersion}\\);`),
+    "the e2e first-run spec asserts the schema version and drifts silently otherwise",
+  );
 });
 
 // A student can attend several ASU campuses at once, so the campus step is a
@@ -159,10 +182,58 @@ test("school setup uses sourced ASU campuses and registrar dates", () => {
     details: "Classes Aug 20–Dec 4 · Finals Dec 7–12",
     sourceLabel: "ASU University Registrar",
     sourceUrl: "https://registrar.asu.edu/academic-calendar",
+    // Two sessions of one term end on different days, so the registrar's own
+    // session letter is what tells "Fall 2026 — Session C" from Session A.
+    sessionCode: "C",
+    // Harvested from the live registrar page, not invented to fill the field.
+    noClassDates: [
+      { startsOn: "2026-10-10", endsOn: "2026-10-13", label: "Fall break Classes excused/University open" },
+      { startsOn: "2026-11-26", endsOn: "2026-11-27", label: "Thanksgiving holiday observed Classes excused/University closed" },
+    ],
   });
   assert.match(onboarding, /No verified calendar connected yet/);
   assert.match(onboarding, /Coqui will not guess them/);
   assert.doesNotMatch(onboarding, />Fall semester</);
+});
+
+// The descriptor is the whole reason no school gets a code branch: where the
+// calendar lives, whether a catalog is readable, and what a weekday header looks
+// like are all data. A descriptor that stopped carrying them would push that
+// knowledge back into Rust without anything failing.
+test("the school descriptor states its sources as data rather than in code", () => {
+  const asu = institutionProviders.find((provider) => provider.institutionId === "104151");
+  assert.equal(asu.schemaVersion, 1);
+  assert.equal(asu.calendarSource.url, "https://registrar.asu.edu/academic-calendar");
+  // The registrar page lists a label and then a date per session, each on its
+  // own line. It is not a table and not one row of text per event.
+  assert.equal(asu.calendarSource.kind, "html-sessions");
+  // How to read it is data too. Without these the app knows the address of a
+  // page it cannot make any sense of.
+  assert.ok(asu.calendarSource.datePattern.includes("(?P<start>"));
+  assert.ok(asu.calendarSource.datePattern.includes("(?P<year>"));
+  assert.ok(asu.calendarSource.sessionPattern.includes("(?P<session>"));
+  assert.ok(asu.calendarSource.dateFormat);
+
+  // ASU's class search answers 401 anonymously and authenticates through
+  // weblogin. "none" is the honest answer and has to stay a supported state.
+  assert.equal(asu.catalogSource.kind, "none");
+  assert.match(asu.catalogSource.note, /weblogin|access control/i);
+
+  const layouts = asu.scheduleLayouts;
+  assert.ok(layouts.length > 0, "the screenshot reader learns layouts from here");
+  for (const layout of layouts) {
+    assert.ok(["grid", "list"].includes(layout.shape));
+    const weekdays = layout.weekdayTokens.map((entry) => entry.weekday);
+    assert.deepEqual(weekdays, [0, 1, 2, 3, 4, 5, 6], "0 = Sunday, one entry each");
+    // "Th" has to win over "T" or Thursday parses as Tuesday plus a stray h.
+    const thursday = layout.weekdayTokens.find((entry) => entry.weekday === 4);
+    assert.ok(thursday.tokens.includes("th"));
+    for (const entry of layout.weekdayTokens) {
+      for (const token of entry.tokens) {
+        assert.equal(token, token.toLowerCase(), "the reader lowercases before matching");
+      }
+    }
+  }
 });
 
 test("browser test mode mocks local mutations without becoming a product site", () => {

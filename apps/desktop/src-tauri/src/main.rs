@@ -10,6 +10,9 @@ mod pdf_renderer;
 mod pin;
 mod planner;
 mod profile;
+mod school_calendar;
+mod schedule_reader;
+mod school_provider;
 mod sync_crypto;
 mod sync_transport;
 
@@ -24,6 +27,7 @@ use chrono_tz::Tz;
 use imports::{ExtractedCandidate, OcrRuntime, OcrStatus};
 use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
+use school_provider::SchoolProvider;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -44,7 +48,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -290,6 +294,14 @@ struct AcademicTermPreset {
     details: String,
     source_label: String,
     source_url: String,
+    /// Two sessions of one term end on different days, so the registrar's own
+    /// session letter is what tells them apart on screen.
+    #[serde(default)]
+    session_code: String,
+    /// Holidays and breaks. Empty until a calendar harvest has run against the
+    /// school's live page — the app does not invent them.
+    #[serde(default)]
+    no_class_dates: Vec<school_provider::NoClassDate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -298,6 +310,15 @@ struct InstitutionSetupOptions {
     institution_id: String,
     campuses: Vec<InstitutionCampusOption>,
     terms: Vec<AcademicTermPreset>,
+    /// When the bundled snapshot was produced. Shown beside the dates it filled
+    /// in, because "from the registrar" and "from the registrar, in August" are
+    /// different claims and only one of them is checkable.
+    #[serde(default)]
+    generated_at: String,
+    #[serde(default)]
+    source_label: String,
+    #[serde(default)]
+    source_url: String,
 }
 
 fn current_security_status(state: &AppState) -> SecurityStatus {
@@ -582,6 +603,15 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
         "TEXT NOT NULL DEFAULT 'complete'",
     )?;
     ensure_column(&conn, "documents", "extraction_error", "TEXT")?;
+    // Set when the encrypted image has been deleted but the row is kept so its
+    // evidence still resolves. Distinct from the empty `vault_path` that marks a
+    // remote Canvas stub, which never had a blob to begin with.
+    ensure_column(
+        &conn,
+        "documents",
+        "content_shredded",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(
         &conn,
         "import_candidates",
@@ -2620,8 +2650,7 @@ fn get_timezone_suggestion(state: tauri::State<AppState>) -> Result<TimezoneSugg
 // The bundled directory is 6,243 entries. Parsing it per keystroke dominated the
 // school search, so both bundled resources are deserialized once per process.
 static INSTITUTION_DIRECTORY: OnceLock<Option<Vec<InstitutionDirectoryEntry>>> = OnceLock::new();
-static INSTITUTION_SETUP_PROVIDERS: OnceLock<Option<Vec<InstitutionSetupOptions>>> =
-    OnceLock::new();
+static INSTITUTION_SETUP_PROVIDERS: OnceLock<Option<Vec<SchoolProvider>>> = OnceLock::new();
 static INSTITUTION_CATALOGS: OnceLock<Option<Vec<InstitutionCatalog>>> = OnceLock::new();
 
 /// Course lists for the schools that have one, keyed by institution.
@@ -2654,7 +2683,7 @@ fn institution_directory() -> Result<&'static [InstitutionDirectoryEntry]> {
         .ok_or_else(|| AppError::Invalid("bundled institution directory is invalid".into()))
 }
 
-fn institution_setup_providers() -> Result<&'static [InstitutionSetupOptions]> {
+fn institution_setup_providers() -> Result<&'static [SchoolProvider]> {
     INSTITUTION_SETUP_PROVIDERS
         .get_or_init(|| {
             serde_json::from_str(include_str!(
@@ -2709,8 +2738,8 @@ fn institution_acronym(name: &str) -> String {
 fn score_institution(
     entry: &InstitutionDirectoryEntry,
     needle: &str,
-    campuses: &[InstitutionCampusOption],
-) -> Option<(i32, Option<InstitutionCampusOption>)> {
+    campuses: &[school_provider::CampusDescriptor],
+) -> Option<(i32, Option<school_provider::CampusDescriptor>)> {
     if needle.is_empty() {
         return Some((0, None));
     }
@@ -2980,16 +3009,107 @@ fn search_course_suggestions(
     Ok(results)
 }
 
+/// Project a bundled descriptor down to what the setup screen reads.
+///
+/// The descriptor is the richer of the two on purpose: it carries the calendar
+/// and catalog sources, the schedule layouts, and per-term session codes and
+/// no-class dates, none of which the setup screen asks for. Keeping the wire
+/// type narrow is what lets the descriptor grow without changing this command's
+/// output.
+fn setup_options_from(provider: &SchoolProvider) -> InstitutionSetupOptions {
+    InstitutionSetupOptions {
+        institution_id: provider.institution_id.clone(),
+        campuses: provider
+            .campuses
+            .iter()
+            .map(|campus| InstitutionCampusOption {
+                id: campus.id.clone(),
+                name: campus.name.clone(),
+                city: campus.city.clone(),
+                timezone: campus.timezone.clone(),
+                source_label: campus.source_label.clone(),
+                source_url: campus.source_url.clone(),
+            })
+            .collect(),
+        terms: provider
+            .terms
+            .iter()
+            .map(|term| AcademicTermPreset {
+                id: term.id.clone(),
+                name: term.name.clone(),
+                starts_on: term.starts_on.clone(),
+                ends_on: term.ends_on.clone(),
+                class_ends_on: term.class_ends_on.clone(),
+                exam_starts_on: term.exam_starts_on.clone(),
+                details: term.details.clone(),
+                source_label: term.source_label.clone(),
+                source_url: term.source_url.clone(),
+                session_code: term.session_code.clone(),
+                no_class_dates: term.no_class_dates.clone(),
+            })
+            .collect(),
+        generated_at: provider.generated_at.clone(),
+        source_label: provider.source_label.clone(),
+        source_url: provider.source_url.clone(),
+    }
+}
+
 fn institution_setup_options_for(institution_id: String) -> Result<InstitutionSetupOptions> {
     let providers = institution_setup_providers()?;
     Ok(providers
         .iter()
         .find(|provider| provider.institution_id == institution_id)
-        .cloned()
+        .map(setup_options_from)
         .unwrap_or(InstitutionSetupOptions {
             institution_id,
             ..InstitutionSetupOptions::default()
         }))
+}
+
+/// The full descriptor for a school, for the paths that need more than the setup
+/// screen does.
+fn school_provider_for(institution_id: &str) -> Option<&'static SchoolProvider> {
+    institution_setup_providers()
+        .ok()?
+        .iter()
+        .find(|provider| provider.institution_id == institution_id)
+}
+
+/// Read a school's published academic calendar and report how it differs from
+/// the bundled snapshot.
+///
+/// This never writes. A term date is a critical academic date, and a page that
+/// changed under us is not authority to move someone's finals — the student
+/// reviews the diff and decides. Failing is also fine: with no network, a
+/// blocked host, or a school that publishes nothing, onboarding carries on with
+/// the bundled dates exactly as it did before this command existed.
+#[tauri::command]
+async fn refresh_school_calendar(
+    state: tauri::State<'_, AppState>,
+    institution_id: String,
+) -> Result<school_calendar::CalendarDiff> {
+    state.require_unlocked()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = school_provider_for(&institution_id)
+            .ok_or(school_calendar::CalendarError::NoSource)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        let source = provider
+            .calendar_source
+            .as_ref()
+            .ok_or(school_calendar::CalendarError::NoSource)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        let body = school_calendar::fetch_calendar(source)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        let entries = school_calendar::parse_calendar(&body, source)
+            .map_err(|error| AppError::Invalid(error.to_string()))?;
+        Ok(school_calendar::diff_calendar(
+            provider,
+            &entries,
+            Utc::now().to_rfc3339(),
+        ))
+    })
+    .await
+    .map_err(|error| AppError::Invalid(error.to_string()))?
 }
 
 #[tauri::command]
@@ -6164,6 +6284,7 @@ async fn request_managed_ai(
             input.capability,
             &input.excerpt,
             &input.locale,
+            None,
         ) {
             Ok(response) => response,
             Err(error) => {
@@ -6203,23 +6324,32 @@ async fn request_managed_ai(
                     Utc::now().to_rfc3339(),
                 ],
             )?;
+            // A class recurs, so it carries a local clock rather than an instant,
+            // and the clock is meaningless without the zone it is read in.
+            let timezone = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key='timezone'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_else(|_| "Etc/UTC".into());
             for (index, candidate) in response.candidates.iter().enumerate() {
-                let kind = match candidate.kind.as_str() {
-                    "commitment" => "commitment",
-                    _ => "task",
-                };
+                let kind = local_candidate_kind(&candidate.kind);
                 let mut warnings = candidate.warnings.clone();
                 if candidate.kind != kind {
                     warnings.push(format!(
-                        "Managed AI proposed this as an {}; Student Center will import it as a task",
+                        "Managed AI proposed this as an {}; Student Center will import it as a {kind}",
                         candidate.kind
                     ));
                 }
+                let is_class = kind == "class_meeting";
                 tx.execute(
                     "INSERT INTO import_candidates(
                        id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,
-                       evidence,source_locator,source_type,source_uid,observed_at,confidence,warnings,status
-                     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'managed_ai',?12,?13,?14,?15,'pending')",
+                       evidence,source_locator,source_type,source_uid,observed_at,confidence,warnings,status,
+                       weekdays,starts_at_local,ends_at_local,timezone
+                     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'managed_ai',?12,?13,?14,?15,'pending',
+                              ?16,?17,?18,?19)",
                     params![
                         Uuid::new_v4().to_string(),
                         document_id,
@@ -6236,6 +6366,10 @@ async fn request_managed_ai(
                         Utc::now().to_rfc3339(),
                         candidate.confidence,
                         serde_json::to_string(&warnings).unwrap_or_else(|_| "[]".into()),
+                        serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_| "[]".into()),
+                        candidate.starts_at_local.clone().unwrap_or_default(),
+                        candidate.ends_at_local.clone().unwrap_or_default(),
+                        if is_class { timezone.as_str() } else { "" },
                     ],
                 )?;
             }
@@ -6295,12 +6429,57 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
         ));
     }
     let bytes = fs::read(&source)?;
-    let hash = hex::encode(Sha256::digest(&bytes));
     let name = source
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("document")
         .to_string();
+    ingest_document(&state, &source, bytes, name)
+}
+
+/// Import bytes the app was handed directly rather than read off disk.
+///
+/// This is the clipboard path. A pasted screenshot has no file to point at, so
+/// the webview reads the image off the `paste` event and sends the bytes here.
+/// Everything after the read is the same as `import_document` — the same size
+/// cap, the same content sniff, the same duplicate check, the same envelope
+/// encryption — because a screenshot is a document like any other and a second
+/// copy of that path would be a second place for it to be wrong.
+#[tauri::command]
+fn import_document_bytes(
+    state: tauri::State<AppState>,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(AppError::Invalid(
+            "files must be non-empty and 25 MB or smaller".into(),
+        ));
+    }
+    // Only the basename is kept. A pasted name is attacker-influenced text that
+    // ends up in the vault listing, and nothing downstream wants a path.
+    let name = PathBuf::from(&file_name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("pasted-image.png")
+        .to_string();
+    // `extract_document` takes a path for its extension check and for the PDF
+    // renderer; the bytes are what it actually reads.
+    let source = PathBuf::from(&name);
+    ingest_document(&state, &source, bytes, name)
+}
+
+/// Encrypt a document into the vault, extract from it, and file every candidate
+/// for review. Shared by every import path so they cannot diverge.
+fn ingest_document(
+    state: &AppState,
+    source: &Path,
+    bytes: Vec<u8>,
+    name: String,
+) -> Result<Dashboard> {
+    let hash = hex::encode(Sha256::digest(&bytes));
     let detected = imports::detect_document(&bytes, &name)
         .map_err(|error| AppError::Extract(error.to_string()))?;
 
@@ -6327,7 +6506,23 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
             |row| row.get::<_, String>(0),
         )
         .unwrap_or_else(|_| "Etc/UTC".into());
-    let extraction = imports::extract_document(&source, &bytes, &name, &timezone, &state.ocr);
+    // The layouts of the school the student actually attends, so a screenshot is
+    // read with that registrar's weekday spellings. A student at a school nobody
+    // has described gets an empty list and the reader's English defaults.
+    let layouts = student_schedule_layouts(&db);
+    // Codes the student already has. A screenshot whose courses match none of
+    // them is a hint the read went wrong, so the reader offers a second opinion
+    // rather than presenting a confident answer.
+    let known_courses = enrolled_course_codes(&db);
+    let extraction = imports::extract_document(
+        source,
+        &bytes,
+        &name,
+        &timezone,
+        &state.ocr,
+        &layouts,
+        &known_courses,
+    );
     let (status, extraction_error) = match &extraction {
         Ok(result) if result.candidates.is_empty() => (
             "needs_attention",
@@ -6422,7 +6617,8 @@ fn list_documents(
                 COALESCE(SUM(CASE WHEN c.status='approved' THEN 1 ELSE 0 END),0)
          FROM documents d
          LEFT JOIN import_candidates c ON c.document_id=d.id
-         WHERE d.vault_path!='' AND (?1='' OR lower(d.file_name) LIKE ?2 ESCAPE '\\')
+         WHERE (d.vault_path!='' OR d.content_shredded=1)
+           AND (?1='' OR lower(d.file_name) LIKE ?2 ESCAPE '\\')
          GROUP BY d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error
          ORDER BY datetime(d.imported_at) DESC,d.id DESC
          LIMIT 250",
@@ -6445,6 +6641,282 @@ fn list_documents(
     Ok(documents)
 }
 
+/// Delete the encrypted image behind any screenshot whose candidates are all
+/// settled, keeping the row so its evidence still reads.
+///
+/// A screenshot is a picture of a student's own screen, and once every class it
+/// proposed has been approved or dismissed there is nothing left to look at.
+/// Keeping it would grow the vault forever to preserve an image nobody opens;
+/// deleting the extracted text with it would break the evidence quotes the
+/// review queue is built on. So the blob goes and the text stays.
+///
+/// Only images. A syllabus PDF is a document a student will want to open again,
+/// and a settled one is not evidence that it has stopped being useful.
+fn shred_settled_screenshots(db: &Connection, vault: &Path, root: &Path) -> Result<()> {
+    if screenshot_retention(db) != "shred_when_settled" {
+        return Ok(());
+    }
+    let mut statement = db.prepare(
+        "SELECT d.id, d.vault_path FROM documents d
+         WHERE d.vault_path != '' AND d.content_shredded = 0
+           AND d.mime LIKE 'image/%'
+           AND EXISTS(SELECT 1 FROM import_candidates c WHERE c.document_id = d.id)
+           AND NOT EXISTS(
+             SELECT 1 FROM import_candidates c
+             WHERE c.document_id = d.id AND c.status = 'pending'
+           )",
+    )?;
+    let settled = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(statement);
+
+    for (id, vault_path) in settled {
+        let path = PathBuf::from(&vault_path);
+        // Never follow a path out of the vault, whatever the row says. The value
+        // is written by this app, but a delete driven by a database string is
+        // worth constraining regardless.
+        if !path.starts_with(vault) && !path.starts_with(root) {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            // Already gone is the desired end state, not a failure.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => continue,
+        }
+        db.execute(
+            "UPDATE documents SET vault_path='', wrapped_key='', key_nonce='', content_nonce='',
+                                  content_shredded=1 WHERE id=?1",
+            params![id],
+        )?;
+    }
+    Ok(())
+}
+
+/// How long an imported screenshot is kept. `shred_when_settled` is the default;
+/// `keep` treats it like any other document.
+fn screenshot_retention(db: &Connection) -> String {
+    db.query_row(
+        "SELECT value FROM settings WHERE key='screenshot_retention'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .unwrap_or_else(|_| "shred_when_settled".into())
+}
+
+/// Read a stored image back out of the vault.
+fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) -> Result<Vec<u8>> {
+    let (vault_path, wrapped_key, key_nonce, content_nonce, mime): (
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = db
+        .query_row(
+            "SELECT vault_path,wrapped_key,key_nonce,content_nonce,mime FROM documents WHERE id=?1",
+            params![document_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Invalid("document not found".into()))?;
+    if vault_path.is_empty() {
+        return Err(AppError::Invalid(
+            "the original image is no longer stored; nothing was sent".into(),
+        ));
+    }
+    if !mime.starts_with("image/") {
+        return Err(AppError::Invalid(
+            "only an image can be read as a schedule".into(),
+        ));
+    }
+    let document_key = decrypt(
+        &state.master_key,
+        &decode_nonce(&key_nonce)?,
+        &B64.decode(wrapped_key).map_err(|_| AppError::Crypto)?,
+    )?;
+    let document_key: [u8; 32] = document_key.try_into().map_err(|_| AppError::Crypto)?;
+    let encrypted = fs::read(&vault_path)?;
+    decrypt(&document_key, &decode_nonce(&content_nonce)?, &encrypted)
+}
+
+/// Ask the managed model to structure a schedule the local reader could not.
+///
+/// Opt-in per import and never invoked on the app's own initiative. This is the
+/// first flow that sends a picture of the student's own screen anywhere, so it
+/// takes the same explicit consent every other managed-AI call takes and states
+/// plainly what leaves the machine.
+///
+/// The image never travels alone: the excerpt is the OCR text this machine
+/// produced from that same image, and every candidate's evidence is checked to
+/// be a literal span of it. The model's job is to group text we already hold,
+/// not to read pixels unsupervised.
+#[tauri::command]
+async fn read_schedule_with_ai(
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    consent: bool,
+) -> Result<ManagedAiResult> {
+    if !consent {
+        return Err(AppError::Invalid(
+            "explicit consent is required before sending an image".into(),
+        ));
+    }
+    Uuid::parse_str(&document_id)
+        .map_err(|_| AppError::Invalid("document identifier is invalid".into()))?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.require_unlocked()?;
+        let (bytes, excerpt) = {
+            let db = state.db.lock().unwrap();
+            let bytes = decrypt_document_bytes(&state, &db, &document_id)?;
+            // The excerpt is rebuilt from the same evidence the review queue
+            // already quotes, so what grounds the response is text the student
+            // can see rather than anything invented for the request.
+            let mut statement = db.prepare(
+                "SELECT evidence FROM import_candidates WHERE document_id=?1 ORDER BY id",
+            )?;
+            let excerpt = statement
+                .query_map(params![document_id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .join("\n");
+            (bytes, excerpt)
+        };
+        let excerpt = excerpt.trim().to_string();
+        if excerpt.is_empty() {
+            return Err(AppError::Invalid(
+                "this image had no readable text to check the result against".into(),
+            ));
+        }
+        let image = managed_ai::AiImage::encode(&bytes)?;
+        let (account_id, access_token) = signed_in_account_and_token(&state)?;
+        let client = managed_ai::ManagedAiClient::compiled()?;
+        let response = client.request(
+            &access_token,
+            managed_ai::AiCapability::DocumentExtraction,
+            &excerpt,
+            "en-US",
+            Some(&image),
+        )?;
+        if response.account_id != account_id {
+            return Err(AppError::ManagedAi(
+                managed_ai::ManagedAiError::InvalidResponse,
+            ));
+        }
+
+        let db = state.db.lock().unwrap();
+        let timezone = db
+            .query_row("SELECT value FROM settings WHERE key='timezone'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap_or_else(|_| "Etc/UTC".into());
+        let candidates_created = response.candidates.len();
+        for (index, candidate) in response.candidates.iter().enumerate() {
+            let kind = local_candidate_kind(&candidate.kind);
+            db.execute(
+                "INSERT INTO import_candidates(
+                   id,document_id,kind,title,course,evidence,source_locator,source_type,source_uid,
+                   observed_at,confidence,warnings,status,weekdays,starts_at_local,ends_at_local,timezone
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,'managed_ai',?8,?9,?10,?11,'pending',?12,?13,?14,?15)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    document_id,
+                    kind,
+                    candidate.title,
+                    candidate.course.clone().unwrap_or_default(),
+                    candidate.evidence,
+                    "Managed AI · schedule",
+                    format!("ai-schedule:{document_id}:{index}"),
+                    Utc::now().to_rfc3339(),
+                    candidate.confidence,
+                    serde_json::to_string(&candidate.warnings).unwrap_or_else(|_| "[]".into()),
+                    serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_| "[]".into()),
+                    candidate.starts_at_local.clone().unwrap_or_default(),
+                    candidate.ends_at_local.clone().unwrap_or_default(),
+                    if kind == "class_meeting" { timezone.as_str() } else { "" },
+                ],
+            )?;
+        }
+        let dashboard = dashboard_with_notice(
+            &db,
+            &state.ocr,
+            Some(format!(
+                "Managed AI proposed {candidates_created} class{} for review; nothing was added to your plan.",
+                if candidates_created == 1 { "" } else { "es" }
+            )),
+        )?;
+        Ok(ManagedAiResult {
+            dashboard,
+            explanation: response.explanation,
+            candidates_created,
+            model: response.model,
+        })
+    })
+    .await
+    .map_err(|error| AppError::Invalid(error.to_string()))?
+}
+
+/// Course codes already on this profile.
+fn enrolled_course_codes(db: &Connection) -> Vec<String> {
+    db.prepare("SELECT code FROM courses WHERE code != ''")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
+}
+
+/// Schedule layouts for the school on this profile, if it has a descriptor.
+fn student_schedule_layouts(db: &Connection) -> Vec<school_provider::ScheduleLayout> {
+    let Ok(raw) = db.query_row(
+        "SELECT value FROM settings WHERE key='institution_selection'",
+        [],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return Vec::new();
+    };
+    let Ok(selection) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    selection
+        .get("id")
+        .and_then(|id| id.as_str())
+        .and_then(school_provider_for)
+        .map(|provider| provider.schedule_layouts.clone())
+        .unwrap_or_default()
+}
+
+/// Map a managed-AI candidate kind onto a kind this app can actually apply.
+///
+/// `apply_candidate` knows three: task, commitment and class_meeting. The rest
+/// are shades of task that the planner treats identically, so they collapse and
+/// the reviewer is told they did.
+///
+/// `academic_event` is the deliberate exception worth naming: a holiday or a
+/// reading day is a real thing with nowhere to go yet, because the academic
+/// calendar arrives through its own reviewed diff rather than through document
+/// extraction. It collapses to a task, with the warning, until that path exists.
+/// Filing it as a task the student can see beats dropping it silently.
+fn local_candidate_kind(kind: &str) -> &'static str {
+    match kind {
+        "commitment" => "commitment",
+        "class_meeting" => "class_meeting",
+        _ => "task",
+    }
+}
+
 #[tauri::command]
 fn get_document_evidence(
     state: tauri::State<AppState>,
@@ -6454,8 +6926,20 @@ fn get_document_evidence(
     Uuid::parse_str(&document_id)
         .map_err(|_| AppError::Invalid("document identifier is invalid".into()))?;
     let db = state.db.lock().unwrap();
+    document_evidence_in(&db, &document_id)
+}
+
+/// The query behind `get_document_evidence`, split out so it can be tested
+/// without a Tauri `State`. The column list and the row indices below must stay
+/// in step: reading past the end of the `SELECT` is a runtime error that only
+/// fires once a document actually has candidates, which is how the four weekly
+/// pattern columns went missing here while the `dashboard` query had them.
+fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candidate>> {
     let exists = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1 AND vault_path!='')",
+        // A shredded screenshot still has evidence worth reading, even though
+        // the image behind it is gone. A Canvas stub, which never had a blob,
+        // still does not.
+        "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1 AND (vault_path!='' OR content_shredded=1))",
         params![document_id],
         |row| row.get::<_, i64>(0),
     )? != 0;
@@ -6464,7 +6948,8 @@ fn get_document_evidence(
     }
     let mut statement = db.prepare(
         "SELECT id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,
-                source_locator,source_type,source_url,confidence,warnings,status
+                source_locator,source_type,source_url,confidence,warnings,status,
+                weekdays,starts_at_local,ends_at_local,timezone
          FROM import_candidates WHERE document_id=?1
          ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
                   confidence DESC,id",
@@ -6946,6 +7431,7 @@ fn approve_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result
         }
     }
     transaction.commit()?;
+    shred_settled_screenshots(&db, &state.vault, &state.root)?;
     regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
     dashboard(&db, &state.ocr)
 }
@@ -6970,6 +7456,7 @@ fn reject_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result<
         }
     }
     transaction.commit()?;
+    shred_settled_screenshots(&db, &state.vault, &state.root)?;
     dashboard(&db, &state.ocr)
 }
 
@@ -7604,6 +8091,7 @@ fn main() {
             search_institutions,
             search_course_suggestions,
             get_institution_setup_options,
+            refresh_school_calendar,
             save_onboarding_draft,
             complete_onboarding,
             get_local_workspace,
@@ -7672,6 +8160,8 @@ fn main() {
             dismiss_reminder,
             request_managed_ai,
             import_document,
+            import_document_bytes,
+            read_schedule_with_ai,
             list_documents,
             get_document_evidence,
             approve_candidates,
@@ -8276,6 +8766,202 @@ mod tests {
         assert_eq!(courses, 1, "importing twice should not duplicate the course");
     }
 
+    // The evidence query used to select fifteen columns and then read indices
+    // fifteen through eighteen for the weekly pattern fields, so every call
+    // failed the moment a document had any candidate at all. Reading a
+    // class_meeting back is the case that regressed.
+    #[test]
+    fn document_evidence_returns_the_weekly_pattern_columns() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("evidence.db");
+        let key = random_key();
+        let conn = open_database(&path, &key).unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-1','schedule.png','image/png','v','k','n','c','s','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,
+                                           weekdays,starts_at_local,ends_at_local,timezone)
+             VALUES('cand-1','doc-1','class_meeting','Statistics 201','Statistics 201','STA 201 MWF 9:00',
+                    'screenshot','shot:sta201:weekly',0.9,'[1,3,5]','09:00','09:50','America/Phoenix')",
+            [],
+        )
+        .unwrap();
+
+        let evidence = document_evidence_in(&conn, "doc-1").unwrap();
+        assert_eq!(evidence.len(), 1);
+        let candidate = &evidence[0];
+        assert_eq!(candidate.kind, "class_meeting");
+        assert_eq!(candidate.evidence, "STA 201 MWF 9:00");
+        assert_eq!(candidate.weekdays, vec![1, 3, 5]);
+        assert_eq!(candidate.starts_at_local, "09:00");
+        assert_eq!(candidate.ends_at_local, "09:50");
+        assert_eq!(candidate.timezone, "America/Phoenix");
+
+        // A document with no vault blob is not evidence anyone can open.
+        assert!(document_evidence_in(&conn, "doc-missing").is_err());
+    }
+
+    // Managed AI used to collapse every kind it did not recognise to a task,
+    // which included class_meeting. Widening the wire contract without fixing
+    // this would have left a screenshot extraction arriving as a pile of tasks
+    // with the weekly pattern silently dropped.
+    #[test]
+    fn managed_ai_kinds_map_onto_kinds_that_can_actually_be_applied() {
+        assert_eq!(local_candidate_kind("class_meeting"), "class_meeting");
+        assert_eq!(local_candidate_kind("commitment"), "commitment");
+        for shade_of_task in ["task", "assignment", "exam", "academic_event"] {
+            assert_eq!(local_candidate_kind(shade_of_task), "task");
+        }
+
+        // Every kind this maps to must be one apply_candidate accepts, or
+        // approval fails at the point the student presses the button.
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("kinds.db"), &random_key()).unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('term','Fall 2026','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc','shot.png','image/png','v','k','n','c','s','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        for kind in ["task", "commitment", "class_meeting"] {
+            // Approval records provenance against the candidate row, so it has
+            // to exist before apply_candidate is asked to file anything.
+            conn.execute(
+                "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence)
+                 VALUES(?1,'doc',?2,'Statistics 201','Statistics 201','e','l',?3,1.0)",
+                params![format!("cand-{kind}"), kind, format!("ai:{kind}")],
+            )
+            .unwrap();
+            let candidate = PendingCandidate {
+                id: format!("cand-{kind}"),
+                kind: kind.into(),
+                title: "Statistics 201".into(),
+                course: "Statistics 201".into(),
+                starts_at: Some("2026-08-24T16:00:00Z".into()),
+                ends_at: Some("2026-08-24T16:50:00Z".into()),
+                duration_minutes: Some(50),
+                weekdays: vec![1],
+                starts_at_local: "09:00".into(),
+                ends_at_local: "09:50".into(),
+                timezone: "America/Phoenix".into(),
+                ..Default::default()
+            };
+            assert!(
+                apply_candidate(&conn, &candidate, None).is_ok(),
+                "{kind} is produced but cannot be applied"
+            );
+        }
+    }
+
+    // A screenshot is a picture of the student's own screen. Once every class it
+    // proposed is approved or dismissed there is nothing left to look at, so the
+    // image goes -- but the extracted text stays, because the review queue's
+    // evidence quotes are built on it.
+    #[test]
+    fn a_settled_screenshot_loses_its_image_but_keeps_its_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let conn = open_database(&directory.path().join("shred.db"), &random_key()).unwrap();
+
+        let mut make = |id: &str, mime: &str, status: &str| {
+            let blob = vault.join(format!("{id}.vault"));
+            fs::write(&blob, b"ciphertext").unwrap();
+            conn.execute(
+                "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+                 VALUES(?1,?2,?3,?4,'k','n','c',?1,'2026-08-01T00:00:00Z')",
+                params![id, format!("{id}.png"), mime, blob.to_string_lossy()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,status)
+                 VALUES(?1,?2,'class_meeting','Statistics 201','STA 201','STA 201 MWF 9:00','screenshot',?1,0.9,?3)",
+                params![format!("cand-{id}"), id, status],
+            )
+            .unwrap();
+            blob
+        };
+        let settled = make("11111111-1111-4111-8111-111111111111", "image/png", "approved");
+        let pending = make("22222222-2222-4222-8222-222222222222", "image/png", "pending");
+        let syllabus = make("33333333-3333-4333-8333-333333333333", "application/pdf", "approved");
+
+        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+
+        assert!(!settled.exists(), "a settled screenshot's image is deleted");
+        assert!(pending.exists(), "a screenshot still under review is kept");
+        assert!(
+            syllabus.exists(),
+            "a syllabus is a document a student reopens; settling its candidates says nothing about that"
+        );
+
+        // The row survives and its evidence still reads, which is the whole
+        // point of shredding the blob rather than the record.
+        let evidence =
+            document_evidence_in(&conn, "11111111-1111-4111-8111-111111111111").unwrap();
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].evidence, "STA 201 MWF 9:00");
+
+        // Nothing is left behind that could decrypt an image that no longer
+        // exists.
+        let (path, wrapped, shredded): (String, String, i64) = conn
+            .query_row(
+                "SELECT vault_path,wrapped_key,content_shredded FROM documents WHERE id=?1",
+                params!["11111111-1111-4111-8111-111111111111"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(path, "");
+        assert_eq!(wrapped, "");
+        assert_eq!(shredded, 1);
+
+        // Running the sweep again is a no-op rather than an error.
+        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+    }
+
+    #[test]
+    fn keeping_screenshots_is_one_preference_away() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let conn = open_database(&directory.path().join("keep.db"), &random_key()).unwrap();
+        assert_eq!(screenshot_retention(&conn), "shred_when_settled");
+
+        let id = "44444444-4444-4444-8444-444444444444";
+        let blob = vault.join(format!("{id}.vault"));
+        fs::write(&blob, b"ciphertext").unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES(?1,'shot.png','image/png',?2,'k','n','c',?1,'2026-08-01T00:00:00Z')",
+            params![id, blob.to_string_lossy()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,status)
+             VALUES('c1',?1,'class_meeting','S','S','e','screenshot','u',0.9,'approved')",
+            params![id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('screenshot_retention','keep')
+             ON CONFLICT(key) DO UPDATE SET value='keep'",
+            [],
+        )
+        .unwrap();
+
+        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+        assert!(blob.exists(), "the preference is honoured");
+    }
+
     #[test]
     fn planner_ai_and_sync_schema_migrations_are_additive_and_versioned() {
         let directory = tempfile::tempdir().unwrap();
@@ -8290,13 +8976,20 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
         // 12 adds the weekly pattern a class_meeting candidate carries, which
         // the single-instant datetime columns cannot express.
         let candidate_columns = table_columns(&conn, "import_candidates").unwrap();
         for column in ["weekdays", "starts_at_local", "ends_at_local", "timezone"] {
             assert!(candidate_columns.contains(column), "missing {column}");
         }
+        // 13 lets a screenshot's image be deleted once its candidates are
+        // settled while the row survives, so the evidence quotes still read.
+        // Distinct from the empty vault_path of a Canvas stub, which never had
+        // an image at all.
+        assert!(table_columns(&conn, "documents")
+            .unwrap()
+            .contains("content_shredded"));
         for table in ["sync_entity_versions", "sync_set_elements"] {
             assert_eq!(
                 conn.query_row(
@@ -9834,7 +10527,7 @@ mod tests {
 
     #[test]
     fn institution_setup_provider_has_sourced_asu_campuses_and_dates() {
-        let providers: Vec<InstitutionSetupOptions> = serde_json::from_str(include_str!(
+        let providers: Vec<SchoolProvider> = serde_json::from_str(include_str!(
             "../resources/institution-setup-providers.json"
         ))
         .unwrap();
@@ -9857,6 +10550,103 @@ mod tests {
         assert!(asu.terms[0]
             .source_url
             .starts_with("https://registrar.asu.edu/"));
+
+        // ASU's class search sits behind weblogin, so the honest descriptor says
+        // there is no readable catalog. That has to stay a supported state: the
+        // screenshot path is what covers it, and the UI must not read as broken.
+        assert!(!asu.has_readable_catalog());
+        assert!(!asu
+            .catalog_source
+            .as_ref()
+            .expect("the reason for having no catalog is worth stating")
+            .note
+            .is_empty());
+    }
+
+    /// What the setup screen receives, pinned by shape rather than by value.
+    ///
+    /// The descriptor carries far more than this — calendar sources, date
+    /// patterns, schedule layouts — and none of it may appear here; the
+    /// projection is what keeps the file free to grow without changing the API.
+    /// Pinning the key sets rather than the whole document is deliberate: a
+    /// calendar harvest legitimately changes the dates, and a test that has to
+    /// be rewritten every time one runs stops being read.
+    #[test]
+    fn setup_receives_the_descriptor_projection_and_nothing_more() {
+        let options = institution_setup_options_for("104151".into()).unwrap();
+        let json = serde_json::to_value(&options).unwrap();
+
+        let keys = |value: &serde_json::Value| {
+            let mut names: Vec<String> =
+                value.as_object().expect("an object").keys().cloned().collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            keys(&json),
+            vec![
+                "campuses".to_string(),
+                "generatedAt".into(),
+                "institutionId".into(),
+                "sourceLabel".into(),
+                "sourceUrl".into(),
+                "terms".into(),
+            ],
+            "a descriptor field leaked into what setup receives"
+        );
+        assert_eq!(
+            keys(&json["terms"][0]),
+            vec![
+                "classEndsOn".to_string(),
+                "details".into(),
+                "endsOn".into(),
+                "examStartsOn".into(),
+                "id".into(),
+                "name".into(),
+                "noClassDates".into(),
+                "sessionCode".into(),
+                "sourceLabel".into(),
+                "sourceUrl".into(),
+                "startsOn".into(),
+            ]
+        );
+        assert_eq!(keys(&json["campuses"][0]).len(), 6);
+
+        // Spot values, so the projection is carrying real data and not defaults.
+        assert_eq!(json["institutionId"], "104151");
+        assert_eq!(json["terms"][0]["id"], "asu-fall-2026-c");
+        assert_eq!(json["terms"][0]["startsOn"], "2026-08-20");
+        assert_eq!(json["campuses"][0]["name"], "Tempe");
+        assert!(
+            json["generatedAt"].as_str().is_some_and(|value| !value.is_empty()),
+            "a pre-filled date has to say how old it is"
+        );
+
+        // An unknown school is still an empty answer rather than an error: the
+        // student types their dates in by hand and setup continues.
+        let unknown = institution_setup_options_for("000000".into()).unwrap();
+        assert_eq!(unknown.institution_id, "000000");
+        assert!(unknown.campuses.is_empty() && unknown.terms.is_empty());
+    }
+
+    /// The holidays came off the live registrar page, not out of anyone's head.
+    /// A planner that skips a study day for a holiday the school does not
+    /// observe is wrong in the same way as one that schedules through a real one.
+    #[test]
+    fn harvested_no_class_dates_sit_inside_their_term() {
+        let options = institution_setup_options_for("104151".into()).unwrap();
+        let fall = &options.terms[0];
+        assert!(
+            !fall.no_class_dates.is_empty(),
+            "the harvest has been run against the live page"
+        );
+        for date in &fall.no_class_dates {
+            assert!(date.starts_on >= fall.starts_on && date.starts_on <= fall.ends_on);
+            if !date.ends_on.is_empty() {
+                assert!(date.ends_on > date.starts_on);
+            }
+            assert!(!date.label.trim().is_empty());
+        }
     }
 
     // The reported bug: ASU has 17 directory entries and the twelve that sorted

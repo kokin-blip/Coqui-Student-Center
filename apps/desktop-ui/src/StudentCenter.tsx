@@ -101,11 +101,13 @@ import {
   getUpdateStatus,
   initialize,
   isDesktop,
+  importDocumentBytes,
   importDocumentPath,
   listenForAccountChanges,
   listenForOcrStatus,
   OcrStatus,
   listenForFileDrops,
+  readScheduleWithAi,
   listenForNavigation,
   lockApp,
   listDocuments,
@@ -438,8 +440,53 @@ export function StudentCenter() {
     }, 150);
     return () => clearTimeout(timer);
   }, [modal, documentSearch, data?.candidates.length]);
+  const [dragActive, setDragActive] = useState(false);
+  /**
+   * Paste a screenshot straight into the vault.
+   *
+   * Ctrl/Cmd+V with an image on the clipboard is the interaction this whole
+   * feature exists for, so it is bound at the document rather than inside one
+   * panel. The image comes off the DOM paste event, which needs no clipboard
+   * permission: the app reads what the student handed it, not the clipboard
+   * whenever it likes.
+   */
   useEffect(() => {
-    if (modal !== "import" || !isDesktop()) return;
+    if (!isDesktop()) return;
+    const onPaste = (event: ClipboardEvent) => {
+      // Pasting into a field the student is typing in is a paste, not an import.
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      const image = Array.from(event.clipboardData?.files ?? []).find((file) =>
+        file.type === "image/png" || file.type === "image/jpeg",
+      );
+      if (!image) return;
+      event.preventDefault();
+      void (async () => {
+        setBusy(true);
+        setError("");
+        try {
+          const bytes = new Uint8Array(await image.arrayBuffer());
+          const next = await importDocumentBytes(image.name || "pasted-image.png", bytes);
+          setData(next);
+          setToast(
+            next.importNotice ??
+              "Screenshot encrypted and read. Review every class before it is added.",
+          );
+          setModal("review");
+        } catch (e) {
+          setError(String(e));
+        } finally {
+          setBusy(false);
+        }
+      })();
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, []);
+  useEffect(() => {
+    // Subscribed whenever the app is running rather than only while the import
+    // modal is open, so a schedule can be dropped from onboarding too.
+    if (!isDesktop()) return;
     let disposed = false;
     let unlisten = () => {};
     listenForFileDrops(async (paths) => {
@@ -469,7 +516,7 @@ export function StudentCenter() {
       disposed = true;
       unlisten();
     };
-  }, [modal]);
+  }, []);
   const pending = data?.candidates.filter((c) => c.status === "pending") ?? [];
   const conflictCandidateIds = useMemo(
     () =>
@@ -1582,8 +1629,14 @@ export function StudentCenter() {
           close={() => setModal(null)}
         >
           <button
-            className="dropzone"
+            className={dragActive ? "dropzone dragging" : "dropzone"}
             disabled={busy}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={() => setDragActive(false)}
             onClick={() =>
               run(async () => {
                 const next = await selectAndImport();
@@ -1595,6 +1648,7 @@ export function StudentCenter() {
             <Upload />
             <strong>Choose or drop academic files</strong>
             <span>PDF, image, ICS, Word, Excel, CSV, PowerPoint, or text</span>
+            <span>Or paste a screenshot of your schedule with Ctrl/Cmd+V</span>
           </button>
           <p className="privacy-note">
             <ShieldCheck /> The original stays private. AI is never used without
@@ -1676,6 +1730,39 @@ export function StudentCenter() {
                   ))
                 ) : (
                   <p>No academic facts were extracted from this source.</p>
+                )}
+                {/* Offered only for an image, and only ever offered: the app
+                    never sends a picture of a student's screen on its own
+                    initiative, and the copy has to read that way rather than
+                    burying it in a settings toggle. */}
+                {documents.find((document) => document.id === vaultEvidence.documentId)
+                  ?.mime.startsWith("image/") && (
+                  <div className="ai-reread">
+                    <p>
+                      <ShieldCheck aria-hidden="true" /> Coqui read this
+                      screenshot on your computer. If the class times came out
+                      wrong, it can ask the managed AI to try again — that sends{" "}
+                      <strong>this image and the text read from it</strong> off
+                      your computer. Everything it proposes still needs your
+                      review, and you never have to do this.
+                    </p>
+                    <button
+                      className="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const result = await readScheduleWithAi(
+                            vaultEvidence.documentId,
+                            true,
+                          );
+                          setModal("review");
+                          return result.dashboard;
+                        }, "Managed AI proposed classes for review; nothing was added to your plan.")
+                      }
+                    >
+                      Ask AI to re-read this screenshot
+                    </button>
+                  </div>
                 )}
               </div>
             )}

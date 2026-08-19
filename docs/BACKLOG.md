@@ -1,6 +1,6 @@
 # Backlog
 
-Open work after 0.9.2, with the reasoning behind each item so it does not have to
+Open work after 0.10.0, with the reasoning behind each item so it does not have to
 be rediscovered. Ordered roughly by value.
 
 Decisions already made are recorded at the bottom. Re-open them deliberately
@@ -9,6 +9,36 @@ rather than by accident.
 ---
 
 ## 1. Course catalog coverage
+
+**What 0.10.0 changed.** A thin catalog matters less than it did. A student who
+cannot find their course in the bundled 133 can now paste a screenshot of their
+own schedule and get their classes back, which works at any school and is always
+current — the third option this section used to list as the better product
+answer. The catalog is now a convenience for typing a course name, not the only
+road in.
+
+**What is still manual.** Everything below. `catalogSource` for ASU is
+`kind: "none"` and says why, and the class list is still whatever was exported by
+hand.
+
+**What is now automatic.** Only the *academic calendar*, not the catalog. A
+school's term dates and no-class dates can be refreshed in-app from its published
+registrar page, or regenerated at build time:
+
+```
+npm run calendar:prepare -- --institution=104151          # fetches, dry run
+npm run calendar:prepare -- --institution=104151 --apply  # writes the descriptor
+npm run calendar:verify
+```
+
+The refresh returns a diff and never writes; a changed term date surfaces as an
+explicit conflict. `calendar:verify` runs in CI and the release lane beside
+`catalog:verify`.
+
+**noClassDates are harvested.** `calendar:prepare` has been run against the live
+registrar page: six real no-class dates across three terms, and every term
+boundary the page states already agreed with the bundle. Re-run it when ASU
+publishes a new academic year.
 
 **State.** 133 courses, 381 sections, 45 subject codes, Fall 2026 only. That is
 four General Studies categories (HUAD, GCSI, CIVI, AMIT) plus CSE 240 — whatever
@@ -44,8 +74,9 @@ the row after the days. That silently corrupted three sections and cost three
 parser bugs. Reading the rendered results table gives structured rows and removes
 that entire class of problem.
 
-**Unresolved question, decide before building anything automated:** does a harvest
-stay local to one machine, or ship inside the app to other students? Bundling
+**Unresolved question, still open for the catalog** (the screenshot path sidesteps
+it, but automating a harvest would not): does a harvest stay local to one machine,
+or ship inside the app to other students? Bundling
 data pulled from one student's authenticated session and distributing it is a
 different posture from that student fetching their own. A third option is shipping
 the *tooling* rather than the data, so each student harvests their own courses —
@@ -153,6 +184,80 @@ a schedule that was never in the file.
 falling back to the active term, and approval fails with a plain message if no
 term exists. A calendar file has no notion of terms and a recurrence count says
 nothing about which term a class sits in.
+
+**Vision-model grounding is anchored to locally-extracted OCR text.** The rule
+that a candidate's `evidence` must be a literal substring of the excerpt is what
+stops the model inventing a due date, and an image has no excerpt. Rather than
+weaken it for the screenshot path, the image never travels alone: the app OCRs it
+on the student's machine and sends that text as the excerpt with the picture
+attached. The model's job becomes grouping text we already hold — which is where
+it actually helps, since the failure on a grid is almost never character
+recognition but knowing that the 9:00 in the gutter and the PSY 101 three columns
+over are one class. The alternative considered was an `ImageEvidence { bbox }`
+variant validated against local OCR tokens inside that box; it is more code, more
+surface, and still needs the same local OCR pass.
+
+**An AI-read screenshot counts as the student fetching their own data.** The image
+is a picture of their own screen, they attach it deliberately, and each send is a
+separate explicit action with a sentence saying the image leaves the computer.
+That is a different posture from harvesting a third party's data through an access
+control, which is what the catalog decision above forbids. The distinction worth
+holding is consent and ownership, not whether bytes travel.
+
+**Screenshots are deleted once their candidates are settled.** When every class an
+image proposed has been approved or dismissed, the encrypted blob is shredded and
+the row is kept so the evidence quotes still read. Keeping the image would grow
+the vault forever to preserve something nobody opens; deleting the extracted text
+with it would break the review queue's evidence. Syllabus PDFs are untouched — a
+student reopens those, and settling their candidates says nothing about that. One
+preference turns it off.
+
+**Schedule fixtures are real OCR output, and the images sit beside them.** The
+first generation was a synthesized token stream, and it passed every test while
+the reader could not read a single genuine week grid — the same failure the
+calendar fixture had, for the same reason. Regenerate with
+`scripts/fixtures/render-schedule-images.py` and `tesseract <png> <name> --psm 6
+tsv`. The committed TSVs keep the suite deterministic and independent of a local
+Tesseract; the PNGs keep it honest and reproducible.
+
+**A class must print its own time or it is not read.** A block's height is a
+drawn rectangle and OCR only ever sees the words inside it, so a calendar with
+its hours only in a left gutter cannot say how long a class runs. Deriving the
+start from the ruler and fitting the drawing inset works and is still wrong: it
+produces confident times quietly fifteen minutes out. Declining, and naming which
+kind of unreadable it hit, is the answer — that message is what tells a student
+the AI reader is worth trying.
+
+**Registrar calendars are read with patterns, not a CSS selector.** Registrar
+pages are frequently not tables and frequently not well-formed, so selecting a
+node buys less than an HTML parser in the binary costs. The rules live in the
+descriptor instead.
+
+ASU's page turned out to be a *label followed by one date per session*, each on
+its own line, which is why `html-sessions` exists as a kind of its own. Three
+things about that shape are not obvious and each caused a wrong answer before it
+was handled:
+
+- A line sitting where a date should be is that session's **value**, not a new
+  label. The page writes "Final exams / Session A / Last Day of Classes"; read as
+  a label, "Last Day of Classes" adopts the next session's date and overwrites
+  the real end-of-classes date with the day finals start.
+- A label is the text **immediately** above its date. Unbounded, the whole
+  navigation column becomes the label of the first date on the page.
+- Boundary vocabulary is matched only at the **front** of a label. A registrar
+  names a row first and explains it afterwards, so a sentence containing "the
+  first day of classes" is prose, not an announcement of when term starts.
+
+**Fixtures for network sources are saved copies, never reconstructions.** The
+first calendar fixture was written from a description of ASU's page rather than
+from the page. Everything passed, and the pattern fitted to it read the real
+thing as 152 rows matching nothing at all — while reporting "no differences",
+which is exactly what a working refresh also reports. A parser for a page you
+have not saved is a parser for a page that does not exist.
+
+**Reading rows and matching none of them is an error, not a quiet success.**
+Both states otherwise print the same reassuring output. `calendar:prepare` now
+exits non-zero when it reads dated rows and matches none to a term boundary.
 
 **Sync still requires Supabase**, for auth (`createSupabaseAccessTokenVerifier`)
 and for the row-level policies that use `auth.uid()`. The `SyncRepository`
