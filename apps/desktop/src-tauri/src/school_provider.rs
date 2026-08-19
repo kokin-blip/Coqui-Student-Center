@@ -141,6 +141,15 @@ pub struct CalendarSource {
     /// `start` and optionally `end` are what the parser reads.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub row_pattern: String,
+    /// For `HtmlSessions`: a whole line holding a date, with named groups
+    /// `start`, `year`, and optionally `end`. A range states what it does not
+    /// repeat — "October 10–13, 2026" gives the month once — so `end` borrows
+    /// the month and year it is missing from `start`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub date_pattern: String,
+    /// For `HtmlSessions`: a whole line naming a session, capturing `session`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub session_pattern: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +159,9 @@ pub enum CalendarSourceKind {
     Ics,
     HtmlTable,
     HtmlList,
+    /// A label, then one date per session, each on its own line. This is what a
+    /// registrar calendar actually looks like — see `school_calendar`.
+    HtmlSessions,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

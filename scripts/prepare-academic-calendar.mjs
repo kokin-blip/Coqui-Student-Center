@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { classify, parseRegistrarPage } from "./calendar/registrar-page.mjs";
+import { classify, parseRegistrarPage, parseSessionCalendar } from "./calendar/registrar-page.mjs";
 
 /**
  * Regenerate a school's term dates and no-class dates from its published
@@ -59,16 +59,21 @@ async function fetchCalendar(url) {
   return response.text();
 }
 
-const entries = parseRegistrarPage(html, source);
+const entries = source.kind === "html-sessions"
+  ? parseSessionCalendar(html, source)
+  : parseRegistrarPage(html, source);
 console.log(`${inputPath ?? source.url}: ${entries.length} dated rows`);
 
 // Match rows onto the terms already declared, rather than inventing terms. A
 // harvest that discovered terms would be guessing at which session a row names,
 // and a wrong term boundary is worse than a missing one.
+// Three days of slack, not a fortnight. Terms of the same session sit close
+// together: with a two-week window, Summer's "Classes begin" falls inside
+// Spring's and rewrites the date it should have left alone.
 const within = (term, iso) => {
   const day = 24 * 60 * 60 * 1000;
-  const start = Date.parse(`${term.startsOn}T00:00:00Z`) - 14 * day;
-  const end = Date.parse(`${term.endsOn}T00:00:00Z`) + 14 * day;
+  const start = Date.parse(`${term.startsOn}T00:00:00Z`) - 3 * day;
+  const end = Date.parse(`${term.endsOn}T00:00:00Z`) + 3 * day;
   const at = Date.parse(`${iso}T00:00:00Z`);
   return Number.isFinite(start) && Number.isFinite(end) && at >= start && at <= end;
 };
@@ -109,7 +114,21 @@ for (const term of provider.terms) {
 }
 provider.generatedAt = new Date().toISOString().slice(0, 10);
 
+// Reading many rows and matching none of them is a broken descriptor, not a
+// calendar that happens to agree. Both states otherwise print the same
+// reassuring "no differences", which is how a pattern fitted to the wrong page
+// shape passes for a working one.
+const matched = entries.length - unmatched.length;
+if (entries.length && matched === 0) {
+  process.stderr.write(
+    `Read ${entries.length} dated rows and matched none of them to a term boundary.\n` +
+      "That is a descriptor that no longer fits this page, not a calendar with nothing to say.\n",
+  );
+  process.exitCode = 1;
+}
+
 console.log(changes.length ? changes.join("\n") : "No differences against the bundled snapshot.");
+console.log(`${matched} of ${entries.length} rows matched a term boundary.`);
 if (unmatched.length) {
   // Reported rather than dropped: a school whose sessions are worded differently
   // should look unmatched, not look like it has nothing to say.

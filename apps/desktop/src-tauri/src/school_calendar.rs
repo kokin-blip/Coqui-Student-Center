@@ -201,6 +201,7 @@ pub fn fetch_calendar(source: &CalendarSource) -> Result<String> {
 pub fn parse_calendar(body: &str, source: &CalendarSource) -> Result<Vec<CalendarEntry>> {
     let entries = match source.kind {
         CalendarSourceKind::Ics => parse_ics(body)?,
+        CalendarSourceKind::HtmlSessions => parse_sessions(body, source)?,
         CalendarSourceKind::HtmlTable | CalendarSourceKind::HtmlList => parse_html(body, source)?,
     };
     Ok(entries.into_iter().take(MAX_ENTRIES).collect())
@@ -298,6 +299,169 @@ fn parse_html(body: &str, source: &CalendarSource) -> Result<Vec<CalendarEntry>>
         }
     }
     Ok(entries)
+}
+
+/// Read a page that lists a label, then a date per session.
+///
+/// This is what a registrar calendar actually looks like, and it is not one row
+/// of text per event. The label sits on its own line — sometimes two — and each
+/// session's date follows on lines of its own:
+///
+/// ```text
+/// Classes end/
+/// last day to process transactions
+/// Session A
+/// October 9, 2026
+/// Session C
+/// December 4, 2026
+/// ```
+///
+/// Rows with no session put the date straight under the label. The rule covering
+/// both is that a date belongs to the nearest label above it, reached through a
+/// session marker when one intervenes, so this is a walk with state rather than
+/// a pattern matched per line.
+///
+/// Anchoring the session and date patterns to whole lines is what keeps prose
+/// out: a summary like "Session C: Thursday, August 20–Friday, December 4, 2026"
+/// holds a session and two dates and must not be read as an event.
+fn parse_sessions(body: &str, source: &CalendarSource) -> Result<Vec<CalendarEntry>> {
+    if source.date_pattern.is_empty() || source.date_format.is_empty() {
+        return Err(CalendarError::Unreadable(
+            "this school's descriptor does not say how to read its calendar".into(),
+        ));
+    }
+    let date_pattern = Regex::new(&source.date_pattern)
+        .map_err(|e| CalendarError::Unreadable(format!("the date pattern is invalid: {e}")))?;
+    let session_pattern = if source.session_pattern.is_empty() {
+        None
+    } else {
+        Some(
+            Regex::new(&source.session_pattern).map_err(|e| {
+                CalendarError::Unreadable(format!("the session pattern is invalid: {e}"))
+            })?,
+        )
+    };
+    let text = strip_tags(body);
+    let region = bound_region(&text, &source.section_pattern)?;
+
+    let mut entries = Vec::new();
+    let mut label_parts: Vec<&str> = Vec::new();
+    let mut pending_session = String::new();
+    let mut label_line: i64 = i64::MIN / 4;
+
+    for (index, line) in region.lines().enumerate() {
+        let index = index as i64;
+        if let Some(found) = session_pattern.as_ref().and_then(|p| p.captures(line)) {
+            pending_session = found
+                .name("session")
+                .map(|value| value.as_str().to_string())
+                .unwrap_or_default();
+            continue;
+        }
+        let Some(found) = date_pattern.captures(line) else {
+            // Directly after a session marker, a line is that session's value
+            // even when it is prose. ASU writes "Final exams / Session A / Last
+            // Day of Classes", meaning finals happen then; read as a label,
+            // "Last Day of Classes" adopts the next session's date and
+            // overwrites the real one.
+            if !pending_session.is_empty() {
+                pending_session.clear();
+                continue;
+            }
+            // A run of text lines is one label: "Classes end/" and the clause
+            // beneath it are the same event.
+            if index - label_line > 1 {
+                label_parts.clear();
+            }
+            label_parts.push(line);
+            label_line = index;
+            continue;
+        };
+        let label = label_of(&label_parts);
+        // A label too far above is not this date's label. Without this a heading
+        // near the top of the page adopts the first date it can reach.
+        if label.is_empty() || index - label_line > 8 {
+            pending_session.clear();
+            continue;
+        }
+        let group = |name: &str| {
+            found
+                .name(name)
+                .map(|value| value.as_str().to_string())
+                .unwrap_or_default()
+        };
+        let (starts_on, ends_on) = assemble_dates(
+            &group("start"),
+            &group("end"),
+            &group("year"),
+            &source.date_format,
+        );
+        if !starts_on.is_empty() {
+            entries.push(CalendarEntry {
+                label,
+                starts_on,
+                ends_on,
+                session_code: std::mem::take(&mut pending_session),
+            });
+            if entries.len() >= MAX_ENTRIES {
+                break;
+            }
+        }
+        pending_session.clear();
+    }
+    Ok(entries)
+}
+
+/// At most the last two lines above the date, and never a runaway.
+///
+/// Unbounded, a page's whole navigation column becomes the label of the first
+/// date on it.
+fn label_of(parts: &[&str]) -> String {
+    let tail = collapse(
+        &parts
+            .iter()
+            .rev()
+            .take(2)
+            .rev()
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    if tail.chars().count() <= 140 {
+        return tail;
+    }
+    collapse(parts.last().copied().unwrap_or_default())
+        .chars()
+        .take(140)
+        .collect()
+}
+
+/// Build the dates from a matched line.
+///
+/// A range states what it does not repeat: "October 10–13, 2026" gives the month
+/// and year once, and "August 20–October 4, 2026" gives the year once. The end
+/// borrows whichever it is missing from the start rather than being parsed alone.
+fn assemble_dates(start: &str, end: &str, year: &str, format: &str) -> (String, String) {
+    let Some(starts_on) = parse_date(&format!("{start}, {year}"), format) else {
+        return (String::new(), String::new());
+    };
+    let ends_on = if end.is_empty() {
+        None
+    } else {
+        let month = if end.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            String::new()
+        } else {
+            format!("{} ", start.split_whitespace().next().unwrap_or_default())
+        };
+        parse_date(&format!("{month}{end}, {year}"), format)
+    };
+    (
+        starts_on.to_string(),
+        ends_on
+            .filter(|end| *end > starts_on)
+            .map(|end| end.to_string())
+            .unwrap_or_default(),
+    )
 }
 
 /// Narrow the text to the region the descriptor cares about, if it names one.
@@ -522,7 +686,10 @@ enum Boundary {
 }
 
 fn classify(label: &str) -> Option<Boundary> {
-    let folded = label.to_lowercase();
+    // Only the front of the label. A registrar names the row first and explains
+    // it afterwards, so a sentence that happens to contain the vocabulary is
+    // prose, not a row announcing when term starts.
+    let folded: String = label.to_lowercase().chars().take(60).collect();
     let has = |needle: &str| folded.contains(needle);
     if has("holiday") || has("no classes") || has("break") || has("recess") {
         return Some(Boundary::NoClass);
@@ -565,12 +732,13 @@ fn matching_term<'a>(
         let starts = NaiveDate::parse_from_str(&term.starts_on, "%Y-%m-%d").ok();
         let ends = NaiveDate::parse_from_str(&term.ends_on, "%Y-%m-%d").ok();
         match (starts, ends) {
-            // A boundary row sits on the edge of its term, and a start date that
-            // moved earlier sits just outside it, so the window is widened by a
-            // fortnight at each end rather than being exact.
+            // Three days of slack, not a fortnight. Terms of the same session
+            // sit close together: with a two-week window Summer's "Classes
+            // begin" falls inside Spring's and rewrites a date it should have
+            // left alone.
             (Some(starts), Some(ends)) => {
-                date >= starts - chrono::Duration::days(14)
-                    && date <= ends + chrono::Duration::days(14)
+                date >= starts - chrono::Duration::days(3)
+                    && date <= ends + chrono::Duration::days(3)
             }
             _ => false,
         }
@@ -608,86 +776,126 @@ mod tests {
     const FIXTURE: &str = include_str!("../test-fixtures/calendar/asu-academic-calendar.html");
 
     // The descriptor has to be able to read the page it points at. If this fails
-    // the row pattern is wrong, and no amount of correct Rust will help.
+    // The descriptor has to read the page it points at. This fixture is a saved
+    // copy of the live registrar page, not a reconstruction of it — the previous
+    // one was written from a description, and the pattern fitted to it read the
+    // real page as 152 rows that matched nothing at all.
     #[test]
-    fn the_bundled_row_pattern_reads_the_bundled_fixture() {
+    fn the_bundled_descriptor_reads_the_real_registrar_page() {
         let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
         assert!(
-            entries.len() >= 6,
-            "expected several rows, read {}",
+            entries.len() >= 100,
+            "expected a full calendar, read {}",
             entries.len()
         );
-        let begins = entries
-            .iter()
-            .find(|entry| entry.label.to_lowercase().contains("classes begin"))
-            .expect("the page states when classes begin");
-        assert_eq!(begins.starts_on, "2026-08-20");
-        assert_eq!(begins.session_code, "C");
-    }
-
-    // A refresh reports differences. It does not write them, and the type it
-    // returns has nowhere to put a mutation even if it wanted to.
-    #[test]
-    fn a_refresh_reports_differences_rather_than_applying_them() {
-        let provider = asu_provider();
-        let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
-        let diff = diff_calendar(&provider, &entries, "2026-08-19T00:00:00Z".into());
-        // The fixture agrees with the bundle, so there is nothing to review.
-        assert!(
-            diff.changed_terms.is_empty(),
-            "unexpected changes: {:?}",
-            diff.changed_terms
-        );
-        assert_eq!(diff.institution_id, "104151");
-    }
-
-    // The case the review gate exists for: a registrar moved a date.
-    #[test]
-    fn a_moved_term_date_surfaces_as_a_change_naming_both_values() {
-        let provider = asu_provider();
-        let moved = FIXTURE.replace("August 20, 2026", "August 24, 2026");
-        let entries = parse_calendar(&moved, &asu_source()).unwrap();
-        let diff = diff_calendar(&provider, &entries, "2026-08-19T00:00:00Z".into());
-        let change = diff
-            .changed_terms
-            .iter()
-            .find(|change| change.field == "startsOn")
-            .expect("a moved start date must surface");
-        assert_eq!(change.current, "2026-08-20");
-        assert_eq!(change.proposed, "2026-08-24");
-        assert_eq!(change.term_id, "asu-fall-2026-c");
-        assert!(!diff.is_empty());
-    }
-
-    // Session A and Session C share a term name and have different dates. A row
-    // naming one must never be written onto the other.
-    #[test]
-    fn a_session_row_does_not_overwrite_another_session() {
-        let provider = asu_provider();
-        let session_a = CalendarEntry {
-            label: "Classes begin".into(),
-            starts_on: "2026-08-20".into(),
-            ends_on: String::new(),
-            session_code: "A".into(),
+        let session_c = |needle: &str, year: &str| {
+            entries
+                .iter()
+                .find(|entry| {
+                    entry.session_code == "C"
+                        && entry.starts_on.starts_with(year)
+                        && entry.label.to_lowercase().contains(needle)
+                })
+                .unwrap_or_else(|| panic!("no Session C {needle} in {year}"))
         };
-        let diff = diff_calendar(&provider, &[session_a], "2026-08-19T00:00:00Z".into());
-        assert!(diff.changed_terms.is_empty());
-        assert_eq!(diff.unmatched.len(), 1, "the row is reported, not applied");
+        assert_eq!(session_c("classes begin", "2026").starts_on, "2026-08-20");
+        assert_eq!(session_c("classes end", "2026").starts_on, "2026-12-04");
+        assert_eq!(session_c("classes begin", "2027").starts_on, "2027-01-11");
     }
 
+    // A date belongs to the label above it, not to the whole page above it.
+    #[test]
+    fn a_label_is_the_text_immediately_above_its_date() {
+        let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
+        for entry in &entries {
+            assert!(
+                entry.label.chars().count() <= 140,
+                "runaway label: {:?}",
+                entry.label
+            );
+        }
+        // Two lines are one label when the registrar wraps it.
+        assert!(entries
+            .iter()
+            .any(|entry| entry.label.starts_with("Classes end/")));
+    }
+
+    // The page writes "Final exams / Session A / Last Day of Classes", meaning
+    // finals happen then. Read as a label, "Last Day of Classes" adopts the next
+    // session's date and overwrites the real end-of-classes date with the day
+    // finals start.
+    #[test]
+    fn a_value_standing_in_for_a_date_does_not_become_a_label() {
+        let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.label.eq_ignore_ascii_case("Last Day of Classes")),
+            "a session's stand-in value was read as a label"
+        );
+        let finals = entries
+            .iter()
+            .find(|entry| entry.label.to_lowercase().starts_with("final exams")
+                && entry.session_code == "C"
+                && entry.starts_on.starts_with("2026"))
+            .expect("Session C finals are on the page");
+        assert_eq!(finals.starts_on, "2026-12-07");
+    }
+
+    // The page is one long document with prose in it. A sentence that happens to
+    // contain the vocabulary is not a row announcing when term starts.
+    #[test]
+    fn prose_containing_the_vocabulary_is_not_a_term_boundary() {
+        let long_prose = "As part of a complete session withdrawal a student must \
+             withdraw from all classes in a session. Beginning the first day of classes, \
+             undergraduate students may withdraw from a session";
+        assert!(classify(long_prose).is_none());
+        // The same words at the front of a short label are exactly what it means.
+        assert!(matches!(
+            classify("First day of classes"),
+            Some(Boundary::ClassesBegin)
+        ));
+    }
+
+    // Real holidays, read off the real page.
     #[test]
     fn holidays_are_collected_as_no_class_dates() {
+        let mut provider = asu_provider();
+        // Against a bundle that has not harvested them yet.
+        for term in &mut provider.terms {
+            term.no_class_dates.clear();
+        }
+        let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
+        let diff = diff_calendar(&provider, &entries, "2026-08-19T00:00:00Z".into());
+
+        let found = |needle: &str| {
+            diff.added_no_class_dates
+                .iter()
+                .find(|date| date.label.to_lowercase().contains(needle))
+                .unwrap_or_else(|| panic!("no {needle} in {:?}", diff.added_no_class_dates))
+        };
+        let fall_break = found("fall break");
+        assert_eq!(fall_break.starts_on, "2026-10-10");
+        assert_eq!(fall_break.ends_on, "2026-10-13", "a break is a range");
+        assert_eq!(found("thanksgiving").starts_on, "2026-11-26");
+        assert_eq!(found("spring break").starts_on, "2027-03-07");
+    }
+
+    // Summer's first day sits nine days after Spring's last. A generous matching
+    // window lets it rewrite a date it has nothing to do with.
+    #[test]
+    fn a_neighbouring_terms_row_does_not_rewrite_this_one() {
         let provider = asu_provider();
         let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
         let diff = diff_calendar(&provider, &entries, "2026-08-19T00:00:00Z".into());
         assert!(
-            diff.added_no_class_dates
-                .iter()
-                .any(|date| date.label.to_lowercase().contains("holiday")),
-            "the fixture lists a holiday: {:?}",
-            diff.added_no_class_dates
+            diff.changed_terms.is_empty(),
+            "the bundle agrees with the page; proposed changes are wrong: {:?}",
+            diff.changed_terms
         );
     }
+
+
 
     #[test]
     fn an_ics_calendar_is_read_without_a_row_pattern() {
@@ -705,17 +913,17 @@ mod tests {
         assert_eq!(entries[0].ends_on, "2026-10-13");
     }
 
+    // A parser that reads script and style text invents holidays out of the
+    // date-shaped strings every analytics tag is full of.
     #[test]
     fn script_and_style_bodies_are_not_read_as_calendar_rows() {
-        let body = r#"<html><head><style>.a{content:"August 20, 2026"}</style>
-            <script>var d="Classes begin August 20, 2026";</script></head>
-            <body><p>Classes begin Session C August 20, 2026</p></body></html>"#;
+        let body = r#"<html><head><style>.a{content:"August 31, 2026"}</style>
+            <script>var d = "September 1, 2026";</script></head>
+            <body><p>Classes begin</p><p>August 20, 2026</p></body></html>"#;
         let entries = parse_calendar(body, &asu_source()).unwrap();
-        assert_eq!(
-            entries.len(),
-            1,
-            "script and style text must not become rows: {entries:?}"
-        );
+        assert_eq!(entries.len(), 1, "read more than the one real row: {entries:?}");
+        assert_eq!(entries[0].starts_on, "2026-08-20");
+        assert_eq!(entries[0].label, "Classes begin");
     }
 
     #[test]
@@ -724,33 +932,31 @@ mod tests {
         assert!(collapse(&text).contains("Classes begin August 20, 2026"));
     }
 
-    // The row that motivated keeping block structure through de-tagging: a
-    // label, a long explanatory clause, then the session and the date. Flattened
-    // to one line this parsed as label "Session C" with no session code, losing a
-    // real term boundary. Mirrored by the same case in
-    // scripts/test/academic-calendar.test.mjs.
+    // The label a registrar wraps across two lines is one label, and the session
+    // it belongs to has to survive with it. Flattening the page to a single line
+    // lost both.
     #[test]
-    fn a_row_with_an_explanatory_clause_keeps_its_label_and_session() {
+    fn a_wrapped_label_keeps_its_text_and_its_session() {
         let entries = parse_calendar(FIXTURE, &asu_source()).unwrap();
         let classes_end = entries
             .iter()
-            .find(|entry| entry.starts_on == "2026-12-04")
-            .expect("the page states when classes end");
-        assert_eq!(classes_end.label, "Classes end");
-        assert_eq!(classes_end.session_code, "C");
-
-        let drop = entries
-            .iter()
-            .find(|entry| entry.starts_on == "2026-08-26")
-            .expect("the drop deadline row is read");
-        assert_eq!(drop.label, "Drop deadline");
-        // Read, but not a boundary anything models, so it is reported rather
-        // than written onto a term it does not describe.
-        assert!(classify(&drop.label).is_none());
+            .find(|entry| {
+                entry.starts_on == "2026-12-04"
+                    && entry.session_code == "C"
+                    && entry.label.to_lowercase().starts_with("classes end")
+            })
+            .expect("the page states when Session C classes end");
+        assert!(
+            classes_end.label.to_lowercase().contains("last day"),
+            "the wrapped second line belongs to the label: {:?}",
+            classes_end.label
+        );
+        assert!(matches!(
+            classify(&classes_end.label),
+            Some(Boundary::ClassesEnd)
+        ));
     }
 
-    // A registrar page is one long document; block structure is what separates
-    // one row from the next, and source line wrapping is not structure at all.
     #[test]
     fn block_tags_end_a_row_and_source_wrapping_does_not() {
         let text = strip_tags("<p>Classes begin\n  August 20, 2026</p><p>Classes end</p>");

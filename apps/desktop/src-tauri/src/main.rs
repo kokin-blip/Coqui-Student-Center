@@ -10541,46 +10541,90 @@ mod tests {
             .is_empty());
     }
 
-    /// What the setup screen receives, pinned.
+    /// What the setup screen receives, pinned by shape rather than by value.
     ///
-    /// The descriptor carries far more than this — calendar sources, schedule
-    /// layouts, row patterns — and none of it appears here, because the
+    /// The descriptor carries far more than this — calendar sources, date
+    /// patterns, schedule layouts — and none of it may appear here; the
     /// projection is what keeps the file free to grow without changing the API.
-    /// The fields that *are* here beyond v0.9.2 were added deliberately so the
-    /// setup screen can show a student where a pre-filled date came from and how
-    /// old it is; that is a change to state on purpose, not to discover later.
+    /// Pinning the key sets rather than the whole document is deliberate: a
+    /// calendar harvest legitimately changes the dates, and a test that has to
+    /// be rewritten every time one runs stops being read.
     #[test]
     fn setup_receives_the_descriptor_projection_and_nothing_more() {
         let options = institution_setup_options_for("104151".into()).unwrap();
         let json = serde_json::to_value(&options).unwrap();
 
-        // Written out rather than derived, because deriving it from the same
-        // descriptor would pass no matter what the projection did.
-        let expected = serde_json::json!({
-            "institutionId": "104151",
-            "generatedAt": "2026-08-19",
-            "sourceLabel": "ASU University Registrar",
-            "sourceUrl": "https://registrar.asu.edu/academic-calendar",
-            "campuses": [
-                {"id":"tempe","name":"Tempe","city":"Tempe","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-                {"id":"downtown-phoenix","name":"Downtown Phoenix","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-                {"id":"west-valley","name":"West Valley","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-                {"id":"polytechnic","name":"Polytechnic","city":"Mesa","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-                {"id":"flexible","name":"Online or multiple campuses","city":"Flexible","timezone":"America/Phoenix","sourceLabel":"Student selection","sourceUrl":""}
+        let keys = |value: &serde_json::Value| {
+            let mut names: Vec<String> =
+                value.as_object().expect("an object").keys().cloned().collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            keys(&json),
+            vec![
+                "campuses".to_string(),
+                "generatedAt".into(),
+                "institutionId".into(),
+                "sourceLabel".into(),
+                "sourceUrl".into(),
+                "terms".into(),
             ],
-            "terms": [
-                {"id":"asu-fall-2026-c","name":"Fall 2026 — Session C","startsOn":"2026-08-20","endsOn":"2026-12-12","classEndsOn":"2026-12-04","examStartsOn":"2026-12-07","details":"Classes Aug 20–Dec 4 · Finals Dec 7–12","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C","noClassDates":[]},
-                {"id":"asu-spring-2027-c","name":"Spring 2027 — Session C","startsOn":"2027-01-11","endsOn":"2027-05-08","classEndsOn":"2027-04-30","examStartsOn":"2027-05-03","details":"Classes Jan 11–Apr 30 · Finals May 3–8","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C","noClassDates":[]},
-                {"id":"asu-fall-2027-c","name":"Fall 2027 — Session C","startsOn":"2027-08-19","endsOn":"2027-12-11","classEndsOn":"2027-12-03","examStartsOn":"2027-12-06","details":"Classes Aug 19–Dec 3 · Finals Dec 6–11","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C","noClassDates":[]}
+            "a descriptor field leaked into what setup receives"
+        );
+        assert_eq!(
+            keys(&json["terms"][0]),
+            vec![
+                "classEndsOn".to_string(),
+                "details".into(),
+                "endsOn".into(),
+                "examStartsOn".into(),
+                "id".into(),
+                "name".into(),
+                "noClassDates".into(),
+                "sessionCode".into(),
+                "sourceLabel".into(),
+                "sourceUrl".into(),
+                "startsOn".into(),
             ]
-        });
-        assert_eq!(json, expected);
+        );
+        assert_eq!(keys(&json["campuses"][0]).len(), 6);
+
+        // Spot values, so the projection is carrying real data and not defaults.
+        assert_eq!(json["institutionId"], "104151");
+        assert_eq!(json["terms"][0]["id"], "asu-fall-2026-c");
+        assert_eq!(json["terms"][0]["startsOn"], "2026-08-20");
+        assert_eq!(json["campuses"][0]["name"], "Tempe");
+        assert!(
+            json["generatedAt"].as_str().is_some_and(|value| !value.is_empty()),
+            "a pre-filled date has to say how old it is"
+        );
 
         // An unknown school is still an empty answer rather than an error: the
         // student types their dates in by hand and setup continues.
         let unknown = institution_setup_options_for("000000".into()).unwrap();
         assert_eq!(unknown.institution_id, "000000");
         assert!(unknown.campuses.is_empty() && unknown.terms.is_empty());
+    }
+
+    /// The holidays came off the live registrar page, not out of anyone's head.
+    /// A planner that skips a study day for a holiday the school does not
+    /// observe is wrong in the same way as one that schedules through a real one.
+    #[test]
+    fn harvested_no_class_dates_sit_inside_their_term() {
+        let options = institution_setup_options_for("104151".into()).unwrap();
+        let fall = &options.terms[0];
+        assert!(
+            !fall.no_class_dates.is_empty(),
+            "the harvest has been run against the live page"
+        );
+        for date in &fall.no_class_dates {
+            assert!(date.starts_on >= fall.starts_on && date.starts_on <= fall.ends_on);
+            if !date.ends_on.is_empty() {
+                assert!(date.ends_on > date.starts_on);
+            }
+            assert!(!date.label.trim().is_empty());
+        }
     }
 
     // The reported bug: ASU has 17 directory entries and the twelve that sorted

@@ -133,6 +133,111 @@ export function parseDate(value, format) {
 }
 
 /**
+ * Read a page that lists a label, then a date per session.
+ *
+ * This is what a registrar calendar actually looks like, and it is not a row of
+ * text per event. The label sits on its own line (sometimes two), and each
+ * session's date follows on lines of its own:
+ *
+ *     Classes end/
+ *     last day to process transactions
+ *     Session A
+ *     October 9, 2026
+ *     Session C
+ *     December 4, 2026
+ *
+ * Rows with no session put the date straight under the label. The rule covering
+ * both is that a date belongs to the nearest label above it, reached through a
+ * session marker when one intervenes — so this is a walk with state rather than
+ * a pattern matched per line.
+ *
+ * Anchoring the session and date patterns to whole lines is what keeps prose out:
+ * a summary like "Session C: Thursday, August 20–Friday, December 4, 2026" holds
+ * both a session and two dates and must not be read as an event.
+ */
+export function parseSessionCalendar(html, source) {
+  if (!source?.datePattern || !source?.dateFormat) {
+    throw new Error("this school's descriptor does not say how to read its calendar");
+  }
+  const datePattern = toJsRegex(source.datePattern);
+  const sessionPattern = source.sessionPattern ? toJsRegex(source.sessionPattern) : undefined;
+  const region = boundRegion(stripTags(html), source.sectionPattern);
+  const lines = region.split("\n");
+
+  const entries = [];
+  let labelParts = [];
+  let pendingSession = "";
+  let labelLine = -Infinity;
+
+  lines.forEach((line, index) => {
+    const session = sessionPattern?.exec(line);
+    if (session) {
+      pendingSession = session.groups?.session ?? "";
+      return;
+    }
+    const date = datePattern.exec(line);
+    if (!date) {
+      // Directly after a session marker, a line is that session's value even
+      // when it is prose. ASU writes "Final exams / Session A / Last Day of
+      // Classes", meaning finals happen then; read as a label, "Last Day of
+      // Classes" adopts the next session's date and overwrites the real one.
+      if (pendingSession) {
+        pendingSession = "";
+        return;
+      }
+      // A run of text lines is one label; "Classes end/" and the clause under it
+      // are the same event.
+      if (index - labelLine > 1) labelParts = [];
+      labelParts.push(line);
+      labelLine = index;
+      return;
+    }
+    // A label is the text immediately above its date, not everything since the
+    // last one. Without a bound, a page's whole navigation column becomes the
+    // label of the first date on it.
+    const label = labelOf(labelParts);
+    // A label too far above is not this date's label. Without this a heading
+    // near the top of the page adopts the first date it can reach.
+    if (!label || index - labelLine > 8) {
+      pendingSession = "";
+      return;
+    }
+    const { startsOn, endsOn } = assembleDates(date.groups ?? {}, source.dateFormat);
+    if (startsOn) {
+      entries.push({ label, startsOn, endsOn, sessionCode: pendingSession });
+    }
+    pendingSession = "";
+  });
+  return entries;
+}
+
+/** At most the last two lines above the date, and never a runaway. */
+function labelOf(parts) {
+  const tail = collapse(parts.slice(-2).join(" "));
+  return tail.length <= 140 ? tail : collapse(parts.slice(-1).join(" ")).slice(0, 140);
+}
+
+/**
+ * Build the dates from a matched line.
+ *
+ * A range shares what it does not repeat: "October 10–13, 2026" states the month
+ * and year once, and "August 20–October 4, 2026" states the year once. The end
+ * borrows whichever it is missing from the start rather than being parsed alone.
+ */
+function assembleDates(groups, format) {
+  const year = groups.year ?? "";
+  const start = groups.start ? `${groups.start}, ${year}`.trim() : "";
+  const startsOn = parseDate(start, format);
+  if (!startsOn) return { startsOn: "", endsOn: "" };
+  let endsOn = "";
+  if (groups.end) {
+    const month = /^[A-Za-z]/.test(groups.end) ? "" : `${groups.start.split(/\s+/)[0]} `;
+    endsOn = parseDate(`${month}${groups.end}, ${year}`.trim(), format);
+  }
+  return { startsOn, endsOn: endsOn && endsOn > startsOn ? endsOn : "" };
+}
+
+/**
  * Apply the descriptor's row pattern to a fetched page.
  *
  * Rust's regex crate spells named groups `(?P<name>)`; JavaScript spells them
@@ -176,7 +281,11 @@ function boundRegion(text, sectionPattern) {
  * rows, which a descriptor edit can fix.
  */
 export function classify(label) {
-  const folded = label.toLowerCase();
+  // Only the front of the label. A registrar names the row first and explains it
+  // afterwards, so a sentence like "…a student must withdraw from all classes in
+  // a session. Beginning the first day of classes…" is prose that happens to
+  // contain the vocabulary, not a row announcing when term starts.
+  const folded = label.toLowerCase().slice(0, 60);
   const has = (needle) => folded.includes(needle);
   if (has("holiday") || has("no classes") || has("break") || has("recess")) return "noClass";
   if (has("final") && (has("begin") || has("start"))) return "examStartsOn";

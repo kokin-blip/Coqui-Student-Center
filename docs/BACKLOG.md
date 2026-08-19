@@ -35,10 +35,10 @@ The refresh returns a diff and never writes; a changed term date surfaces as an
 explicit conflict. `calendar:verify` runs in CI and the release lane beside
 `catalog:verify`.
 
-**noClassDates are still empty for ASU.** The parser handles them and the fixture
-exercises them, but nobody has run `calendar:prepare` against the live registrar
-page, and holidays invented to make a fixture pass are exactly the guess this app
-refuses to make. Running it once is the remaining work.
+**noClassDates are harvested.** `calendar:prepare` has been run against the live
+registrar page: six real no-class dates across three terms, and every term
+boundary the page states already agreed with the bundle. Re-run it when ASU
+publishes a new academic year.
 
 **State.** 133 courses, 381 sections, 45 subject codes, Fall 2026 only. That is
 four General Studies categories (HUAD, GCSI, CIVI, AMIT) plus CSE 240 — whatever
@@ -220,14 +220,36 @@ depend on a Tesseract build and on that build's version-to-version drift, for a
 property the reader does not own. TSVs captured from real screenshots drop in
 without touching the tests, and are worth adding when a Tesseract build is at hand.
 
-**Registrar calendars are read with a row pattern, not a CSS selector.** ASU's
-academic calendar is a run of headings and bolded labels rather than a table, so
-selecting a node buys nothing, and registrar pages are frequently not well-formed
-besides. A named-group regex over de-tagged text states the rule as descriptor
-data and keeps an HTML parser out of the binary. The one structural thing that
-does survive de-tagging is block boundaries, and it has to: flattened to a single
-line, a row like "Classes end—last day to process transactions. Session C December
-4, 2026" loses its label entirely.
+**Registrar calendars are read with patterns, not a CSS selector.** Registrar
+pages are frequently not tables and frequently not well-formed, so selecting a
+node buys less than an HTML parser in the binary costs. The rules live in the
+descriptor instead.
+
+ASU's page turned out to be a *label followed by one date per session*, each on
+its own line, which is why `html-sessions` exists as a kind of its own. Three
+things about that shape are not obvious and each caused a wrong answer before it
+was handled:
+
+- A line sitting where a date should be is that session's **value**, not a new
+  label. The page writes "Final exams / Session A / Last Day of Classes"; read as
+  a label, "Last Day of Classes" adopts the next session's date and overwrites
+  the real end-of-classes date with the day finals start.
+- A label is the text **immediately** above its date. Unbounded, the whole
+  navigation column becomes the label of the first date on the page.
+- Boundary vocabulary is matched only at the **front** of a label. A registrar
+  names a row first and explains it afterwards, so a sentence containing "the
+  first day of classes" is prose, not an announcement of when term starts.
+
+**Fixtures for network sources are saved copies, never reconstructions.** The
+first calendar fixture was written from a description of ASU's page rather than
+from the page. Everything passed, and the pattern fitted to it read the real
+thing as 152 rows matching nothing at all — while reporting "no differences",
+which is exactly what a working refresh also reports. A parser for a page you
+have not saved is a parser for a page that does not exist.
+
+**Reading rows and matching none of them is an error, not a quiet success.**
+Both states otherwise print the same reassuring output. `calendar:prepare` now
+exits non-zero when it reads dated rows and matches none to a term boundary.
 
 **Sync still requires Supabase**, for auth (`createSupabaseAccessTokenVerifier`)
 and for the row-level policies that use `auth.uid()`. The `SyncRepository`

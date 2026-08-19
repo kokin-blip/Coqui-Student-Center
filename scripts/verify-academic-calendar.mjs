@@ -16,7 +16,7 @@ import { toJsRegex } from "./calendar/registrar-page.mjs";
  */
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const CALENDAR_KINDS = new Set(["ics", "html-table", "html-list"]);
+const CALENDAR_KINDS = new Set(["ics", "html-table", "html-list", "html-sessions"]);
 const CATALOG_KINDS = new Set(["none", "ics", "html-table", "student-export"]);
 const SHAPES = new Set(["grid", "list"]);
 const CURRENT_SCHEMA_VERSION = 1;
@@ -99,9 +99,26 @@ export function verifyCalendars({ providers, institutionIds }) {
       if (!CALENDAR_KINDS.has(calendar.kind)) problems.push(`${where} has an unknown calendar kind ${calendar.kind}`);
       if (calendar.kind === "html-table" || calendar.kind === "html-list") {
         if (!calendar.rowPattern) problems.push(`${where} reads HTML but declares no rowPattern`);
-        if (!calendar.dateFormat) problems.push(`${where} reads HTML but declares no dateFormat`);
       }
-      for (const [field, pattern] of [["rowPattern", calendar.rowPattern], ["sectionPattern", calendar.sectionPattern]]) {
+      if (calendar.kind === "html-sessions") {
+        // This shape finds dates first and reaches back for their label, so a
+        // date pattern is what it cannot work without.
+        if (!calendar.datePattern) problems.push(`${where} reads sessions but declares no datePattern`);
+        for (const group of ["start", "year"]) {
+          if (calendar.datePattern && !calendar.datePattern.includes(`(?P<${group}>`)) {
+            problems.push(`${where} datePattern has no named ${group} group`);
+          }
+        }
+      }
+      if (calendar.kind !== "ics" && !calendar.dateFormat) {
+        problems.push(`${where} reads HTML but declares no dateFormat`);
+      }
+      for (const [field, pattern] of [
+        ["rowPattern", calendar.rowPattern],
+        ["datePattern", calendar.datePattern],
+        ["sessionPattern", calendar.sessionPattern],
+        ["sectionPattern", calendar.sectionPattern],
+      ]) {
         if (!pattern) continue;
         try {
           // Rust's regex crate and JavaScript disagree on spelling, but a
@@ -113,9 +130,9 @@ export function verifyCalendars({ providers, institutionIds }) {
       }
       // A row pattern with no label or start group parses every page to nothing,
       // and "no changes found" is exactly what a working refresh also reports.
-      if (calendar.rowPattern) {
+      if (calendar.kind === "html-table" || calendar.kind === "html-list") {
         for (const group of ["label", "start"]) {
-          if (!calendar.rowPattern.includes(`(?P<${group}>`)) {
+          if (!(calendar.rowPattern ?? "").includes(`(?P<${group}>`)) {
             problems.push(`${where} rowPattern has no named ${group} group`);
           }
         }

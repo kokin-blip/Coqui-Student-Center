@@ -63,7 +63,7 @@ export const TermDescriptor = z.object({
 }).strict();
 export type TermDescriptor = z.infer<typeof TermDescriptor>;
 
-export const CalendarSourceKind = z.enum(["ics", "html-table", "html-list"]);
+export const CalendarSourceKind = z.enum(["ics", "html-table", "html-list", "html-sessions"]);
 export type CalendarSourceKind = z.infer<typeof CalendarSourceKind>;
 
 /**
@@ -85,6 +85,14 @@ export const CalendarSource = z.object({
   dateFormat: z.string().trim().max(100).default(""),
   /** Regex with named groups `label`, `start` and optionally `end`. */
   rowPattern: z.string().trim().max(500).default(""),
+  /**
+   * For `html-sessions`: a whole line holding a date, with named groups `start`,
+   * `year` and optionally `end`. A range states what it does not repeat, so
+   * `end` borrows the month and year it is missing from `start`.
+   */
+  datePattern: z.string().trim().max(500).default(""),
+  /** For `html-sessions`: a whole line naming a session, capturing `session`. */
+  sessionPattern: z.string().trim().max(500).default(""),
 }).strict();
 export type CalendarSource = z.infer<typeof CalendarSource>;
 

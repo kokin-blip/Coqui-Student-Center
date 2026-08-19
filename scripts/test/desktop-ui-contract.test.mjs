@@ -185,6 +185,11 @@ test("school setup uses sourced ASU campuses and registrar dates", () => {
     // Two sessions of one term end on different days, so the registrar's own
     // session letter is what tells "Fall 2026 — Session C" from Session A.
     sessionCode: "C",
+    // Harvested from the live registrar page, not invented to fill the field.
+    noClassDates: [
+      { startsOn: "2026-10-10", endsOn: "2026-10-13", label: "Fall break Classes excused/University open" },
+      { startsOn: "2026-11-26", endsOn: "2026-11-27", label: "Thanksgiving holiday observed Classes excused/University closed" },
+    ],
   });
   assert.match(onboarding, /No verified calendar connected yet/);
   assert.match(onboarding, /Coqui will not guess them/);
@@ -199,12 +204,14 @@ test("the school descriptor states its sources as data rather than in code", () 
   const asu = institutionProviders.find((provider) => provider.institutionId === "104151");
   assert.equal(asu.schemaVersion, 1);
   assert.equal(asu.calendarSource.url, "https://registrar.asu.edu/academic-calendar");
-  // The registrar page is a run of headings and bolded labels, not a table.
-  assert.equal(asu.calendarSource.kind, "html-list");
+  // The registrar page lists a label and then a date per session, each on its
+  // own line. It is not a table and not one row of text per event.
+  assert.equal(asu.calendarSource.kind, "html-sessions");
   // How to read it is data too. Without these the app knows the address of a
   // page it cannot make any sense of.
-  assert.ok(asu.calendarSource.rowPattern.includes("(?P<label>"));
-  assert.ok(asu.calendarSource.rowPattern.includes("(?P<start>"));
+  assert.ok(asu.calendarSource.datePattern.includes("(?P<start>"));
+  assert.ok(asu.calendarSource.datePattern.includes("(?P<year>"));
+  assert.ok(asu.calendarSource.sessionPattern.includes("(?P<session>"));
   assert.ok(asu.calendarSource.dateFormat);
 
   // ASU's class search answers 401 anonymously and authenticates through

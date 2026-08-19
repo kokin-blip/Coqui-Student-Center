@@ -6,23 +6,127 @@
     "sourceLabel": "ASU University Registrar",
     "sourceUrl": "https://registrar.asu.edu/academic-calendar",
     "campuses": [
-      {"id":"tempe","name":"Tempe","city":"Tempe","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-      {"id":"downtown-phoenix","name":"Downtown Phoenix","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-      {"id":"west-valley","name":"West Valley","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-      {"id":"polytechnic","name":"Polytechnic","city":"Mesa","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
-      {"id":"flexible","name":"Online or multiple campuses","city":"Flexible","timezone":"America/Phoenix","sourceLabel":"Student selection","sourceUrl":""}
+      {
+        "id": "tempe",
+        "name": "Tempe",
+        "city": "Tempe",
+        "timezone": "America/Phoenix",
+        "sourceLabel": "ASU Campuses and Locations",
+        "sourceUrl": "https://campus.asu.edu/"
+      },
+      {
+        "id": "downtown-phoenix",
+        "name": "Downtown Phoenix",
+        "city": "Phoenix",
+        "timezone": "America/Phoenix",
+        "sourceLabel": "ASU Campuses and Locations",
+        "sourceUrl": "https://campus.asu.edu/"
+      },
+      {
+        "id": "west-valley",
+        "name": "West Valley",
+        "city": "Phoenix",
+        "timezone": "America/Phoenix",
+        "sourceLabel": "ASU Campuses and Locations",
+        "sourceUrl": "https://campus.asu.edu/"
+      },
+      {
+        "id": "polytechnic",
+        "name": "Polytechnic",
+        "city": "Mesa",
+        "timezone": "America/Phoenix",
+        "sourceLabel": "ASU Campuses and Locations",
+        "sourceUrl": "https://campus.asu.edu/"
+      },
+      {
+        "id": "flexible",
+        "name": "Online or multiple campuses",
+        "city": "Flexible",
+        "timezone": "America/Phoenix",
+        "sourceLabel": "Student selection",
+        "sourceUrl": ""
+      }
     ],
     "terms": [
-      {"id":"asu-fall-2026-c","name":"Fall 2026 — Session C","startsOn":"2026-08-20","endsOn":"2026-12-12","classEndsOn":"2026-12-04","examStartsOn":"2026-12-07","details":"Classes Aug 20–Dec 4 · Finals Dec 7–12","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C"},
-      {"id":"asu-spring-2027-c","name":"Spring 2027 — Session C","startsOn":"2027-01-11","endsOn":"2027-05-08","classEndsOn":"2027-04-30","examStartsOn":"2027-05-03","details":"Classes Jan 11–Apr 30 · Finals May 3–8","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C"},
-      {"id":"asu-fall-2027-c","name":"Fall 2027 — Session C","startsOn":"2027-08-19","endsOn":"2027-12-11","classEndsOn":"2027-12-03","examStartsOn":"2027-12-06","details":"Classes Aug 19–Dec 3 · Finals Dec 6–11","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C"}
+      {
+        "id": "asu-fall-2026-c",
+        "name": "Fall 2026 — Session C",
+        "startsOn": "2026-08-20",
+        "endsOn": "2026-12-12",
+        "classEndsOn": "2026-12-04",
+        "examStartsOn": "2026-12-07",
+        "details": "Classes Aug 20–Dec 4 · Finals Dec 7–12",
+        "sourceLabel": "ASU University Registrar",
+        "sourceUrl": "https://registrar.asu.edu/academic-calendar",
+        "sessionCode": "C",
+        "noClassDates": [
+          {
+            "startsOn": "2026-10-10",
+            "endsOn": "2026-10-13",
+            "label": "Fall break Classes excused/University open"
+          },
+          {
+            "startsOn": "2026-11-26",
+            "endsOn": "2026-11-27",
+            "label": "Thanksgiving holiday observed Classes excused/University closed"
+          }
+        ]
+      },
+      {
+        "id": "asu-spring-2027-c",
+        "name": "Spring 2027 — Session C",
+        "startsOn": "2027-01-11",
+        "endsOn": "2027-05-08",
+        "classEndsOn": "2027-04-30",
+        "examStartsOn": "2027-05-03",
+        "details": "Classes Jan 11–Apr 30 · Finals May 3–8",
+        "sourceLabel": "ASU University Registrar",
+        "sourceUrl": "https://registrar.asu.edu/academic-calendar",
+        "sessionCode": "C",
+        "noClassDates": [
+          {
+            "startsOn": "2027-01-18",
+            "endsOn": "",
+            "label": "Martin Luther King Jr. holiday observed Classes excused/University closed"
+          },
+          {
+            "startsOn": "2027-03-07",
+            "endsOn": "2027-03-14",
+            "label": "Spring break Classes excused/University open"
+          }
+        ]
+      },
+      {
+        "id": "asu-fall-2027-c",
+        "name": "Fall 2027 — Session C",
+        "startsOn": "2027-08-19",
+        "endsOn": "2027-12-11",
+        "classEndsOn": "2027-12-03",
+        "examStartsOn": "2027-12-06",
+        "details": "Classes Aug 19–Dec 3 · Finals Dec 6–11",
+        "sourceLabel": "ASU University Registrar",
+        "sourceUrl": "https://registrar.asu.edu/academic-calendar",
+        "sessionCode": "C",
+        "noClassDates": [
+          {
+            "startsOn": "2027-10-09",
+            "endsOn": "2027-10-12",
+            "label": "Fall Break Classes excused/University open"
+          },
+          {
+            "startsOn": "2027-11-25",
+            "endsOn": "2027-11-26",
+            "label": "Thanksgiving Holiday Observed Classes excused/University closed"
+          }
+        ]
+      }
     ],
     "calendarSource": {
       "url": "https://registrar.asu.edu/academic-calendar",
-      "kind": "html-list",
-      "sectionPattern": "Academic Calendar",
+      "kind": "html-sessions",
       "dateFormat": "%B %-d, %Y",
-      "rowPattern": "(?m)^\\s*(?P<label>[A-Z][A-Za-z][A-Za-z /'’-]{1,60}?)\\s*(?:[—–][^\\n]*?)?\\s*(?:Session\\s+(?P<session>[A-Z])\\s+)?(?P<start>[A-Z][a-z]{2,8} \\d{1,2}, \\d{4})(?:\\s*[–—-]\\s*(?P<end>[A-Z][a-z]{2,8} \\d{1,2}, \\d{4}))?"
+      "sessionPattern": "^Session (?P<session>[A-Z])$",
+      "datePattern": "^(?P<start>[A-Z][a-z]+ \\d{1,2})(?:[–—-](?P<end>(?:[A-Z][a-z]+ )?\\d{1,2}))?, (?P<year>\\d{4})$"
     },
     "catalogSource": {
       "kind": "none",
@@ -35,15 +139,79 @@
         "shape": "list",
         "timeFormat": "hour12",
         "weekdayTokens": [
-          {"weekday":0,"tokens":["su","sun","sunday"]},
-          {"weekday":1,"tokens":["m","mo","mon","monday"]},
-          {"weekday":2,"tokens":["t","tu","tue","tues","tuesday"]},
-          {"weekday":3,"tokens":["w","we","wed","wednesday"]},
-          {"weekday":4,"tokens":["th","thu","thur","thurs","thursday"]},
-          {"weekday":5,"tokens":["f","fr","fri","friday"]},
-          {"weekday":6,"tokens":["sa","sat","saturday"]}
+          {
+            "weekday": 0,
+            "tokens": [
+              "su",
+              "sun",
+              "sunday"
+            ]
+          },
+          {
+            "weekday": 1,
+            "tokens": [
+              "m",
+              "mo",
+              "mon",
+              "monday"
+            ]
+          },
+          {
+            "weekday": 2,
+            "tokens": [
+              "t",
+              "tu",
+              "tue",
+              "tues",
+              "tuesday"
+            ]
+          },
+          {
+            "weekday": 3,
+            "tokens": [
+              "w",
+              "we",
+              "wed",
+              "wednesday"
+            ]
+          },
+          {
+            "weekday": 4,
+            "tokens": [
+              "th",
+              "thu",
+              "thur",
+              "thurs",
+              "thursday"
+            ]
+          },
+          {
+            "weekday": 5,
+            "tokens": [
+              "f",
+              "fr",
+              "fri",
+              "friday"
+            ]
+          },
+          {
+            "weekday": 6,
+            "tokens": [
+              "sa",
+              "sat",
+              "saturday"
+            ]
+          }
         ],
-        "columns": ["title","section-number","instructor","days","start-time","end-time","location"]
+        "columns": [
+          "title",
+          "section-number",
+          "instructor",
+          "days",
+          "start-time",
+          "end-time",
+          "location"
+        ]
       },
       {
         "id": "week-grid",
@@ -52,13 +220,69 @@
         "orientation": "day-major",
         "timeFormat": "hour12",
         "weekdayTokens": [
-          {"weekday":0,"tokens":["su","sun","sunday"]},
-          {"weekday":1,"tokens":["m","mo","mon","monday"]},
-          {"weekday":2,"tokens":["t","tu","tue","tues","tuesday"]},
-          {"weekday":3,"tokens":["w","we","wed","wednesday"]},
-          {"weekday":4,"tokens":["th","thu","thur","thurs","thursday"]},
-          {"weekday":5,"tokens":["f","fr","fri","friday"]},
-          {"weekday":6,"tokens":["sa","sat","saturday"]}
+          {
+            "weekday": 0,
+            "tokens": [
+              "su",
+              "sun",
+              "sunday"
+            ]
+          },
+          {
+            "weekday": 1,
+            "tokens": [
+              "m",
+              "mo",
+              "mon",
+              "monday"
+            ]
+          },
+          {
+            "weekday": 2,
+            "tokens": [
+              "t",
+              "tu",
+              "tue",
+              "tues",
+              "tuesday"
+            ]
+          },
+          {
+            "weekday": 3,
+            "tokens": [
+              "w",
+              "we",
+              "wed",
+              "wednesday"
+            ]
+          },
+          {
+            "weekday": 4,
+            "tokens": [
+              "th",
+              "thu",
+              "thur",
+              "thurs",
+              "thursday"
+            ]
+          },
+          {
+            "weekday": 5,
+            "tokens": [
+              "f",
+              "fr",
+              "fri",
+              "friday"
+            ]
+          },
+          {
+            "weekday": 6,
+            "tokens": [
+              "sa",
+              "sat",
+              "saturday"
+            ]
+          }
         ]
       }
     ]
