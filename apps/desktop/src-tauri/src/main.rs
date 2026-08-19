@@ -10,6 +10,7 @@ mod pdf_renderer;
 mod pin;
 mod planner;
 mod profile;
+mod school_provider;
 mod sync_crypto;
 mod sync_transport;
 
@@ -24,6 +25,7 @@ use chrono_tz::Tz;
 use imports::{ExtractedCandidate, OcrRuntime, OcrStatus};
 use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
+use school_provider::SchoolProvider;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -2620,8 +2622,7 @@ fn get_timezone_suggestion(state: tauri::State<AppState>) -> Result<TimezoneSugg
 // The bundled directory is 6,243 entries. Parsing it per keystroke dominated the
 // school search, so both bundled resources are deserialized once per process.
 static INSTITUTION_DIRECTORY: OnceLock<Option<Vec<InstitutionDirectoryEntry>>> = OnceLock::new();
-static INSTITUTION_SETUP_PROVIDERS: OnceLock<Option<Vec<InstitutionSetupOptions>>> =
-    OnceLock::new();
+static INSTITUTION_SETUP_PROVIDERS: OnceLock<Option<Vec<SchoolProvider>>> = OnceLock::new();
 static INSTITUTION_CATALOGS: OnceLock<Option<Vec<InstitutionCatalog>>> = OnceLock::new();
 
 /// Course lists for the schools that have one, keyed by institution.
@@ -2654,7 +2655,7 @@ fn institution_directory() -> Result<&'static [InstitutionDirectoryEntry]> {
         .ok_or_else(|| AppError::Invalid("bundled institution directory is invalid".into()))
 }
 
-fn institution_setup_providers() -> Result<&'static [InstitutionSetupOptions]> {
+fn institution_setup_providers() -> Result<&'static [SchoolProvider]> {
     INSTITUTION_SETUP_PROVIDERS
         .get_or_init(|| {
             serde_json::from_str(include_str!(
@@ -2709,8 +2710,8 @@ fn institution_acronym(name: &str) -> String {
 fn score_institution(
     entry: &InstitutionDirectoryEntry,
     needle: &str,
-    campuses: &[InstitutionCampusOption],
-) -> Option<(i32, Option<InstitutionCampusOption>)> {
+    campuses: &[school_provider::CampusDescriptor],
+) -> Option<(i32, Option<school_provider::CampusDescriptor>)> {
     if needle.is_empty() {
         return Some((0, None));
     }
@@ -2980,12 +2981,52 @@ fn search_course_suggestions(
     Ok(results)
 }
 
+/// Project a bundled descriptor down to what the setup screen reads.
+///
+/// The descriptor is the richer of the two on purpose: it carries the calendar
+/// and catalog sources, the schedule layouts, and per-term session codes and
+/// no-class dates, none of which the setup screen asks for. Keeping the wire
+/// type narrow is what lets the descriptor grow without changing this command's
+/// output.
+fn setup_options_from(provider: &SchoolProvider) -> InstitutionSetupOptions {
+    InstitutionSetupOptions {
+        institution_id: provider.institution_id.clone(),
+        campuses: provider
+            .campuses
+            .iter()
+            .map(|campus| InstitutionCampusOption {
+                id: campus.id.clone(),
+                name: campus.name.clone(),
+                city: campus.city.clone(),
+                timezone: campus.timezone.clone(),
+                source_label: campus.source_label.clone(),
+                source_url: campus.source_url.clone(),
+            })
+            .collect(),
+        terms: provider
+            .terms
+            .iter()
+            .map(|term| AcademicTermPreset {
+                id: term.id.clone(),
+                name: term.name.clone(),
+                starts_on: term.starts_on.clone(),
+                ends_on: term.ends_on.clone(),
+                class_ends_on: term.class_ends_on.clone(),
+                exam_starts_on: term.exam_starts_on.clone(),
+                details: term.details.clone(),
+                source_label: term.source_label.clone(),
+                source_url: term.source_url.clone(),
+            })
+            .collect(),
+    }
+}
+
 fn institution_setup_options_for(institution_id: String) -> Result<InstitutionSetupOptions> {
     let providers = institution_setup_providers()?;
     Ok(providers
         .iter()
         .find(|provider| provider.institution_id == institution_id)
-        .cloned()
+        .map(setup_options_from)
         .unwrap_or(InstitutionSetupOptions {
             institution_id,
             ..InstitutionSetupOptions::default()
@@ -9883,7 +9924,7 @@ mod tests {
 
     #[test]
     fn institution_setup_provider_has_sourced_asu_campuses_and_dates() {
-        let providers: Vec<InstitutionSetupOptions> = serde_json::from_str(include_str!(
+        let providers: Vec<SchoolProvider> = serde_json::from_str(include_str!(
             "../resources/institution-setup-providers.json"
         ))
         .unwrap();
@@ -9906,6 +9947,53 @@ mod tests {
         assert!(asu.terms[0]
             .source_url
             .starts_with("https://registrar.asu.edu/"));
+
+        // ASU's class search sits behind weblogin, so the honest descriptor says
+        // there is no readable catalog. That has to stay a supported state: the
+        // screenshot path is what covers it, and the UI must not read as broken.
+        assert!(!asu.has_readable_catalog());
+        assert!(!asu
+            .catalog_source
+            .as_ref()
+            .expect("the reason for having no catalog is worth stating")
+            .note
+            .is_empty());
+    }
+
+    /// The descriptor grew calendar sources, schedule layouts, session codes and
+    /// no-class dates. None of that is anything the setup screen asked for, so
+    /// what it receives must be exactly what it received at 0.9.2 — otherwise
+    /// "migrate the file" quietly became "change the API".
+    #[test]
+    fn widening_the_descriptor_did_not_change_what_setup_receives() {
+        let options = institution_setup_options_for("104151".into()).unwrap();
+        let json = serde_json::to_value(&options).unwrap();
+
+        // Pinned from v0.9.2. Written out rather than derived, because deriving
+        // it from the same descriptor would pass no matter what the projection
+        // did.
+        let expected = serde_json::json!({
+            "institutionId": "104151",
+            "campuses": [
+                {"id":"tempe","name":"Tempe","city":"Tempe","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+                {"id":"downtown-phoenix","name":"Downtown Phoenix","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+                {"id":"west-valley","name":"West Valley","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+                {"id":"polytechnic","name":"Polytechnic","city":"Mesa","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
+                {"id":"flexible","name":"Online or multiple campuses","city":"Flexible","timezone":"America/Phoenix","sourceLabel":"Student selection","sourceUrl":""}
+            ],
+            "terms": [
+                {"id":"asu-fall-2026-c","name":"Fall 2026 — Session C","startsOn":"2026-08-20","endsOn":"2026-12-12","classEndsOn":"2026-12-04","examStartsOn":"2026-12-07","details":"Classes Aug 20–Dec 4 · Finals Dec 7–12","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"},
+                {"id":"asu-spring-2027-c","name":"Spring 2027 — Session C","startsOn":"2027-01-11","endsOn":"2027-05-08","classEndsOn":"2027-04-30","examStartsOn":"2027-05-03","details":"Classes Jan 11–Apr 30 · Finals May 3–8","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"},
+                {"id":"asu-fall-2027-c","name":"Fall 2027 — Session C","startsOn":"2027-08-19","endsOn":"2027-12-11","classEndsOn":"2027-12-03","examStartsOn":"2027-12-06","details":"Classes Aug 19–Dec 3 · Finals Dec 6–11","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"}
+            ]
+        });
+        assert_eq!(json, expected);
+
+        // An unknown school is still an empty answer rather than an error: the
+        // student types their dates in by hand and setup continues.
+        let unknown = institution_setup_options_for("000000".into()).unwrap();
+        assert_eq!(unknown.institution_id, "000000");
+        assert!(unknown.campuses.is_empty() && unknown.terms.is_empty());
     }
 
     // The reported bug: ASU has 17 directory entries and the twelve that sorted

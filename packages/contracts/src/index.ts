@@ -94,3 +94,8 @@ export const AiStructureResult = z.object({
 export type AiStructureRequest = z.infer<typeof AiStructureRequest>;
 export type AiCandidate = z.infer<typeof AiCandidate>;
 export type AiStructureResult = z.infer<typeof AiStructureResult>;
+
+// The bundled school descriptor. Kept in its own module because it mirrors a
+// resource file rather than a wire format, and because the Rust side is a
+// separate module for the same reason.
+export * from "./school-provider.js";

@@ -182,10 +182,45 @@ test("school setup uses sourced ASU campuses and registrar dates", () => {
     details: "Classes Aug 20–Dec 4 · Finals Dec 7–12",
     sourceLabel: "ASU University Registrar",
     sourceUrl: "https://registrar.asu.edu/academic-calendar",
+    // Two sessions of one term end on different days, so the registrar's own
+    // session letter is what tells "Fall 2026 — Session C" from Session A.
+    sessionCode: "C",
   });
   assert.match(onboarding, /No verified calendar connected yet/);
   assert.match(onboarding, /Coqui will not guess them/);
   assert.doesNotMatch(onboarding, />Fall semester</);
+});
+
+// The descriptor is the whole reason no school gets a code branch: where the
+// calendar lives, whether a catalog is readable, and what a weekday header looks
+// like are all data. A descriptor that stopped carrying them would push that
+// knowledge back into Rust without anything failing.
+test("the school descriptor states its sources as data rather than in code", () => {
+  const asu = institutionProviders.find((provider) => provider.institutionId === "104151");
+  assert.equal(asu.schemaVersion, 1);
+  assert.equal(asu.calendarSource.url, "https://registrar.asu.edu/academic-calendar");
+  assert.equal(asu.calendarSource.kind, "html-table");
+
+  // ASU's class search answers 401 anonymously and authenticates through
+  // weblogin. "none" is the honest answer and has to stay a supported state.
+  assert.equal(asu.catalogSource.kind, "none");
+  assert.match(asu.catalogSource.note, /weblogin|access control/i);
+
+  const layouts = asu.scheduleLayouts;
+  assert.ok(layouts.length > 0, "the screenshot reader learns layouts from here");
+  for (const layout of layouts) {
+    assert.ok(["grid", "list"].includes(layout.shape));
+    const weekdays = layout.weekdayTokens.map((entry) => entry.weekday);
+    assert.deepEqual(weekdays, [0, 1, 2, 3, 4, 5, 6], "0 = Sunday, one entry each");
+    // "Th" has to win over "T" or Thursday parses as Tuesday plus a stray h.
+    const thursday = layout.weekdayTokens.find((entry) => entry.weekday === 4);
+    assert.ok(thursday.tokens.includes("th"));
+    for (const entry of layout.weekdayTokens) {
+      for (const token of entry.tokens) {
+        assert.equal(token, token.toLowerCase(), "the reader lowercases before matching");
+      }
+    }
+  }
 });
 
 test("browser test mode mocks local mutations without becoming a product site", () => {
