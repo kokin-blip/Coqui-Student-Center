@@ -965,6 +965,7 @@ fn backfill_legacy_canvas_links(conn: &Connection) -> Result<()> {
             source_uid: candidate.source_uid,
             confidence: 1.0,
             warnings: Vec::new(),
+            ..Default::default()
         };
         candidate_conflict(conn, &candidate.id, &extracted)?;
         let structured_exists = conn.query_row(
@@ -5678,6 +5679,10 @@ fn extracted_canvas_candidate(
         source_uid: format!("canvas:{connection_id}:{}", candidate.source_uid),
         confidence: candidate.confidence,
         warnings: candidate.warnings.clone(),
+        // Canvas expands recurrences server-side, so its calendar events arrive
+        // as individual dated occurrences with no rule to read. There is no
+        // weekly pattern to carry here without inferring one.
+        ..Default::default()
     }
 }
 

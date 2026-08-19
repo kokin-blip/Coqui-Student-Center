@@ -1,5 +1,5 @@
 use calamine::{open_workbook_auto, Data, DataType, Reader};
-use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use ical::{parser::ical::component::IcalEvent, property::Property, IcalParser};
 use quick_xml::{events::Event, Reader as XmlReader};
@@ -399,7 +399,7 @@ pub struct Segment {
     pub confidence: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ExtractedCandidate {
     pub kind: String,
     pub title: String,
@@ -413,6 +413,13 @@ pub struct ExtractedCandidate {
     pub source_uid: String,
     pub confidence: f64,
     pub warnings: Vec<String>,
+    /// Set only on `class_meeting` candidates. A class is a weekly pattern, not
+    /// a list of dates, so it carries weekdays and a local clock rather than the
+    /// single instant every other candidate kind describes.
+    pub weekdays: Vec<i64>,
+    pub starts_at_local: String,
+    pub ends_at_local: String,
+    pub timezone: String,
 }
 
 #[derive(Debug)]
@@ -814,6 +821,7 @@ fn candidate_from_row(
         source_uid: format!("row:{}:{}", source, locator),
         confidence: if warnings.is_empty() { 0.98 } else { 0.65 },
         warnings,
+        ..Default::default()
     })
 }
 
@@ -842,6 +850,67 @@ fn extract_ics_at(
         ));
     }
     Ok(candidates)
+}
+
+/// Weekdays for a plain weekly rule, or None when the rule is anything else.
+///
+/// Deliberately narrow. A class is `FREQ=WEEKLY` every week on fixed days;
+/// anything with an interval, a positional selector, or a non-weekly frequency
+/// is not a weekly pattern this can honestly represent, and modelling it as one
+/// would silently invent a schedule. Those keep expanding into commitments.
+fn weekly_pattern(
+    rule: &str,
+    starts_at: DateTime<Utc>,
+    tzid: Option<&str>,
+    fallback_tz: Tz,
+) -> Option<Vec<i64>> {
+    let mut frequency_is_weekly = false;
+    let mut byday: Option<Vec<i64>> = None;
+    for part in rule.split(';') {
+        let (name, value) = part.split_once('=')?;
+        match name.trim().to_ascii_uppercase().as_str() {
+            "FREQ" => frequency_is_weekly = value.trim().eq_ignore_ascii_case("WEEKLY"),
+            // INTERVAL=1 is the default and harmless; anything else is not weekly.
+            "INTERVAL" if value.trim() != "1" => return None,
+            "BYSETPOS" | "BYMONTHDAY" | "BYYEARDAY" | "BYWEEKNO" | "BYMONTH" => return None,
+            "BYDAY" => {
+                let mut days = Vec::new();
+                for token in value.split(',') {
+                    let token = token.trim().to_ascii_uppercase();
+                    // A prefixed ordinal ("2MO") selects one week of the month.
+                    if token.len() != 2 {
+                        return None;
+                    }
+                    days.push(match token.as_str() {
+                        "SU" => 0,
+                        "MO" => 1,
+                        "TU" => 2,
+                        "WE" => 3,
+                        "TH" => 4,
+                        "FR" => 5,
+                        "SA" => 6,
+                        _ => return None,
+                    });
+                }
+                days.sort_unstable();
+                days.dedup();
+                byday = Some(days);
+            }
+            _ => {}
+        }
+    }
+    if !frequency_is_weekly {
+        return None;
+    }
+    // Without BYDAY a weekly rule repeats on the start date's own weekday, read
+    // in the event's timezone rather than UTC so a late-evening class does not
+    // land on the following day.
+    Some(byday.unwrap_or_else(|| {
+        let tz = tzid
+            .and_then(|value| value.parse::<Tz>().ok())
+            .unwrap_or(fallback_tz);
+        vec![starts_at.with_timezone(&tz).weekday().num_days_from_sunday() as i64]
+    }))
 }
 
 fn candidates_from_event(
@@ -881,6 +950,41 @@ fn candidates_from_event(
         .flat_map(|value| value.split(','))
         .filter_map(|value| parse_ical_datetime(value, tzid, fallback_tz).ok())
         .collect::<HashSet<_>>();
+
+    // A weekly rule describes a class, and the app already has the right record
+    // for that: one class_meeting_series with weekdays and a local clock.
+    // Expanding it into one commitment per occurrence produced dozens of
+    // disconnected rows, so moving a class meant editing every one of them, and
+    // the pattern stopped at the recurrence horizon.
+    if let Some(rule) = rrule {
+        if let Some(weekdays) = weekly_pattern(rule, starts_at, tzid, fallback_tz) {
+            let tz = tzid
+                .and_then(|value| value.parse::<Tz>().ok())
+                .unwrap_or(fallback_tz);
+            let local_start = starts_at.with_timezone(&tz);
+            let local_end = end.with_timezone(&tz);
+            return Ok(vec![ExtractedCandidate {
+                kind: "class_meeting".into(),
+                title: summary.into(),
+                course: summary.into(),
+                due_at: None,
+                // The first occurrence is kept so a reviewer can see when the
+                // pattern starts; the pattern itself is what gets stored.
+                starts_at: Some(starts_at.to_rfc3339()),
+                ends_at: Some(end.to_rfc3339()),
+                duration_minutes: Some(duration.num_minutes()),
+                evidence: format!("SUMMARY:{summary} · DTSTART:{start_raw} · RRULE:{rule}"),
+                source_locator: format!("calendar event {uid} · weekly pattern"),
+                source_uid: format!("ics:{uid}:weekly"),
+                confidence: 1.0,
+                warnings: Vec::new(),
+                weekdays,
+                starts_at_local: local_start.format("%H:%M").to_string(),
+                ends_at_local: local_end.format("%H:%M").to_string(),
+                timezone: tz.name().to_string(),
+            }]);
+        }
+    }
 
     let occurrences = if let Some(rule) = rrule {
         let start_line = if let Some(tzid) = tzid {
@@ -928,6 +1032,7 @@ fn candidates_from_event(
             source_uid: format!("ics:{uid}:{}", start.timestamp()),
             confidence: 1.0,
             warnings: Vec::new(),
+            ..Default::default()
         })
         .collect())
 }
@@ -1031,6 +1136,7 @@ fn candidates_from_segments(
                     0.55 * segment.confidence
                 },
                 warnings,
+                ..Default::default()
             });
         }
     }
@@ -1610,5 +1716,80 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(starts[1] - starts[0], Duration::hours(25));
         assert_eq!(starts[2] - starts[1], Duration::hours(24));
+    }
+
+    fn weekly_ics(rule: &str) -> Vec<u8> {
+        format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:sta201\r\nSUMMARY:Statistics 201\r\nDTSTART;TZID=America/Phoenix:20260824T090000\r\nDTEND;TZID=America/Phoenix:20260824T095000\r\nRRULE:{rule}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+            .into_bytes()
+    }
+
+    fn extracted(rule: &str) -> Vec<ExtractedCandidate> {
+        let observed_at = DateTime::parse_from_rfc3339("2026-08-12T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        extract_ics_at(&weekly_ics(rule), chrono_tz::America::Phoenix, observed_at).unwrap()
+    }
+
+    // A weekly rule is a class. Expanding it into one commitment per occurrence
+    // meant moving a class required editing every row, and the pattern simply
+    // stopped at the recurrence horizon.
+    #[test]
+    fn a_weekly_rule_becomes_one_class_meeting_rather_than_many_commitments() {
+        let rows = extracted("FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=45");
+        assert_eq!(rows.len(), 1, "a weekly class is one pattern, not many dates");
+        let class = &rows[0];
+        assert_eq!(class.kind, "class_meeting");
+        assert_eq!(class.weekdays, vec![1, 3, 5]);
+        assert_eq!(class.starts_at_local, "09:00");
+        assert_eq!(class.ends_at_local, "09:50");
+        assert_eq!(class.timezone, "America/Phoenix");
+        assert_eq!(class.title, "Statistics 201");
+    }
+
+    #[test]
+    fn a_weekly_rule_without_byday_repeats_on_the_start_weekday() {
+        // 24 August 2026 is a Monday in Phoenix.
+        let rows = extracted("FREQ=WEEKLY;COUNT=10");
+        assert_eq!(rows[0].kind, "class_meeting");
+        assert_eq!(rows[0].weekdays, vec![1]);
+    }
+
+    // Anything this cannot honestly represent as "every week on these days"
+    // keeps expanding, rather than being flattened into a schedule that was
+    // never in the file.
+    #[test]
+    fn rules_that_are_not_a_plain_weekly_pattern_still_expand() {
+        for rule in [
+            "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;COUNT=4",
+            "FREQ=WEEKLY;BYDAY=2MO;COUNT=4",
+            "FREQ=MONTHLY;BYDAY=MO;COUNT=4",
+            "FREQ=DAILY;COUNT=4",
+        ] {
+            let rows = extracted(rule);
+            assert!(
+                rows.iter().all(|row| row.kind == "commitment"),
+                "{rule} should not be modelled as a weekly class"
+            );
+            assert!(rows.len() > 1, "{rule} should still expand");
+        }
+    }
+
+    // The local clock is what a student reads off their schedule. It must not
+    // drift when the recurrence crosses a daylight-saving boundary, and the
+    // weekday must be read in the event's zone rather than UTC.
+    #[test]
+    fn the_local_clock_survives_a_daylight_saving_boundary() {
+        let ics = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:late\r\nSUMMARY:Evening lab\r\nDTSTART;TZID=America/New_York:20261026T193000\r\nDTEND;TZID=America/New_York:20261026T204500\r\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=6\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let observed_at = DateTime::parse_from_rfc3339("2026-08-12T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let rows = extract_ics_at(ics, chrono_tz::America::Phoenix, observed_at).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].starts_at_local, "19:30");
+        assert_eq!(rows[0].ends_at_local, "20:45");
+        assert_eq!(rows[0].timezone, "America/New_York");
+        // 19:30 in New York is 23:30 UTC; reading the weekday in UTC would call
+        // this a Monday evening class a Tuesday.
+        assert_eq!(rows[0].weekdays, vec![1]);
     }
 }
