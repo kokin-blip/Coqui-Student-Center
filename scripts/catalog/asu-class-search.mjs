@@ -90,6 +90,12 @@ export function parseClassSearch(text) {
       ({ campusId, location } = parseLocation(cells[6] ?? ""));
     }
 
+    // A page break can splice the running header into a row, merging it with the
+    // start time ("Class Search3:00 PM") or truncating the row after the days.
+    // The weekdays survive but the clock does not, and a meeting rendered as
+    // "Mon Wed · –" is worse than one the student enters themselves.
+    if (weekdays.length && !(startsAtLocal && endsAtLocal)) continue;
+
     const units = cells.find((cell) => /^\d(\.\d)?$/.test(cell));
 
     // Title continuation lines sit directly beneath, before the course code.

@@ -3319,7 +3319,7 @@
       },
       {
         "code": "COM 259",
-        "title": "Communication in Business Course Catalog Search Tempe - WLSN225",
+        "title": "Communication in Business and the Professions",
         "credits": 3,
         "sections": [
           {
@@ -3497,20 +3497,6 @@
             "campusId": "tempe",
             "location": "CDN62",
             "instructor": "Randall Duren",
-            "modality": "in-person"
-          },
-          {
-            "lineNumber": "81373",
-            "component": "lecture",
-            "weekdays": [
-              1,
-              3
-            ],
-            "startsAtLocal": "",
-            "endsAtLocal": "",
-            "campusId": "",
-            "location": "",
-            "instructor": "Dean Batson",
             "modality": "in-person"
           },
           {
@@ -4388,7 +4374,7 @@
       },
       {
         "code": "FSE 150",
-        "title": "Perspectives on Grand Course Catalog Search Tempe - ECGG101",
+        "title": "Perspectives on Grand",
         "credits": 3,
         "sections": [
           {
@@ -4428,19 +4414,6 @@
             "campusId": "polytechnic",
             "location": "PRLTA202",
             "instructor": "Bala Vignesh Sundaram",
-            "modality": "in-person"
-          },
-          {
-            "lineNumber": "76300",
-            "component": "lecture",
-            "weekdays": [
-              3
-            ],
-            "startsAtLocal": "",
-            "endsAtLocal": "",
-            "campusId": "",
-            "location": "",
-            "instructor": "Amy Trowbridge",
             "modality": "in-person"
           },
           {
@@ -5717,22 +5690,9 @@
       },
       {
         "code": "SWU 182",
-        "title": "Religious Freedom Social Services Perspective of",
+        "title": "Social Services Perspective of",
+        "credits": 3,
         "sections": [
-          {
-            "lineNumber": "89125",
-            "component": "lecture",
-            "weekdays": [
-              2,
-              4
-            ],
-            "startsAtLocal": "",
-            "endsAtLocal": "",
-            "campusId": "",
-            "location": "",
-            "instructor": "Heather Wetherholt",
-            "modality": "in-person"
-          },
           {
             "lineNumber": "63140",
             "component": "lecture",

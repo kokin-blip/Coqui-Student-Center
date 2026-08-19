@@ -20,6 +20,8 @@
     "ocr:prepare": "node scripts/prepare-ocr-runtime.mjs",
     "ocr:verify": "node scripts/verify-ocr-runtime.mjs",
     "macos:verify-signature": "node scripts/verify-macos-signature.mjs",
+    "catalog:prepare": "node scripts/prepare-course-catalog.mjs",
+    "catalog:verify": "node scripts/verify-course-catalog.mjs",
     "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
     "desktop:build": "tauri build --config apps/desktop/src-tauri/tauri.conf.json",
     "cloud:dev": "npm run dev --workspace @student-center/cloud-api"
