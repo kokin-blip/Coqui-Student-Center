@@ -1227,7 +1227,7 @@ export async function getUpdateStatus() {
     ? call<UpdateStatus>("get_update_status")
     : {
         configured: false,
-        currentVersion: "0.9.1",
+        currentVersion: "0.9.2",
         available: false,
         message:
           "Update checks are available only in the installed desktop application.",
