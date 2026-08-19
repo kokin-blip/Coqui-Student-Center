@@ -68,13 +68,37 @@ export type DeviceEnvelope = z.infer<typeof DeviceEnvelope>;
 
 export const SyncCursor = z.string().regex(/^\d{1,20}$/);
 export const SyncPush = z.object({ cursor:SyncCursor.optional(), mutations:z.array(EncryptedMutation).min(1).max(1000) });
+/** 8 MiB of image, expressed as the base64 length that carries it. */
+const MAX_IMAGE_BASE64 = Math.ceil((8*1024*1024)/3)*4;
+/**
+ * An image sent alongside the excerpt, never instead of it.
+ *
+ * A schedule screenshot has no text for `evidence` to be a substring of, which
+ * is why the desktop app OCRs it locally first and sends that text as the
+ * excerpt. The model groups text we already hold; it does not read pixels
+ * unsupervised. That is what lets this exist without loosening the grounding
+ * check in managed_ai.rs.
+ */
+export const AiImage = z.object({
+  mimeType:z.enum(["image/png","image/jpeg"]),
+  // Deliberately not z.string().base64(): Zod's base64 pattern groups in fours
+  // and recurses once per group, so an 11 MB payload — the largest this field
+  // legally holds — overflows the stack and turns a 400 into a 500. A plain
+  // character class is linear and answers the same question.
+  data:z.string().min(1).max(MAX_IMAGE_BASE64).regex(/^[A-Za-z0-9+/]*={0,2}$/,"expected base64")
+}).strict();
+export type AiImage = z.infer<typeof AiImage>;
+
 export const AiStructureRequest = z.object({
   capability:z.enum(["brain_dump","document_extraction","task_decomposition","explanation"]),
   excerpt:z.string().trim().min(1).max(12_000),
-  locale:z.string().trim().min(2).max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/).default("en-US")
+  locale:z.string().trim().min(2).max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/).default("en-US"),
+  image:AiImage.optional()
 });
+/** `HH:MM` on a 24-hour clock. A class recurs, so it has no single instant. */
+const localClock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 export const AiCandidate = z.object({
-  kind:z.enum(["task","commitment","assignment","exam"]),
+  kind:z.enum(["task","commitment","assignment","exam","class_meeting","academic_event"]),
   title:z.string().trim().min(1).max(240),
   course:z.string().trim().max(200).nullable().transform(value=>value??undefined),
   durationMinutes:z.number().int().min(5).max(480).nullable().transform(value=>value??undefined),
@@ -83,7 +107,34 @@ export const AiCandidate = z.object({
   endsAt:z.string().datetime({offset:true}).nullable().transform(value=>value??undefined),
   evidence:z.string().trim().min(1).max(2_000),
   confidence:z.number().min(0).max(1),
-  warnings:z.array(z.string().trim().min(1).max(300)).max(20)
+  warnings:z.array(z.string().trim().min(1).max(300)).max(20),
+  // The weekly half. 0 = Sunday, matching DAY_INDEX in the catalog scripts and
+  // weekly_pattern in imports.rs. Defaulted so a desktop build that predates
+  // these fields still parses a response carrying them.
+  weekdays:z.array(z.number().int().min(0).max(6)).max(7).default([]),
+  startsAtLocal:localClock.nullable().default(null).transform(value=>value??undefined),
+  endsAtLocal:localClock.nullable().default(null).transform(value=>value??undefined),
+  location:z.string().trim().min(1).max(200).nullable().default(null).transform(value=>value??undefined),
+  component:z.string().trim().min(1).max(200).nullable().default(null).transform(value=>value??undefined),
+  modality:z.string().trim().min(1).max(200).nullable().default(null).transform(value=>value??undefined),
+  sectionNumber:z.string().trim().min(1).max(200).nullable().default(null).transform(value=>value??undefined)
+}).superRefine((value,context)=>{
+  const fail=(message:string)=>context.addIssue({code:z.ZodIssueCode.custom,message});
+  const weekly=value.weekdays.length>0||value.startsAtLocal!==undefined||value.endsAtLocal!==undefined;
+  // A task carrying weekdays would have them dropped on the way into the review
+  // queue, and a silent drop is a class the student never sees again.
+  if(weekly&&value.kind!=="class_meeting")fail("only a class_meeting carries a weekly pattern");
+  if(new Set(value.weekdays).size!==value.weekdays.length)fail("weekdays must be a unique set");
+  // Half a time range is not a class time.
+  if((value.startsAtLocal===undefined)!==(value.endsAtLocal===undefined))fail("a class needs both a start and an end");
+  if(value.startsAtLocal!==undefined&&value.endsAtLocal!==undefined&&value.startsAtLocal>=value.endsAtLocal){
+    fail("a class must start before it ends");
+  }
+  // An asynchronous online section legitimately meets on no weekday, but it has
+  // to say so rather than simply omitting the days.
+  if(value.kind==="class_meeting"&&!value.weekdays.length&&value.modality?.toLowerCase()!=="online"){
+    fail("a class_meeting needs weekdays unless it is marked online");
+  }
 });
 export const AiStructureResult = z.object({
   candidates:z.array(AiCandidate).max(100),

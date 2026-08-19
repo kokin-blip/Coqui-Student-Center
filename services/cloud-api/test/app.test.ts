@@ -234,6 +234,124 @@ test("managed AI accepts only a complete strict review schema",async()=>{
   await app.close();
 });
 
+const PNG_BASE64=Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x01]).toString("base64");
+
+// A schedule screenshot produces class_meeting candidates. Until the kind list
+// grew, every schedule extraction came back as a schema failure.
+test("managed AI structures a weekly class from a schedule excerpt",async()=>{
+  const outputText=JSON.stringify({candidates:[{
+    kind:"class_meeting",title:"Statistics 201",course:"STA 201",durationMinutes:null,
+    dueAt:null,startsAt:null,endsAt:null,evidence:"STA 201 MWF 9:00",confidence:0.8,warnings:[],
+    weekdays:[1,3,5],startsAtLocal:"09:00",endsAtLocal:"09:50",
+    location:"COOR 174",component:"lecture",modality:"in-person",sectionNumber:"87991"
+  }],explanation:null});
+  const app=buildApp({
+    repository:new MemorySyncRepository(),
+    verifyAccessToken:async accessToken=>({accountId:accountA,accessToken}),
+    aiProvider:async()=>({outputText,model:"test-model",inputTokens:3,outputTokens:4})
+  });
+  const response=await app.inject({method:"POST",url:"/v1/ai/structure",headers:auth(),payload:{capability:"document_extraction",excerpt:"Fall 2026 STA 201 MWF 9:00 COOR 174",locale:"en-US"}});
+  assert.equal(response.statusCode,200);
+  const candidate=response.json().candidates[0];
+  assert.equal(candidate.kind,"class_meeting");
+  assert.deepEqual(candidate.weekdays,[1,3,5]);
+  assert.equal(candidate.startsAtLocal,"09:00");
+  // The server never lets a response claim it needs no review.
+  assert.equal(response.json().reviewRequired,true);
+  await app.close();
+});
+
+test("managed AI rejects a weekly pattern that could not describe a real class",async()=>{
+  const base={kind:"class_meeting",title:"Statistics 201",course:null,durationMinutes:null,
+    dueAt:null,startsAt:null,endsAt:null,evidence:"STA 201",confidence:0.8,warnings:[],
+    weekdays:[1,3,5],startsAtLocal:"09:00",endsAtLocal:"09:50",
+    location:null,component:null,modality:null,sectionNumber:null};
+  const rejected=[
+    {...base,weekdays:[7]},                                    // no such weekday
+    {...base,weekdays:[1,1,3]},                                // a class does not meet twice on one day
+    {...base,startsAtLocal:"09:50",endsAtLocal:"09:00"},       // ends before it starts
+    {...base,startsAtLocal:"09:00",endsAtLocal:null},          // half a range is not a class time
+    {...base,weekdays:[],modality:null},                       // no days and no claim of being online
+    {...base,kind:"task"}                                      // a task cannot carry a weekly pattern
+  ];
+  const app=buildApp({
+    repository:new MemorySyncRepository(),
+    verifyAccessToken:async accessToken=>({accountId:accountA,accessToken}),
+    aiProvider:async()=>({outputText:JSON.stringify({candidates:[rejected.shift()!],explanation:null}),model:"m"})
+  });
+  for(let index=0;index<6;index+=1){
+    const response=await app.inject({method:"POST",url:"/v1/ai/structure",headers:auth(),payload:{capability:"document_extraction",excerpt:"STA 201 schedule",locale:"en-US"}});
+    assert.equal(response.statusCode,502,`case ${index} was accepted`);
+  }
+  await app.close();
+});
+
+// An asynchronous online section legitimately meets on no weekday --
+// institution-catalogs.json already ships sections shaped that way.
+test("managed AI accepts an online class that meets on no weekday",async()=>{
+  const outputText=JSON.stringify({candidates:[{
+    kind:"class_meeting",title:"Ethics",course:"PHI 101",durationMinutes:null,
+    dueAt:null,startsAt:null,endsAt:null,evidence:"PHI 101 iCourse",confidence:0.7,warnings:[],
+    weekdays:[],startsAtLocal:null,endsAtLocal:null,
+    location:null,component:null,modality:"online",sectionNumber:null
+  }],explanation:null});
+  const app=buildApp({
+    repository:new MemorySyncRepository(),
+    verifyAccessToken:async accessToken=>({accountId:accountA,accessToken}),
+    aiProvider:async()=>({outputText,model:"m"})
+  });
+  const response=await app.inject({method:"POST",url:"/v1/ai/structure",headers:auth(),payload:{capability:"document_extraction",excerpt:"PHI 101 iCourse",locale:"en-US"}});
+  assert.equal(response.statusCode,200);
+  await app.close();
+});
+
+test("an attached image must be a real PNG or JPEG within the size cap",async()=>{
+  let seenImage:unknown;
+  const structured=JSON.stringify({candidates:[{
+    kind:"class_meeting",title:"Statistics 201",course:null,durationMinutes:null,
+    dueAt:null,startsAt:null,endsAt:null,evidence:"STA 201 MWF 9:00",confidence:0.8,warnings:[],
+    weekdays:[1,3,5],startsAtLocal:"09:00",endsAtLocal:"09:50",
+    location:null,component:null,modality:null,sectionNumber:null
+  }],explanation:null});
+  const app=buildApp({
+    repository:new MemorySyncRepository(),
+    verifyAccessToken:async accessToken=>({accountId:accountA,accessToken}),
+    aiProvider:async input=>{seenImage=input.image;return {outputText:structured,model:"m"};}
+  });
+  const post=(image:unknown)=>app.inject({method:"POST",url:"/v1/ai/structure",headers:auth(),payload:{capability:"document_extraction",excerpt:"STA 201 MWF 9:00",locale:"en-US",image}});
+
+  // The declared type is not trusted: these bytes are a PDF wearing a PNG label.
+  const lying=await post({mimeType:"image/png",data:Buffer.from("%PDF-1.7\n").toString("base64")});
+  assert.equal(lying.statusCode,400);
+
+  // The cap is on the decoded bytes, not the base64 that carried them.
+  const oversized=await post({mimeType:"image/png",data:Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.alloc(8*1024*1024)]).toString("base64")});
+  assert.equal(oversized.statusCode,400);
+
+  // A GIF is a real image and still refused; the allowed set is exactly two.
+  const gif=await post({mimeType:"image/png",data:Buffer.from("GIF89a").toString("base64")});
+  assert.equal(gif.statusCode,400);
+
+  const accepted=await post({mimeType:"image/png",data:PNG_BASE64});
+  assert.equal(accepted.statusCode,200);
+  assert.deepEqual(seenImage,{mimeType:"image/png",data:PNG_BASE64},"the image reaches the provider");
+  await app.close();
+});
+
+// The image is a layout aid for text we already hold, so the excerpt stays
+// mandatory. A request that sends a picture alone is not a shortcut past it.
+test("an image does not excuse a request from carrying an excerpt",async()=>{
+  const app=buildApp({
+    repository:new MemorySyncRepository(),
+    verifyAccessToken:async accessToken=>({accountId:accountA,accessToken}),
+    // Never reached: the request fails validation before a provider is called.
+    aiProvider:async()=>{throw new Error("the provider must not be reached");}
+  });
+  const response=await app.inject({method:"POST",url:"/v1/ai/structure",headers:auth(),payload:{capability:"document_extraction",excerpt:"",locale:"en-US",image:{mimeType:"image/png",data:PNG_BASE64}}});
+  assert.equal(response.statusCode,400);
+  await app.close();
+});
+
 test("managed AI maps quota and timeout failures without exposing provider details",async()=>{
   const failures=[Object.assign(new Error("secret quota response"),{status:429}),Object.assign(new Error("secret timeout response"),{name:"APIConnectionTimeoutError"})];
   const app=buildApp({

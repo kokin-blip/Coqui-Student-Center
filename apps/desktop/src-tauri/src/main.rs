@@ -6205,6 +6205,7 @@ async fn request_managed_ai(
             input.capability,
             &input.excerpt,
             &input.locale,
+            None,
         ) {
             Ok(response) => response,
             Err(error) => {
@@ -6244,23 +6245,32 @@ async fn request_managed_ai(
                     Utc::now().to_rfc3339(),
                 ],
             )?;
+            // A class recurs, so it carries a local clock rather than an instant,
+            // and the clock is meaningless without the zone it is read in.
+            let timezone = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key='timezone'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_else(|_| "Etc/UTC".into());
             for (index, candidate) in response.candidates.iter().enumerate() {
-                let kind = match candidate.kind.as_str() {
-                    "commitment" => "commitment",
-                    _ => "task",
-                };
+                let kind = local_candidate_kind(&candidate.kind);
                 let mut warnings = candidate.warnings.clone();
                 if candidate.kind != kind {
                     warnings.push(format!(
-                        "Managed AI proposed this as an {}; Student Center will import it as a task",
+                        "Managed AI proposed this as an {}; Student Center will import it as a {kind}",
                         candidate.kind
                     ));
                 }
+                let is_class = kind == "class_meeting";
                 tx.execute(
                     "INSERT INTO import_candidates(
                        id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,
-                       evidence,source_locator,source_type,source_uid,observed_at,confidence,warnings,status
-                     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'managed_ai',?12,?13,?14,?15,'pending')",
+                       evidence,source_locator,source_type,source_uid,observed_at,confidence,warnings,status,
+                       weekdays,starts_at_local,ends_at_local,timezone
+                     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'managed_ai',?12,?13,?14,?15,'pending',
+                              ?16,?17,?18,?19)",
                     params![
                         Uuid::new_v4().to_string(),
                         document_id,
@@ -6277,6 +6287,10 @@ async fn request_managed_ai(
                         Utc::now().to_rfc3339(),
                         candidate.confidence,
                         serde_json::to_string(&warnings).unwrap_or_else(|_| "[]".into()),
+                        serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_| "[]".into()),
+                        candidate.starts_at_local.clone().unwrap_or_default(),
+                        candidate.ends_at_local.clone().unwrap_or_default(),
+                        if is_class { timezone.as_str() } else { "" },
                     ],
                 )?;
             }
@@ -6484,6 +6498,25 @@ fn list_documents(
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(documents)
+}
+
+/// Map a managed-AI candidate kind onto a kind this app can actually apply.
+///
+/// `apply_candidate` knows three: task, commitment and class_meeting. The rest
+/// are shades of task that the planner treats identically, so they collapse and
+/// the reviewer is told they did.
+///
+/// `academic_event` is the deliberate exception worth naming: a holiday or a
+/// reading day is a real thing with nowhere to go yet, because the academic
+/// calendar arrives through its own reviewed diff rather than through document
+/// extraction. It collapses to a task, with the warning, until that path exists.
+/// Filing it as a task the student can see beats dropping it silently.
+fn local_candidate_kind(kind: &str) -> &'static str {
+    match kind {
+        "commitment" => "commitment",
+        "class_meeting" => "class_meeting",
+        _ => "task",
+    }
 }
 
 #[tauri::command]
@@ -8364,6 +8397,64 @@ mod tests {
 
         // A document with no vault blob is not evidence anyone can open.
         assert!(document_evidence_in(&conn, "doc-missing").is_err());
+    }
+
+    // Managed AI used to collapse every kind it did not recognise to a task,
+    // which included class_meeting. Widening the wire contract without fixing
+    // this would have left a screenshot extraction arriving as a pile of tasks
+    // with the weekly pattern silently dropped.
+    #[test]
+    fn managed_ai_kinds_map_onto_kinds_that_can_actually_be_applied() {
+        assert_eq!(local_candidate_kind("class_meeting"), "class_meeting");
+        assert_eq!(local_candidate_kind("commitment"), "commitment");
+        for shade_of_task in ["task", "assignment", "exam", "academic_event"] {
+            assert_eq!(local_candidate_kind(shade_of_task), "task");
+        }
+
+        // Every kind this maps to must be one apply_candidate accepts, or
+        // approval fails at the point the student presses the button.
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("kinds.db"), &random_key()).unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('term','Fall 2026','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc','shot.png','image/png','v','k','n','c','s','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        for kind in ["task", "commitment", "class_meeting"] {
+            // Approval records provenance against the candidate row, so it has
+            // to exist before apply_candidate is asked to file anything.
+            conn.execute(
+                "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence)
+                 VALUES(?1,'doc',?2,'Statistics 201','Statistics 201','e','l',?3,1.0)",
+                params![format!("cand-{kind}"), kind, format!("ai:{kind}")],
+            )
+            .unwrap();
+            let candidate = PendingCandidate {
+                id: format!("cand-{kind}"),
+                kind: kind.into(),
+                title: "Statistics 201".into(),
+                course: "Statistics 201".into(),
+                starts_at: Some("2026-08-24T16:00:00Z".into()),
+                ends_at: Some("2026-08-24T16:50:00Z".into()),
+                duration_minutes: Some(50),
+                weekdays: vec![1],
+                starts_at_local: "09:00".into(),
+                ends_at_local: "09:50".into(),
+                timezone: "America/Phoenix".into(),
+                ..Default::default()
+            };
+            assert!(
+                apply_candidate(&conn, &candidate, None).is_ok(),
+                "{kind} is produced but cannot be applied"
+            );
+        }
     }
 
     #[test]
