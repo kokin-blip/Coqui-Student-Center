@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Check,
   Clock3,
+  ImageUp,
   LocateFixed,
   MapPin,
   Plus,
@@ -17,6 +18,8 @@ import {
 import {
   AppBootstrap,
   completeOnboarding,
+  importDocumentBytes,
+  isDesktop,
   getTimezoneSuggestion,
   getInstitutionSetupOptions,
   OnboardingCourseInput,
@@ -122,6 +125,8 @@ export function OnboardingExperience({
   const [institutionOptions, setInstitutionOptions] = useState<InstitutionSetupOptions | null>(null);
   const [suggestions, setSuggestions] = useState<Record<number, CourseSuggestion[]>>({});
   const [sectionPicker, setSectionPicker] = useState<{ courseIndex: number; suggestion: CourseSuggestion } | null>(null);
+  const [screenshotBusy, setScreenshotBusy] = useState(false);
+  const [screenshotNotice, setScreenshotNotice] = useState("");
   const [importAfter, setImportAfter] = useState(false);
 
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) => {
@@ -350,11 +355,43 @@ export function OnboardingExperience({
             {schools.length > 0 && <div className="prediction-list" role="listbox" aria-label="School suggestions">{schools.map((school) => <button key={school.id} className={draft.institution.id === school.id ? "selected" : ""} onClick={() => { update("institution", { ...school, campusId: school.matchedCampusId ?? "", campusName: school.matchedCampusName ?? "" }); setSchoolQuery(school.name); setSchools([]); }}><School /><span><strong>{school.name}</strong><small>{school.custom ? "Custom worldwide school" : school.matchedCampusName ? `${school.matchedCampusName} campus · ${school.country} institution directory` : `${school.country} institution directory`}</small></span>{draft.institution.id === school.id && <Check />}</button>)}</div>}
             {draft.institution.name && <div className="selected-school"><MapPin /><span><strong>{draft.institution.name}</strong><small>{draft.institution.catalogProviderStatus === "supported" ? "Course suggestions available" : "Local and general suggestions available"}</small></span></div>}
             {Boolean(institutionOptions?.campuses.length) && <fieldset className="setup-fieldset institution-options"><legend>Campuses</legend><p className="field-help">Select every campus you attend. The first one you pick is your primary campus and fills in the location on new classes; individual classes can still use another.</p><div className="campus-options">{institutionOptions!.campuses.map((campus) => { const selected = draft.institution.campusIds ?? (draft.institution.campusId ? [draft.institution.campusId] : []); const position = selected.indexOf(campus.id); return <button key={campus.id} className={position >= 0 ? "selected" : ""} aria-pressed={position >= 0} onClick={() => toggleCampus(campus, institutionOptions!.campuses)}><MapPin /><span><strong>{campus.name}</strong><small>{position === 0 ? `${campus.city} · Primary` : campus.city}</small></span>{position >= 0 && <Check />}</button>; })}</div><small className="source-note">Campus source: {institutionOptions!.campuses[0].sourceLabel}</small></fieldset>}
-            {institutionOptions?.terms.length ? <fieldset className="setup-fieldset institution-options"><legend>Academic term</legend><p className="field-help">Dates below come from the school registrar and remain editable. Official calendars can change, so verify before finalizing.</p><div className="term-options">{institutionOptions.terms.map((preset) => <button key={preset.id} className={draft.termName === preset.name && draft.termStartsOn === preset.startsOn ? "selected" : ""} onClick={() => applyTermPreset(preset)}><span><strong>{preset.name}</strong><small>{preset.details}</small><em>{preset.sourceLabel}</em></span>{draft.termName === preset.name && draft.termStartsOn === preset.startsOn && <Check />}</button>)}</div></fieldset> : draft.institution.name && <div className="setup-intro compact"><CalendarDays /><div><strong>No verified calendar connected yet</strong><p>Enter the dates from your registrar. Coqui will not guess them.</p></div></div>}
+            {institutionOptions?.terms.length ? <fieldset className="setup-fieldset institution-options"><legend>Academic term</legend><p className="field-help">Dates below come from the school registrar and remain editable. Official calendars can change, so verify before finalizing.</p><div className="term-options">{institutionOptions.terms.map((preset) => <button key={preset.id} className={draft.termName === preset.name && draft.termStartsOn === preset.startsOn ? "selected" : ""} onClick={() => applyTermPreset(preset)}><span><strong>{preset.name}</strong><small>{preset.details}</small>{/* Finals and breaks are dates a student plans around, and they were being dropped on the floor. */}{preset.classEndsOn && <small>Last day of classes {preset.classEndsOn}{preset.examStartsOn ? ` · Finals from ${preset.examStartsOn}` : ""}</small>}{preset.noClassDates?.length ? <small>{preset.noClassDates.length} no-class {preset.noClassDates.length === 1 ? "date" : "dates"}: {preset.noClassDates.map((date) => date.label).join(", ")}</small> : null}<em>{preset.sourceLabel}</em></span>{draft.termName === preset.name && draft.termStartsOn === preset.startsOn && <Check />}</button>)}</div>{/* "From the registrar" and "from the registrar, in August" are different claims, and only one of them can be checked. */}<small className="source-note">Term source: {institutionOptions.sourceLabel || "school registrar"}{institutionOptions.generatedAt ? ` · recorded ${institutionOptions.generatedAt}` : ""}</small></fieldset> : draft.institution.name && <div className="setup-intro compact"><CalendarDays /><div><strong>No verified calendar connected yet</strong><p>Enter the dates from your registrar. Coqui will not guess them.</p></div></div>}
             <div className="form-grid"><label className="field full">Term name<input value={draft.termName} onChange={(event) => update("termName", event.target.value)} /></label><label className="field">Starts<input type="date" value={draft.termStartsOn} onChange={(event) => update("termStartsOn", event.target.value)} /></label><label className="field">Ends<input type="date" value={draft.termEndsOn} onChange={(event) => update("termEndsOn", event.target.value)} /></label></div>
           </>}
           {step === 2 && <>
             <div className="setup-intro compact"><BookOpen /><div><strong>Don't have your schedule yet?</strong><p>Skip this step. You can add courses and class times any time from Courses.</p></div></div>
+            {/* The fastest path in, for the students who have a screenshot and
+                no desire to retype it. Nothing it finds is applied here: the
+                classes land in the review queue and are confirmed after setup,
+                on the same terms as every other import. Typing courses in by
+                hand below stays a complete path on its own. */}
+            {isDesktop() && <div className="screenshot-step">
+              <label className="field full">
+                <span><ImageUp aria-hidden="true" /> Import a screenshot of your schedule</span>
+                <input type="file" accept="image/png,image/jpeg" disabled={screenshotBusy} onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (!file) return;
+                  setScreenshotBusy(true);
+                  setScreenshotNotice("");
+                  try {
+                    const bytes = new Uint8Array(await file.arrayBuffer());
+                    const next = await importDocumentBytes(file.name, bytes);
+                    const classes = next.candidates.filter((candidate) => candidate.kind === "class_meeting" && candidate.status === "pending");
+                    setScreenshotNotice(classes.length
+                      ? `${classes.length} class${classes.length === 1 ? "" : "es"} read and waiting for your review after setup.`
+                      : "That image was saved but no class times could be read from it. Add your courses below instead.");
+                    setImportAfter(true);
+                  } catch (next) {
+                    setScreenshotNotice(String(next));
+                  } finally {
+                    setScreenshotBusy(false);
+                  }
+                }} />
+              </label>
+              <p className="field-help">Or press Ctrl/Cmd+V anywhere with a screenshot copied. It is encrypted on your computer and read there; nothing is sent anywhere and nothing is added to your plan until you approve it.</p>
+              {screenshotNotice && <p className="source-note" aria-live="polite">{screenshotNotice}</p>}
+            </div>}
             <div className="course-builder-head"><div><strong>Your courses</strong><small>Suggestions are optional and always need confirmation.</small></div><button className="outline" onClick={() => update("courses", [...draft.courses, emptyCourse(draft.courses.length)])}><Plus /> Add course</button></div>
             <div className="course-builder">{draft.courses.map((course, courseIndex) => <article key={courseIndex} style={{ "--course-color": course.color } as React.CSSProperties}>
               <header><span>{course.code || `Course ${courseIndex + 1}`}</span>{draft.courses.length > 1 && <button aria-label={`Remove course ${courseIndex + 1}`} onClick={() => update("courses", draft.courses.filter((_, index) => index !== courseIndex))}><Trash2 /></button>}</header>

@@ -2730,3 +2730,21 @@ textarea:focus-visible {
   vertical-align: -2px;
   margin-right: 4px;
 }
+
+/* The screenshot import inside onboarding. Sits above the manual course builder
+   rather than replacing it: typing everything in by hand stays a complete path,
+   and has to look like one. */
+.screenshot-step {
+  padding: 14px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 14px;
+  margin-bottom: 14px;
+}
+.screenshot-step > label > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.screenshot-step svg {
+  width: 15px;
+}

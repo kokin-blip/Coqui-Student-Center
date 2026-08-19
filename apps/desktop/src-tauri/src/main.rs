@@ -294,6 +294,14 @@ struct AcademicTermPreset {
     details: String,
     source_label: String,
     source_url: String,
+    /// Two sessions of one term end on different days, so the registrar's own
+    /// session letter is what tells them apart on screen.
+    #[serde(default)]
+    session_code: String,
+    /// Holidays and breaks. Empty until a calendar harvest has run against the
+    /// school's live page — the app does not invent them.
+    #[serde(default)]
+    no_class_dates: Vec<school_provider::NoClassDate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -302,6 +310,15 @@ struct InstitutionSetupOptions {
     institution_id: String,
     campuses: Vec<InstitutionCampusOption>,
     terms: Vec<AcademicTermPreset>,
+    /// When the bundled snapshot was produced. Shown beside the dates it filled
+    /// in, because "from the registrar" and "from the registrar, in August" are
+    /// different claims and only one of them is checkable.
+    #[serde(default)]
+    generated_at: String,
+    #[serde(default)]
+    source_label: String,
+    #[serde(default)]
+    source_url: String,
 }
 
 fn current_security_status(state: &AppState) -> SecurityStatus {
@@ -3027,8 +3044,13 @@ fn setup_options_from(provider: &SchoolProvider) -> InstitutionSetupOptions {
                 details: term.details.clone(),
                 source_label: term.source_label.clone(),
                 source_url: term.source_url.clone(),
+                session_code: term.session_code.clone(),
+                no_class_dates: term.no_class_dates.clone(),
             })
             .collect(),
+        generated_at: provider.generated_at.clone(),
+        source_label: provider.source_label.clone(),
+        source_url: provider.source_url.clone(),
     }
 }
 
@@ -10519,20 +10541,26 @@ mod tests {
             .is_empty());
     }
 
-    /// The descriptor grew calendar sources, schedule layouts, session codes and
-    /// no-class dates. None of that is anything the setup screen asked for, so
-    /// what it receives must be exactly what it received at 0.9.2 — otherwise
-    /// "migrate the file" quietly became "change the API".
+    /// What the setup screen receives, pinned.
+    ///
+    /// The descriptor carries far more than this — calendar sources, schedule
+    /// layouts, row patterns — and none of it appears here, because the
+    /// projection is what keeps the file free to grow without changing the API.
+    /// The fields that *are* here beyond v0.9.2 were added deliberately so the
+    /// setup screen can show a student where a pre-filled date came from and how
+    /// old it is; that is a change to state on purpose, not to discover later.
     #[test]
-    fn widening_the_descriptor_did_not_change_what_setup_receives() {
+    fn setup_receives_the_descriptor_projection_and_nothing_more() {
         let options = institution_setup_options_for("104151".into()).unwrap();
         let json = serde_json::to_value(&options).unwrap();
 
-        // Pinned from v0.9.2. Written out rather than derived, because deriving
-        // it from the same descriptor would pass no matter what the projection
-        // did.
+        // Written out rather than derived, because deriving it from the same
+        // descriptor would pass no matter what the projection did.
         let expected = serde_json::json!({
             "institutionId": "104151",
+            "generatedAt": "2026-08-19",
+            "sourceLabel": "ASU University Registrar",
+            "sourceUrl": "https://registrar.asu.edu/academic-calendar",
             "campuses": [
                 {"id":"tempe","name":"Tempe","city":"Tempe","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
                 {"id":"downtown-phoenix","name":"Downtown Phoenix","city":"Phoenix","timezone":"America/Phoenix","sourceLabel":"ASU Campuses and Locations","sourceUrl":"https://campus.asu.edu/"},
@@ -10541,9 +10569,9 @@ mod tests {
                 {"id":"flexible","name":"Online or multiple campuses","city":"Flexible","timezone":"America/Phoenix","sourceLabel":"Student selection","sourceUrl":""}
             ],
             "terms": [
-                {"id":"asu-fall-2026-c","name":"Fall 2026 — Session C","startsOn":"2026-08-20","endsOn":"2026-12-12","classEndsOn":"2026-12-04","examStartsOn":"2026-12-07","details":"Classes Aug 20–Dec 4 · Finals Dec 7–12","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"},
-                {"id":"asu-spring-2027-c","name":"Spring 2027 — Session C","startsOn":"2027-01-11","endsOn":"2027-05-08","classEndsOn":"2027-04-30","examStartsOn":"2027-05-03","details":"Classes Jan 11–Apr 30 · Finals May 3–8","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"},
-                {"id":"asu-fall-2027-c","name":"Fall 2027 — Session C","startsOn":"2027-08-19","endsOn":"2027-12-11","classEndsOn":"2027-12-03","examStartsOn":"2027-12-06","details":"Classes Aug 19–Dec 3 · Finals Dec 6–11","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar"}
+                {"id":"asu-fall-2026-c","name":"Fall 2026 — Session C","startsOn":"2026-08-20","endsOn":"2026-12-12","classEndsOn":"2026-12-04","examStartsOn":"2026-12-07","details":"Classes Aug 20–Dec 4 · Finals Dec 7–12","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C","noClassDates":[]},
+                {"id":"asu-spring-2027-c","name":"Spring 2027 — Session C","startsOn":"2027-01-11","endsOn":"2027-05-08","classEndsOn":"2027-04-30","examStartsOn":"2027-05-03","details":"Classes Jan 11–Apr 30 · Finals May 3–8","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C","noClassDates":[]},
+                {"id":"asu-fall-2027-c","name":"Fall 2027 — Session C","startsOn":"2027-08-19","endsOn":"2027-12-11","classEndsOn":"2027-12-03","examStartsOn":"2027-12-06","details":"Classes Aug 19–Dec 3 · Finals Dec 6–11","sourceLabel":"ASU University Registrar","sourceUrl":"https://registrar.asu.edu/academic-calendar","sessionCode":"C","noClassDates":[]}
             ]
         });
         assert_eq!(json, expected);

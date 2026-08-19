@@ -265,11 +265,23 @@ export type AcademicTermPreset = {
   details: string;
   sourceLabel: string;
   sourceUrl: string;
+  // Two sessions of one term end on different days, so the registrar's own
+  // session letter is what tells them apart on screen.
+  sessionCode?: string;
+  // Holidays and breaks. Empty until a calendar harvest has run against the
+  // school's live page; the app does not invent them.
+  noClassDates?: NoClassDate[];
 };
 export type InstitutionSetupOptions = {
   institutionId: string;
   campuses: InstitutionCampusOption[];
   terms: AcademicTermPreset[];
+  // When the bundled snapshot was produced. Shown beside the dates it filled in,
+  // because "from the registrar" and "from the registrar, in August" are
+  // different claims and only one of them is checkable.
+  generatedAt?: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
 };
 // Mirrors school_calendar::TermChange. One field of one term, with the value
 // that is bundled and the value the registrar now publishes, so a student can
@@ -870,6 +882,9 @@ export async function searchCourseSuggestions(institutionId: string, query: stri
 }
 const asuSetupOptions: InstitutionSetupOptions = {
   institutionId: "104151",
+  generatedAt: "2026-08-19",
+  sourceLabel: "ASU University Registrar",
+  sourceUrl: "https://registrar.asu.edu/academic-calendar",
   campuses: [
     { id: "tempe", name: "Tempe", city: "Tempe", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
     { id: "downtown-phoenix", name: "Downtown Phoenix", city: "Phoenix", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
