@@ -44,7 +44,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -556,7 +556,7 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS source_objects(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,source_type TEXT NOT NULL,source_uid TEXT NOT NULL,source_url TEXT NOT NULL,observed_at TEXT NOT NULL,payload_hash TEXT NOT NULL,payload TEXT NOT NULL,FOREIGN KEY(connection_id) REFERENCES integration_connections(id),UNIQUE(connection_id,source_uid,payload_hash));
       CREATE TABLE IF NOT EXISTS integration_sync_runs(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,started_at TEXT NOT NULL,completed_at TEXT,status TEXT NOT NULL,pulled_count INTEGER NOT NULL DEFAULT 0,created_count INTEGER NOT NULL DEFAULT 0,error TEXT,FOREIGN KEY(connection_id) REFERENCES integration_connections(id));
       CREATE TABLE IF NOT EXISTS courses(id TEXT PRIMARY KEY,title TEXT NOT NULL,code TEXT NOT NULL DEFAULT '',source_uid TEXT NOT NULL DEFAULT '',source_candidate_id TEXT,version INTEGER NOT NULL DEFAULT 1,UNIQUE(source_uid));
-      CREATE TABLE IF NOT EXISTS import_candidates(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,source_object_id TEXT,kind TEXT NOT NULL DEFAULT 'task',title TEXT NOT NULL,course TEXT NOT NULL,due_at TEXT,starts_at TEXT,ends_at TEXT,duration_minutes INTEGER,evidence TEXT NOT NULL,source_locator TEXT NOT NULL,source_type TEXT NOT NULL DEFAULT 'document',source_url TEXT,source_uid TEXT NOT NULL DEFAULT '',observed_at TEXT,confidence REAL NOT NULL,warnings TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'pending',canonical_entity_id TEXT,FOREIGN KEY(document_id) REFERENCES documents(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id));
+      CREATE TABLE IF NOT EXISTS import_candidates(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,source_object_id TEXT,kind TEXT NOT NULL DEFAULT 'task',title TEXT NOT NULL,course TEXT NOT NULL,due_at TEXT,starts_at TEXT,ends_at TEXT,duration_minutes INTEGER,evidence TEXT NOT NULL,source_locator TEXT NOT NULL,source_type TEXT NOT NULL DEFAULT 'document',source_url TEXT,source_uid TEXT NOT NULL DEFAULT '',observed_at TEXT,confidence REAL NOT NULL,warnings TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'pending',canonical_entity_id TEXT,weekdays TEXT NOT NULL DEFAULT '[]',starts_at_local TEXT NOT NULL DEFAULT '',ends_at_local TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',FOREIGN KEY(document_id) REFERENCES documents(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id));
       CREATE TABLE IF NOT EXISTS provenance_links(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,candidate_id TEXT NOT NULL,source_object_id TEXT,field_name TEXT NOT NULL,source_value TEXT,evidence TEXT NOT NULL,created_at TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,FOREIGN KEY(candidate_id) REFERENCES import_candidates(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id),UNIQUE(entity_type,entity_id,candidate_id,field_name));
       CREATE TABLE IF NOT EXISTS mutations(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,operation TEXT NOT NULL,hlc TEXT NOT NULL,device_id TEXT NOT NULL,tombstone INTEGER NOT NULL DEFAULT 0,payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sync_state(account_id TEXT PRIMARY KEY,device_id TEXT NOT NULL,connected_at TEXT NOT NULL,last_pushed_at TEXT,last_push_cursor TEXT NOT NULL DEFAULT '0',last_pull_cursor TEXT NOT NULL DEFAULT '0');
@@ -606,6 +606,33 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     )?;
     ensure_column(&conn, "import_candidates", "source_url", "TEXT")?;
     ensure_column(&conn, "import_candidates", "observed_at", "TEXT")?;
+    // A class_meeting candidate is a weekly pattern rather than a single
+    // instant, so it needs weekdays and a local clock that the datetime columns
+    // above cannot express. Additive, like every other column here.
+    ensure_column(
+        &conn,
+        "import_candidates",
+        "weekdays",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column(
+        &conn,
+        "import_candidates",
+        "starts_at_local",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        &conn,
+        "import_candidates",
+        "ends_at_local",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        &conn,
+        "import_candidates",
+        "timezone",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     ensure_column(&conn, "import_candidates", "canonical_entity_id", "TEXT")?;
     ensure_column(&conn, "tasks", "source_uid", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(&conn, "tasks", "source_candidate_id", "TEXT")?;
@@ -877,6 +904,9 @@ fn backfill_legacy_canvas_links(conn: &Connection) -> Result<()> {
                     duration_minutes: row.get(6)?,
                     course: row.get(7)?,
                     source_uid: row.get(8)?,
+                    // Legacy Canvas backfill: these are tasks and commitments,
+                    // never weekly patterns.
+                    ..Default::default()
                 },
                 row.get::<_, String>(9)?,
             ))
@@ -6321,8 +6351,8 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
         for candidate in extraction.candidates {
             let candidate_id = Uuid::new_v4().to_string();
             db.execute(
-        "INSERT INTO import_candidates(id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_uid,confidence,warnings)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        "INSERT INTO import_candidates(id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_uid,confidence,warnings,weekdays,starts_at_local,ends_at_local,timezone)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
         params![
           candidate_id,
           id,
@@ -6337,7 +6367,11 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
           candidate.source_locator,
           candidate.source_uid,
           candidate.confidence,
-          serde_json::to_string(&candidate.warnings).unwrap_or_else(|_| "[]".into())
+          serde_json::to_string(&candidate.warnings).unwrap_or_else(|_| "[]".into()),
+          serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_| "[]".into()),
+          candidate.starts_at_local,
+          candidate.ends_at_local,
+          candidate.timezone
         ],
       )?;
             candidate_conflict(&db, &candidate_id, &candidate)?;
@@ -6449,7 +6483,7 @@ fn get_document_evidence(
     Ok(candidates)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct PendingCandidate {
     id: String,
     kind: String,
@@ -6460,15 +6494,23 @@ struct PendingCandidate {
     duration_minutes: Option<i64>,
     course: String,
     source_uid: String,
+    /// Only populated for `class_meeting`, which is a weekly pattern rather than
+    /// the single instant the datetime fields above describe.
+    weekdays: Vec<i64>,
+    starts_at_local: String,
+    ends_at_local: String,
+    timezone: String,
 }
 
 fn pending_candidate(conn: &Connection, id: &str) -> Result<Option<PendingCandidate>> {
     Ok(conn
         .query_row(
-            "SELECT id,kind,title,due_at,starts_at,ends_at,duration_minutes,course,source_uid
+            "SELECT id,kind,title,due_at,starts_at,ends_at,duration_minutes,course,source_uid,
+                    weekdays,starts_at_local,ends_at_local,timezone
              FROM import_candidates WHERE id=?1 AND status='pending'",
             params![id],
             |row| {
+                let weekdays: String = row.get(9)?;
                 Ok(PendingCandidate {
                     id: row.get(0)?,
                     kind: row.get(1)?,
@@ -6479,6 +6521,10 @@ fn pending_candidate(conn: &Connection, id: &str) -> Result<Option<PendingCandid
                     duration_minutes: row.get(6)?,
                     course: row.get(7)?,
                     source_uid: row.get(8)?,
+                    weekdays: serde_json::from_str(&weekdays).unwrap_or_default(),
+                    starts_at_local: row.get(10)?,
+                    ends_at_local: row.get(11)?,
+                    timezone: row.get(12)?,
                 })
             },
         )
@@ -6505,6 +6551,9 @@ fn existing_entity_for_source(
         "tasks" => "SELECT id FROM tasks WHERE source_uid=?1 ORDER BY rowid LIMIT 1",
         "commitments" => "SELECT id FROM commitments WHERE source_uid=?1 ORDER BY rowid LIMIT 1",
         "courses" => "SELECT id FROM courses WHERE source_uid=?1 ORDER BY rowid LIMIT 1",
+        "class_meeting_series" => {
+            "SELECT id FROM class_meeting_series WHERE source_uid=?1 ORDER BY rowid LIMIT 1"
+        }
         _ => return Err(AppError::Invalid("unsupported canonical entity".into())),
     };
     Ok(conn
@@ -6714,6 +6763,129 @@ fn apply_candidate(
                 (id, "source_created")
             }
         }
+        "class_meeting" => {
+            if candidate.weekdays.is_empty()
+                || candidate.starts_at_local.is_empty()
+                || candidate.ends_at_local.is_empty()
+            {
+                return Err(AppError::Invalid(
+                    "class meeting candidate has no weekly pattern".into(),
+                ));
+            }
+            // A meeting belongs to a course, so the course has to exist first.
+            // Matched on title or code rather than created blindly, so importing
+            // a schedule twice does not leave two of every class.
+            let course_id = match conn
+                .query_row(
+                    "SELECT id FROM courses WHERE title=?1 COLLATE NOCASE OR (code!='' AND code=?1 COLLATE NOCASE) LIMIT 1",
+                    params![candidate.course.trim()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+            {
+                Some(id) => id,
+                None => {
+                    let id = Uuid::new_v4().to_string();
+                    conn.execute(
+                        "INSERT INTO courses(id,title,code,source_uid,source_candidate_id)
+                         VALUES(?1,?2,'',?3,?4)",
+                        params![
+                            id,
+                            candidate.course.trim(),
+                            format!("{source_uid}:course"),
+                            candidate.id
+                        ],
+                    )?;
+                    mutation(conn, "course", &id, "source_created", "{}")?;
+                    id
+                }
+            };
+            // The term that actually contains the first meeting, falling back to
+            // the active one. A calendar file has no notion of terms, and the
+            // recurrence count says nothing about which term it sits in.
+            let first_day = candidate
+                .starts_at
+                .as_deref()
+                .and_then(parse_rfc3339)
+                .map(|value| value.date_naive().to_string())
+                .unwrap_or_default();
+            let term_id = conn
+                .query_row(
+                    "SELECT id FROM academic_terms
+                     WHERE ?1!='' AND starts_on<=?1 AND ends_on>=?1
+                     ORDER BY starts_on LIMIT 1",
+                    params![first_day],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .or(conn
+                    .query_row(
+                        "SELECT id FROM academic_terms WHERE active=1 ORDER BY starts_on LIMIT 1",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?)
+                .ok_or_else(|| {
+                    AppError::Invalid(
+                        "add an academic term before importing a class schedule".into(),
+                    )
+                })?;
+
+            let existing = match required_entity_id {
+                Some(id) => Some(id.to_string()),
+                None => existing_entity_for_source(conn, "class_meeting_series", &source_uid)?,
+            };
+            let weekdays = serde_json::to_string(&candidate.weekdays)
+                .unwrap_or_else(|_| "[]".into());
+            let timezone = if candidate.timezone.trim().is_empty() {
+                "UTC"
+            } else {
+                candidate.timezone.trim()
+            };
+            if let Some(id) = existing {
+                let changed = conn.execute(
+                    "UPDATE class_meeting_series SET course_id=?2,term_id=?3,timezone=?4,weekdays=?5,
+                     starts_at_local=?6,ends_at_local=?7,source_uid=?8,source_candidate_id=?9,
+                     version=version+1 WHERE id=?1",
+                    params![
+                        id,
+                        course_id,
+                        term_id,
+                        timezone,
+                        weekdays,
+                        candidate.starts_at_local,
+                        candidate.ends_at_local,
+                        source_uid,
+                        candidate.id
+                    ],
+                )?;
+                if changed == 0 {
+                    return Err(AppError::Invalid(
+                        "conflicted class meeting no longer exists".into(),
+                    ));
+                }
+                (id, "source_updated")
+            } else {
+                let id = Uuid::new_v4().to_string();
+                conn.execute(
+                    "INSERT INTO class_meeting_series(id,course_id,term_id,timezone,weekdays,
+                     starts_at_local,ends_at_local,component,location,source_uid,source_candidate_id)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,'lecture','',?8,?9)",
+                    params![
+                        id,
+                        course_id,
+                        term_id,
+                        timezone,
+                        weekdays,
+                        candidate.starts_at_local,
+                        candidate.ends_at_local,
+                        source_uid,
+                        candidate.id
+                    ],
+                )?;
+                (id, "source_created")
+            }
+        }
         kind => {
             return Err(AppError::Invalid(format!(
                 "unsupported candidate kind {kind}"
@@ -6724,10 +6896,22 @@ fn apply_candidate(
         "UPDATE import_candidates SET status='approved',canonical_entity_id=?2 WHERE id=?1",
         params![candidate.id, entity_id],
     )?;
-    link_candidate_provenance(conn, &candidate.kind, &entity_id, &candidate.id)?;
-    mutation(conn, &candidate.kind, &entity_id, operation, "{}")?;
+    // Every other kind names its own entity type. A class_meeting candidate
+    // becomes a class_meeting_series, which is the name the replication set and
+    // the mutation log know it by.
+    let entity_type = candidate_entity_type(&candidate.kind);
+    link_candidate_provenance(conn, entity_type, &entity_id, &candidate.id)?;
+    mutation(conn, entity_type, &entity_id, operation, "{}")?;
     mutation(conn, "import_candidate", &candidate.id, "approved", "{}")?;
     Ok(entity_id)
+}
+
+/// The replicated entity a candidate of this kind becomes.
+fn candidate_entity_type(kind: &str) -> &str {
+    match kind {
+        "class_meeting" => "class_meeting_series",
+        other => other,
+    }
 }
 
 #[tauri::command]
@@ -7965,6 +8149,118 @@ mod tests {
         .unwrap();
     }
 
+    // The whole reason the class_meeting kind exists: a weekly calendar rule
+    // has to land as one editable pattern, attached to a course and a term,
+    // rather than as dozens of one-off commitments.
+    #[test]
+    fn approving_a_weekly_class_creates_one_meeting_series() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("class-import.db");
+        let key = random_key();
+        let conn = open_database(&path, &key).unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('term-fall','Fall 2026','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let candidate = PendingCandidate {
+            id: "cand-1".into(),
+            kind: "class_meeting".into(),
+            title: "Statistics 201".into(),
+            course: "Statistics 201".into(),
+            starts_at: Some("2026-08-24T16:00:00Z".into()),
+            source_uid: "ics:sta201:weekly".into(),
+            weekdays: vec![1, 3, 5],
+            starts_at_local: "09:00".into(),
+            ends_at_local: "09:50".into(),
+            timezone: "America/Phoenix".into(),
+            ..Default::default()
+        };
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-1','sched.ics','text/calendar','v','k','n','c','s','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence)
+             VALUES('cand-1','doc-1','class_meeting','Statistics 201','Statistics 201','e','l','ics:sta201:weekly',1.0)",
+            [],
+        )
+        .unwrap();
+
+        let entity_id = apply_candidate(&conn, &candidate, None).unwrap();
+        let (course_id, term_id, weekdays, starts, ends, timezone): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT course_id,term_id,weekdays,starts_at_local,ends_at_local,timezone
+                 FROM class_meeting_series WHERE id=?1",
+                params![entity_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(weekdays, "[1,3,5]");
+        assert_eq!(starts, "09:00");
+        assert_eq!(ends, "09:50");
+        assert_eq!(timezone, "America/Phoenix");
+        // The term containing the first meeting, not merely the active one.
+        assert_eq!(term_id, "term-fall");
+
+        let course_title: String = conn
+            .query_row(
+                "SELECT title FROM courses WHERE id=?1",
+                params![course_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(course_title, "Statistics 201");
+
+        // One series, not one row per occurrence.
+        let series: i64 = conn
+            .query_row("SELECT COUNT(*) FROM class_meeting_series", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(series, 1);
+
+        // Importing the same schedule again produces a fresh candidate carrying
+        // the same source_uid. It must update the class rather than add a second
+        // one, which is what source_uid on class_meeting_series is for.
+        conn.execute(
+            "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence)
+             VALUES('cand-2','doc-1','class_meeting','Statistics 201','Statistics 201','e','l','ics:sta201:weekly',1.0)",
+            [],
+        )
+        .unwrap();
+        let reimported = PendingCandidate {
+            id: "cand-2".into(),
+            ..candidate
+        };
+        let again = apply_candidate(&conn, &reimported, None).unwrap();
+        assert_eq!(again, entity_id, "re-importing should update the same class");
+        let courses: i64 = conn
+            .query_row("SELECT COUNT(*) FROM courses", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(courses, 1, "importing twice should not duplicate the course");
+    }
+
     #[test]
     fn planner_ai_and_sync_schema_migrations_are_additive_and_versioned() {
         let directory = tempfile::tempdir().unwrap();
@@ -7979,7 +8275,13 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 11);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+        // 12 adds the weekly pattern a class_meeting candidate carries, which
+        // the single-instant datetime columns cannot express.
+        let candidate_columns = table_columns(&conn, "import_candidates").unwrap();
+        for column in ["weekdays", "starts_at_local", "ends_at_local", "timezone"] {
+            assert!(candidate_columns.contains(column), "missing {column}");
+        }
         for table in ["sync_entity_versions", "sync_set_elements"] {
             assert_eq!(
                 conn.query_row(

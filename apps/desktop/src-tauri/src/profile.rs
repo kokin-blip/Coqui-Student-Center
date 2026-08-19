@@ -594,6 +594,16 @@ fn migrate_inner(conn: &Connection, previous_schema_version: i64) -> Result<()> 
             "record_origin",
             "TEXT NOT NULL DEFAULT 'user'",
         ),
+        // A class meeting can come from an imported schedule now, so it carries
+        // the same provenance columns tasks, commitments and courses already
+        // have. Without them an import cannot recognise its own earlier rows and
+        // re-importing would duplicate every class.
+        (
+            "class_meeting_series",
+            "source_uid",
+            "TEXT NOT NULL DEFAULT ''",
+        ),
+        ("class_meeting_series", "source_candidate_id", "TEXT"),
     ] {
         ensure_column(conn, table, column, definition)?;
     }
