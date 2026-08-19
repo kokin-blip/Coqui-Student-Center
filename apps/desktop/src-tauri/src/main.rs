@@ -47,7 +47,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -585,6 +585,15 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
         "TEXT NOT NULL DEFAULT 'complete'",
     )?;
     ensure_column(&conn, "documents", "extraction_error", "TEXT")?;
+    // Set when the encrypted image has been deleted but the row is kept so its
+    // evidence still resolves. Distinct from the empty `vault_path` that marks a
+    // remote Canvas stub, which never had a blob to begin with.
+    ensure_column(
+        &conn,
+        "documents",
+        "content_shredded",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(
         &conn,
         "import_candidates",
@@ -6397,12 +6406,57 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
         ));
     }
     let bytes = fs::read(&source)?;
-    let hash = hex::encode(Sha256::digest(&bytes));
     let name = source
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("document")
         .to_string();
+    ingest_document(&state, &source, bytes, name)
+}
+
+/// Import bytes the app was handed directly rather than read off disk.
+///
+/// This is the clipboard path. A pasted screenshot has no file to point at, so
+/// the webview reads the image off the `paste` event and sends the bytes here.
+/// Everything after the read is the same as `import_document` — the same size
+/// cap, the same content sniff, the same duplicate check, the same envelope
+/// encryption — because a screenshot is a document like any other and a second
+/// copy of that path would be a second place for it to be wrong.
+#[tauri::command]
+fn import_document_bytes(
+    state: tauri::State<AppState>,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(AppError::Invalid(
+            "files must be non-empty and 25 MB or smaller".into(),
+        ));
+    }
+    // Only the basename is kept. A pasted name is attacker-influenced text that
+    // ends up in the vault listing, and nothing downstream wants a path.
+    let name = PathBuf::from(&file_name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("pasted-image.png")
+        .to_string();
+    // `extract_document` takes a path for its extension check and for the PDF
+    // renderer; the bytes are what it actually reads.
+    let source = PathBuf::from(&name);
+    ingest_document(&state, &source, bytes, name)
+}
+
+/// Encrypt a document into the vault, extract from it, and file every candidate
+/// for review. Shared by every import path so they cannot diverge.
+fn ingest_document(
+    state: &AppState,
+    source: &Path,
+    bytes: Vec<u8>,
+    name: String,
+) -> Result<Dashboard> {
+    let hash = hex::encode(Sha256::digest(&bytes));
     let detected = imports::detect_document(&bytes, &name)
         .map_err(|error| AppError::Extract(error.to_string()))?;
 
@@ -6429,7 +6483,7 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
             |row| row.get::<_, String>(0),
         )
         .unwrap_or_else(|_| "Etc/UTC".into());
-    let extraction = imports::extract_document(&source, &bytes, &name, &timezone, &state.ocr);
+    let extraction = imports::extract_document(source, &bytes, &name, &timezone, &state.ocr);
     let (status, extraction_error) = match &extraction {
         Ok(result) if result.candidates.is_empty() => (
             "needs_attention",
@@ -6524,7 +6578,8 @@ fn list_documents(
                 COALESCE(SUM(CASE WHEN c.status='approved' THEN 1 ELSE 0 END),0)
          FROM documents d
          LEFT JOIN import_candidates c ON c.document_id=d.id
-         WHERE d.vault_path!='' AND (?1='' OR lower(d.file_name) LIKE ?2 ESCAPE '\\')
+         WHERE (d.vault_path!='' OR d.content_shredded=1)
+           AND (?1='' OR lower(d.file_name) LIKE ?2 ESCAPE '\\')
          GROUP BY d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error
          ORDER BY datetime(d.imported_at) DESC,d.id DESC
          LIMIT 250",
@@ -6545,6 +6600,72 @@ fn list_documents(
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(documents)
+}
+
+/// Delete the encrypted image behind any screenshot whose candidates are all
+/// settled, keeping the row so its evidence still reads.
+///
+/// A screenshot is a picture of a student's own screen, and once every class it
+/// proposed has been approved or dismissed there is nothing left to look at.
+/// Keeping it would grow the vault forever to preserve an image nobody opens;
+/// deleting the extracted text with it would break the evidence quotes the
+/// review queue is built on. So the blob goes and the text stays.
+///
+/// Only images. A syllabus PDF is a document a student will want to open again,
+/// and a settled one is not evidence that it has stopped being useful.
+fn shred_settled_screenshots(db: &Connection, vault: &Path, root: &Path) -> Result<()> {
+    if screenshot_retention(db) != "shred_when_settled" {
+        return Ok(());
+    }
+    let mut statement = db.prepare(
+        "SELECT d.id, d.vault_path FROM documents d
+         WHERE d.vault_path != '' AND d.content_shredded = 0
+           AND d.mime LIKE 'image/%'
+           AND EXISTS(SELECT 1 FROM import_candidates c WHERE c.document_id = d.id)
+           AND NOT EXISTS(
+             SELECT 1 FROM import_candidates c
+             WHERE c.document_id = d.id AND c.status = 'pending'
+           )",
+    )?;
+    let settled = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(statement);
+
+    for (id, vault_path) in settled {
+        let path = PathBuf::from(&vault_path);
+        // Never follow a path out of the vault, whatever the row says. The value
+        // is written by this app, but a delete driven by a database string is
+        // worth constraining regardless.
+        if !path.starts_with(vault) && !path.starts_with(root) {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            // Already gone is the desired end state, not a failure.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => continue,
+        }
+        db.execute(
+            "UPDATE documents SET vault_path='', wrapped_key='', key_nonce='', content_nonce='',
+                                  content_shredded=1 WHERE id=?1",
+            params![id],
+        )?;
+    }
+    Ok(())
+}
+
+/// How long an imported screenshot is kept. `shred_when_settled` is the default;
+/// `keep` treats it like any other document.
+fn screenshot_retention(db: &Connection) -> String {
+    db.query_row(
+        "SELECT value FROM settings WHERE key='screenshot_retention'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .unwrap_or_else(|_| "shred_when_settled".into())
 }
 
 /// Map a managed-AI candidate kind onto a kind this app can actually apply.
@@ -6585,7 +6706,10 @@ fn get_document_evidence(
 /// pattern columns went missing here while the `dashboard` query had them.
 fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candidate>> {
     let exists = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1 AND vault_path!='')",
+        // A shredded screenshot still has evidence worth reading, even though
+        // the image behind it is gone. A Canvas stub, which never had a blob,
+        // still does not.
+        "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1 AND (vault_path!='' OR content_shredded=1))",
         params![document_id],
         |row| row.get::<_, i64>(0),
     )? != 0;
@@ -7077,6 +7201,7 @@ fn approve_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result
         }
     }
     transaction.commit()?;
+    shred_settled_screenshots(&db, &state.vault, &state.root)?;
     regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
     dashboard(&db, &state.ocr)
 }
@@ -7101,6 +7226,7 @@ fn reject_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result<
         }
     }
     transaction.commit()?;
+    shred_settled_screenshots(&db, &state.vault, &state.root)?;
     dashboard(&db, &state.ocr)
 }
 
@@ -7804,6 +7930,7 @@ fn main() {
             dismiss_reminder,
             request_managed_ai,
             import_document,
+            import_document_bytes,
             list_documents,
             get_document_evidence,
             approve_candidates,
@@ -8505,6 +8632,105 @@ mod tests {
         }
     }
 
+    // A screenshot is a picture of the student's own screen. Once every class it
+    // proposed is approved or dismissed there is nothing left to look at, so the
+    // image goes -- but the extracted text stays, because the review queue's
+    // evidence quotes are built on it.
+    #[test]
+    fn a_settled_screenshot_loses_its_image_but_keeps_its_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let conn = open_database(&directory.path().join("shred.db"), &random_key()).unwrap();
+
+        let mut make = |id: &str, mime: &str, status: &str| {
+            let blob = vault.join(format!("{id}.vault"));
+            fs::write(&blob, b"ciphertext").unwrap();
+            conn.execute(
+                "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+                 VALUES(?1,?2,?3,?4,'k','n','c',?1,'2026-08-01T00:00:00Z')",
+                params![id, format!("{id}.png"), mime, blob.to_string_lossy()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,status)
+                 VALUES(?1,?2,'class_meeting','Statistics 201','STA 201','STA 201 MWF 9:00','screenshot',?1,0.9,?3)",
+                params![format!("cand-{id}"), id, status],
+            )
+            .unwrap();
+            blob
+        };
+        let settled = make("11111111-1111-4111-8111-111111111111", "image/png", "approved");
+        let pending = make("22222222-2222-4222-8222-222222222222", "image/png", "pending");
+        let syllabus = make("33333333-3333-4333-8333-333333333333", "application/pdf", "approved");
+
+        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+
+        assert!(!settled.exists(), "a settled screenshot's image is deleted");
+        assert!(pending.exists(), "a screenshot still under review is kept");
+        assert!(
+            syllabus.exists(),
+            "a syllabus is a document a student reopens; settling its candidates says nothing about that"
+        );
+
+        // The row survives and its evidence still reads, which is the whole
+        // point of shredding the blob rather than the record.
+        let evidence =
+            document_evidence_in(&conn, "11111111-1111-4111-8111-111111111111").unwrap();
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].evidence, "STA 201 MWF 9:00");
+
+        // Nothing is left behind that could decrypt an image that no longer
+        // exists.
+        let (path, wrapped, shredded): (String, String, i64) = conn
+            .query_row(
+                "SELECT vault_path,wrapped_key,content_shredded FROM documents WHERE id=?1",
+                params!["11111111-1111-4111-8111-111111111111"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(path, "");
+        assert_eq!(wrapped, "");
+        assert_eq!(shredded, 1);
+
+        // Running the sweep again is a no-op rather than an error.
+        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+    }
+
+    #[test]
+    fn keeping_screenshots_is_one_preference_away() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let conn = open_database(&directory.path().join("keep.db"), &random_key()).unwrap();
+        assert_eq!(screenshot_retention(&conn), "shred_when_settled");
+
+        let id = "44444444-4444-4444-8444-444444444444";
+        let blob = vault.join(format!("{id}.vault"));
+        fs::write(&blob, b"ciphertext").unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES(?1,'shot.png','image/png',?2,'k','n','c',?1,'2026-08-01T00:00:00Z')",
+            params![id, blob.to_string_lossy()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,status)
+             VALUES('c1',?1,'class_meeting','S','S','e','screenshot','u',0.9,'approved')",
+            params![id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('screenshot_retention','keep')
+             ON CONFLICT(key) DO UPDATE SET value='keep'",
+            [],
+        )
+        .unwrap();
+
+        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+        assert!(blob.exists(), "the preference is honoured");
+    }
+
     #[test]
     fn planner_ai_and_sync_schema_migrations_are_additive_and_versioned() {
         let directory = tempfile::tempdir().unwrap();
@@ -8519,13 +8745,20 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
         // 12 adds the weekly pattern a class_meeting candidate carries, which
         // the single-instant datetime columns cannot express.
         let candidate_columns = table_columns(&conn, "import_candidates").unwrap();
         for column in ["weekdays", "starts_at_local", "ends_at_local", "timezone"] {
             assert!(candidate_columns.contains(column), "missing {column}");
         }
+        // 13 lets a screenshot's image be deleted once its candidates are
+        // settled while the row survives, so the evidence quotes still read.
+        // Distinct from the empty vault_path of a Canvas stub, which never had
+        // an image at all.
+        assert!(table_columns(&conn, "documents")
+            .unwrap()
+            .contains("content_shredded"));
         for table in ["sync_entity_versions", "sync_set_elements"] {
             assert_eq!(
                 conn.query_row(

@@ -24,6 +24,13 @@ const MAX_ARCHIVE_UNCOMPRESSED: u64 = 100 * 1024 * 1024;
 const MAX_RECURRENCES: u16 = 512;
 const MAX_OCR_PAGES: usize = 100;
 const MAX_TOOL_OUTPUT: usize = 4 * 1024 * 1024;
+/// Per-segment cap on retained word boxes.
+///
+/// A dense screenshot is a few thousand words and the geometry is cheap; a
+/// hundred OCR'd PDF pages at the same rate is not, and only the first page of a
+/// scan is ever a schedule. The text is unaffected either way — this bounds only
+/// what the layout reader can see.
+const MAX_OCR_TOKENS: usize = 20_000;
 const PDF_RENDER_TIMEOUT: StdDuration = StdDuration::from_secs(60);
 const OCR_PAGE_TIMEOUT: StdDuration = StdDuration::from_secs(45);
 const RUNTIME_PROBE_TIMEOUT: StdDuration = StdDuration::from_secs(5);
@@ -392,11 +399,58 @@ fn probe_tesseract(tesseract: &Path, tessdata: Option<&Path>) -> (bool, bool) {
     (true, english_available)
 }
 
+/// One recognised word, with where it sat on the page.
+///
+/// Tesseract reports this geometry and it used to be read and thrown away. A
+/// schedule is a layout: the "9:00" in the left gutter and the "PSY 101" three
+/// columns over are one class, and nothing in the flattened text says so. The
+/// coordinates are the only thing that does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OcrToken {
+    pub text: String,
+    pub left: i64,
+    pub top: i64,
+    pub width: i64,
+    pub height: i64,
+    /// 0.0–1.0. Tesseract reports -1 for tokens it declines to score; those are
+    /// dropped rather than counted as certain.
+    pub confidence: f64,
+    /// Tesseract's own block/paragraph/line/word numbering, kept so reading
+    /// order can fall back on it when geometry alone is ambiguous.
+    pub block: u32,
+    pub paragraph: u32,
+    pub line: u32,
+    pub word: u32,
+}
+
+impl OcrToken {
+    pub fn right(&self) -> i64 {
+        self.left + self.width
+    }
+
+    pub fn bottom(&self) -> i64 {
+        self.top + self.height
+    }
+
+    /// Vertical midpoint, which is what rows are clustered on: two words in the
+    /// same row rarely share a `top` because glyph heights differ.
+    pub fn center_y(&self) -> i64 {
+        self.top + self.height / 2
+    }
+
+    pub fn center_x(&self) -> i64 {
+        self.left + self.width / 2
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Segment {
     pub text: String,
     pub locator: String,
     pub confidence: f64,
+    /// Empty for every source that is already text. Only OCR has geometry to
+    /// preserve, and only the schedule reader has any use for it.
+    pub tokens: Vec<OcrToken>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -548,6 +602,9 @@ pub fn extract_document(
                         text,
                         locator: format!("page {}", index + 1),
                         confidence: 1.0,
+                        // Text extracted from the PDF itself, so there is no
+                        // recognised geometry to keep.
+                        tokens: Vec::new(),
                     })
                 })
                 .collect();
@@ -586,6 +643,7 @@ pub fn extract_document(
                     text: text.into(),
                     locator: "text body".into(),
                     confidence: 1.0,
+                    tokens: Vec::new(),
                 }],
                 tz,
             )
@@ -629,6 +687,7 @@ fn extract_office_xml(
                 text,
                 locator: format!("{locator_name} {}", position + 1),
                 confidence: 1.0,
+                tokens: Vec::new(),
             });
         }
     }
@@ -1338,33 +1397,67 @@ fn read_capped<R: Read>(mut reader: R) -> std::io::Result<Vec<u8>> {
     Ok(output)
 }
 
+/// Read Tesseract's TSV into text *and* geometry.
+///
+/// The columns are `level, page, block, par, line, word, left, top, width,
+/// height, conf, text`. Only the text and an averaged confidence used to
+/// survive; `left`/`top`/`width`/`height` were parsed as part of the row and
+/// then dropped, which made a schedule grid unreadable downstream — the numbers
+/// in the time gutter and the course code three columns over are one class, and
+/// nothing in the flattened string says so.
+///
+/// `word` is now read as well, so words within a line are ordered by their
+/// position rather than by the order Tesseract happened to emit them.
 fn parse_tesseract_tsv(tsv: &str, locator: &str) -> Result<Segment, ImportError> {
-    let mut lines: BTreeMap<(u32, u32, u32, u32), Vec<String>> = BTreeMap::new();
+    let mut lines: BTreeMap<(u32, u32, u32, u32), Vec<(u32, String)>> = BTreeMap::new();
     let mut confidences = Vec::new();
+    let mut tokens = Vec::new();
     for row in tsv.lines().skip(1) {
         let columns = row.splitn(12, '\t').collect::<Vec<_>>();
         if columns.len() != 12 || columns[0] != "5" || columns[11].trim().is_empty() {
             continue;
         }
-        let key = (
-            columns[1].parse().unwrap_or_default(),
-            columns[2].parse().unwrap_or_default(),
-            columns[3].parse().unwrap_or_default(),
-            columns[4].parse().unwrap_or_default(),
-        );
-        lines
-            .entry(key)
-            .or_default()
-            .push(columns[11].trim().into());
-        if let Ok(confidence) = columns[10].parse::<f64>() {
-            if confidence >= 0.0 {
-                confidences.push(confidence / 100.0);
-            }
+        let number = |index: usize| columns[index].parse::<u32>().unwrap_or_default();
+        let pixels = |index: usize| columns[index].parse::<i64>().unwrap_or_default();
+        let key = (number(1), number(2), number(3), number(4));
+        let word = number(5);
+        let text = columns[11].trim().to_string();
+        // Tesseract scores a token it is unsure of as -1. Treating that as
+        // certainty is how a garbled page comes back looking confident.
+        let confidence = columns[10]
+            .parse::<f64>()
+            .ok()
+            .filter(|value| *value >= 0.0)
+            .map(|value| value / 100.0);
+        if let Some(confidence) = confidence {
+            confidences.push(confidence);
         }
+        if tokens.len() < MAX_OCR_TOKENS {
+            tokens.push(OcrToken {
+                text: text.clone(),
+                left: pixels(6),
+                top: pixels(7),
+                width: pixels(8),
+                height: pixels(9),
+                confidence: confidence.unwrap_or(0.0),
+                block: key.1,
+                paragraph: key.2,
+                line: key.3,
+                word,
+            });
+        }
+        lines.entry(key).or_default().push((word, text));
     }
     let text = lines
-        .values()
-        .map(|words| words.join(" "))
+        .values_mut()
+        .map(|words| {
+            words.sort_by_key(|(word, _)| *word);
+            words
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .collect::<Vec<_>>()
         .join("\n");
     if text.trim().is_empty() {
@@ -1379,6 +1472,7 @@ fn parse_tesseract_tsv(tsv: &str, locator: &str) -> Result<Segment, ImportError>
         text,
         locator: locator.into(),
         confidence,
+        tokens,
     })
 }
 
@@ -1597,6 +1691,83 @@ mod tests {
         let segment = parse_tesseract_tsv(tsv, "page 1 OCR").unwrap();
         assert_eq!(segment.text, "Paper due");
         assert!((segment.confidence - 0.85).abs() < 0.001);
+    }
+
+    const TSV_HEADER: &str =
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n";
+
+    // The geometry was on the wire all along -- Tesseract is already asked for
+    // tsv -- and was parsed and dropped. A schedule is a layout, so a reader that
+    // only sees the flattened string cannot tell which column a time belongs to.
+    #[test]
+    fn ocr_keeps_the_box_around_every_word() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+             5\t1\t1\t1\t1\t1\t40\t120\t60\t18\t96\tPSY\n\
+             5\t1\t1\t1\t1\t2\t110\t120\t34\t18\t94\t101\n\
+             5\t1\t1\t2\t1\t1\t40\t160\t52\t18\t91\t9:00\n"
+        );
+        let segment = parse_tesseract_tsv(&tsv, "page 1 OCR").unwrap();
+        assert_eq!(segment.text, "PSY 101\n9:00");
+        assert_eq!(segment.tokens.len(), 3);
+
+        let psy = &segment.tokens[0];
+        assert_eq!(psy.text, "PSY");
+        assert_eq!((psy.left, psy.top, psy.width, psy.height), (40, 120, 60, 18));
+        assert_eq!(psy.right(), 100);
+        assert_eq!(psy.bottom(), 138);
+        assert_eq!(psy.center_y(), 129);
+
+        // "PSY" and "101" share a row; "9:00" sits on the next one. That is the
+        // whole basis of clustering a grid, so it has to survive.
+        assert_eq!(segment.tokens[1].center_y(), psy.center_y());
+        assert!(segment.tokens[2].center_y() > psy.center_y());
+    }
+
+    // Tesseract emits -1 for a word it declines to score. Averaging that in as
+    // if it were a real reading makes a garbled page look confident.
+    #[test]
+    fn unscored_words_do_not_count_as_certainty() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+             5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t90\tPaper\n\
+             5\t1\t1\t1\t1\t2\t0\t0\t1\t1\t-1\tdue\n"
+        );
+        let segment = parse_tesseract_tsv(&tsv, "page 1 OCR").unwrap();
+        assert_eq!(segment.text, "Paper due");
+        assert!((segment.confidence - 0.90).abs() < 0.001);
+        assert_eq!(segment.tokens.len(), 2);
+        assert_eq!(segment.tokens[1].confidence, 0.0);
+    }
+
+    // Words within a line are ordered by word_num, not by the order Tesseract
+    // happened to emit them, so a reordered TSV still reads as one sentence.
+    #[test]
+    fn words_within_a_line_are_ordered_by_position() {
+        let tsv = format!(
+            "{TSV_HEADER}\
+             5\t1\t1\t1\t1\t3\t200\t10\t30\t12\t90\tThursday\n\
+             5\t1\t1\t1\t1\t1\t10\t10\t40\t12\t90\tPSY\n\
+             5\t1\t1\t1\t1\t2\t60\t10\t30\t12\t90\t101\n"
+        );
+        let segment = parse_tesseract_tsv(&tsv, "page 1 OCR").unwrap();
+        assert_eq!(segment.text, "PSY 101 Thursday");
+    }
+
+    // A hundred OCR'd pages of geometry is not worth holding; only a screenshot
+    // is ever a schedule. The text is unaffected by the cap.
+    #[test]
+    fn retained_geometry_is_bounded() {
+        let mut tsv = String::from(TSV_HEADER);
+        for word in 0..(MAX_OCR_TOKENS + 500) {
+            tsv.push_str(&format!(
+                "5\t1\t1\t1\t{}\t1\t0\t{}\t10\t10\t90\tw{word}\n",
+                word, word
+            ));
+        }
+        let segment = parse_tesseract_tsv(&tsv, "page 1 OCR").unwrap();
+        assert_eq!(segment.tokens.len(), MAX_OCR_TOKENS);
+        assert!(segment.text.contains(&format!("w{}", MAX_OCR_TOKENS + 499)));
     }
 
     #[test]

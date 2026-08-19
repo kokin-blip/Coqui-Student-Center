@@ -795,7 +795,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 12,
+      schemaVersion: 13,
       onboarding: onboardingMode ? structuredClone(browserOnboardingState) : null,
       dashboard: onboardingMode ? null : structuredClone(browserSeed),
     };
@@ -948,7 +948,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 12,
+      schemaVersion: 13,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -1715,6 +1715,18 @@ export async function selectAndImport(): Promise<Dashboard | null> {
 }
 export async function importDocumentPath(path: string) {
   return call<Dashboard>("import_document", { path });
+}
+/**
+ * Import an image the app was handed rather than one it read off disk.
+ *
+ * This is the clipboard path. A pasted screenshot has no file to point at, so
+ * the bytes come off the DOM `paste` event and go straight to the native side,
+ * which encrypts and extracts them exactly as it does a chosen file. Deliberately
+ * not the Tauri clipboard plugin: reacting to a paste needs no permission to read
+ * the clipboard whenever it likes.
+ */
+export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
+  return call<Dashboard>("import_document_bytes", { fileName, bytes: Array.from(bytes) });
 }
 export async function listDocuments(query = "") {
   if (!isDesktop()) {
