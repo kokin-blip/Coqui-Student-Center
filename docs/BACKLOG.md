@@ -1,6 +1,6 @@
 # Backlog
 
-Open work after 0.9.2, with the reasoning behind each item so it does not have to
+Open work after 0.10.0, with the reasoning behind each item so it does not have to
 be rediscovered. Ordered roughly by value.
 
 Decisions already made are recorded at the bottom. Re-open them deliberately
@@ -9,6 +9,36 @@ rather than by accident.
 ---
 
 ## 1. Course catalog coverage
+
+**What 0.10.0 changed.** A thin catalog matters less than it did. A student who
+cannot find their course in the bundled 133 can now paste a screenshot of their
+own schedule and get their classes back, which works at any school and is always
+current — the third option this section used to list as the better product
+answer. The catalog is now a convenience for typing a course name, not the only
+road in.
+
+**What is still manual.** Everything below. `catalogSource` for ASU is
+`kind: "none"` and says why, and the class list is still whatever was exported by
+hand.
+
+**What is now automatic.** Only the *academic calendar*, not the catalog. A
+school's term dates and no-class dates can be refreshed in-app from its published
+registrar page, or regenerated at build time:
+
+```
+npm run calendar:prepare -- --institution=104151          # fetches, dry run
+npm run calendar:prepare -- --institution=104151 --apply  # writes the descriptor
+npm run calendar:verify
+```
+
+The refresh returns a diff and never writes; a changed term date surfaces as an
+explicit conflict. `calendar:verify` runs in CI and the release lane beside
+`catalog:verify`.
+
+**noClassDates are still empty for ASU.** The parser handles them and the fixture
+exercises them, but nobody has run `calendar:prepare` against the live registrar
+page, and holidays invented to make a fixture pass are exactly the guess this app
+refuses to make. Running it once is the remaining work.
 
 **State.** 133 courses, 381 sections, 45 subject codes, Fall 2026 only. That is
 four General Studies categories (HUAD, GCSI, CIVI, AMIT) plus CSE 240 — whatever
@@ -44,8 +74,9 @@ the row after the days. That silently corrupted three sections and cost three
 parser bugs. Reading the rendered results table gives structured rows and removes
 that entire class of problem.
 
-**Unresolved question, decide before building anything automated:** does a harvest
-stay local to one machine, or ship inside the app to other students? Bundling
+**Unresolved question, still open for the catalog** (the screenshot path sidesteps
+it, but automating a harvest would not): does a harvest stay local to one machine,
+or ship inside the app to other students? Bundling
 data pulled from one student's authenticated session and distributing it is a
 different posture from that student fetching their own. A third option is shipping
 the *tooling* rather than the data, so each student harvests their own courses —
@@ -153,6 +184,50 @@ a schedule that was never in the file.
 falling back to the active term, and approval fails with a plain message if no
 term exists. A calendar file has no notion of terms and a recurrence count says
 nothing about which term a class sits in.
+
+**Vision-model grounding is anchored to locally-extracted OCR text.** The rule
+that a candidate's `evidence` must be a literal substring of the excerpt is what
+stops the model inventing a due date, and an image has no excerpt. Rather than
+weaken it for the screenshot path, the image never travels alone: the app OCRs it
+on the student's machine and sends that text as the excerpt with the picture
+attached. The model's job becomes grouping text we already hold — which is where
+it actually helps, since the failure on a grid is almost never character
+recognition but knowing that the 9:00 in the gutter and the PSY 101 three columns
+over are one class. The alternative considered was an `ImageEvidence { bbox }`
+variant validated against local OCR tokens inside that box; it is more code, more
+surface, and still needs the same local OCR pass.
+
+**An AI-read screenshot counts as the student fetching their own data.** The image
+is a picture of their own screen, they attach it deliberately, and each send is a
+separate explicit action with a sentence saying the image leaves the computer.
+That is a different posture from harvesting a third party's data through an access
+control, which is what the catalog decision above forbids. The distinction worth
+holding is consent and ownership, not whether bytes travel.
+
+**Screenshots are deleted once their candidates are settled.** When every class an
+image proposed has been approved or dismissed, the encrypted blob is shredded and
+the row is kept so the evidence quotes still read. Keeping the image would grow
+the vault forever to preserve something nobody opens; deleting the extracted text
+with it would break the review queue's evidence. Syllabus PDFs are untouched — a
+student reopens those, and settling their candidates says nothing about that. One
+preference turns it off.
+
+**Schedule fixtures are token streams, not images.** `test-fixtures/schedule/*.tsv`
+is what `parse_tesseract_tsv` produces, and it exercises the layout reasoning that
+is the actual subject of `schedule_reader.rs`. It does not exercise character
+recognition, and does not claim to. Committing PNGs instead would make every test
+depend on a Tesseract build and on that build's version-to-version drift, for a
+property the reader does not own. TSVs captured from real screenshots drop in
+without touching the tests, and are worth adding when a Tesseract build is at hand.
+
+**Registrar calendars are read with a row pattern, not a CSS selector.** ASU's
+academic calendar is a run of headings and bolded labels rather than a table, so
+selecting a node buys nothing, and registrar pages are frequently not well-formed
+besides. A named-group regex over de-tagged text states the rule as descriptor
+data and keeps an HTML parser out of the binary. The one structural thing that
+does survive de-tagging is block boundaries, and it has to: flattened to a single
+line, a row like "Classes end—last day to process transactions. Session C December
+4, 2026" loses its label entirely.
 
 **Sync still requires Supabase**, for auth (`createSupabaseAccessTokenVerifier`)
 and for the row-level policies that use `auth.uid()`. The `SyncRepository`
