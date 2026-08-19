@@ -19,13 +19,19 @@ export type PlanBlock = {
 };
 export type ImportCandidate = {
   id: string;
-  kind: "task" | "commitment" | "course";
+  kind: "task" | "commitment" | "course" | "class_meeting";
   title: string;
   course: string;
   dueAt?: string;
   startsAt?: string;
   endsAt?: string;
   durationMinutes?: number;
+  // Only on class_meeting, which is a weekly pattern rather than one dated
+  // occurrence, so review shows days and a local clock instead of a datetime.
+  weekdays?: number[];
+  startsAtLocal?: string;
+  endsAtLocal?: string;
+  timezone?: string;
   evidence: string;
   sourceLocator: string;
   sourceType: string;
@@ -612,6 +618,24 @@ const browserSeed: Dashboard = {
         "Canvas now lists this assignment due Sunday, August 16 at 11:59 PM.",
       sourceLocator: "Canvas · English 102 · assignment",
       sourceType: "canvas_assignment",
+      confidence: 1,
+      warnings: [],
+      status: "pending",
+    },
+    {
+      id: "ics-weekly-demo",
+      kind: "class_meeting",
+      title: "Statistics 201",
+      course: "Statistics 201",
+      startsAt: "2026-08-24T16:00:00Z",
+      weekdays: [1, 3, 5],
+      startsAtLocal: "09:00",
+      endsAtLocal: "09:50",
+      timezone: "America/Phoenix",
+      evidence:
+        "SUMMARY:Statistics 201 · DTSTART:20260824T090000 · RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR",
+      sourceLocator: "calendar event sta201 · weekly pattern",
+      sourceType: "document",
       confidence: 1,
       warnings: [],
       status: "pending",

@@ -382,6 +382,12 @@ struct Candidate {
     confidence: f64,
     warnings: Vec<String>,
     status: String,
+    /// Only meaningful for `class_meeting`, which review renders as a weekly
+    /// pattern rather than as a single dated occurrence.
+    weekdays: Vec<i64>,
+    starts_at_local: String,
+    ends_at_local: String,
+    timezone: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -2101,7 +2107,8 @@ fn dashboard_with_notice(
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut candidate_query = conn.prepare(
-    "SELECT id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_type,source_url,confidence,warnings,status
+    "SELECT id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_type,source_url,confidence,warnings,status,
+            weekdays,starts_at_local,ends_at_local,timezone
      FROM import_candidates ORDER BY status,confidence DESC",
   )?;
     let candidates = candidate_query
@@ -2123,6 +2130,10 @@ fn dashboard_with_notice(
                 confidence: row.get(12)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
                 status: row.get(14)?,
+                weekdays: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
+                starts_at_local: row.get(16)?,
+                ends_at_local: row.get(17)?,
+                timezone: row.get(18)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -6477,6 +6488,10 @@ fn get_document_evidence(
                 confidence: row.get(12)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
                 status: row.get(14)?,
+                weekdays: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
+                starts_at_local: row.get(16)?,
+                ends_at_local: row.get(17)?,
+                timezone: row.get(18)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;

@@ -178,6 +178,9 @@ import {
   SyncProtectionStatus,
 } from "./native";
 
+// Weekday index 0 is Sunday, matching how meetings are stored.
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 type Modal =
   | "settings"
   | "search"
@@ -1716,17 +1719,15 @@ export function StudentCenter() {
                             ? "Calendar commitment"
                             : c.kind === "course"
                               ? "Active course"
-                              : "Academic task"}{" "}
+                              : c.kind === "class_meeting"
+                                ? "Weekly class"
+                                : "Academic task"}{" "}
                           · {c.course}
-                          {c.dueAt
-                            ? ` · Due ${new Date(c.dueAt).toLocaleString()}`
-                            : ""}
-                          {c.startsAt
-                            ? ` · ${new Date(c.startsAt).toLocaleString()}`
-                            : ""}
-                          {c.durationMinutes
-                            ? ` · ${c.durationMinutes} min`
-                            : ""}
+                          {/* A weekly class repeats; showing the first
+                              occurrence as a date would read as a one-off. */}
+                          {c.kind === "class_meeting"
+                            ? `${c.weekdays?.length ? ` · ${c.weekdays.map((day) => WEEKDAY_LABELS[day]).join(" ")}` : ""}${c.startsAtLocal ? ` · ${c.startsAtLocal}–${c.endsAtLocal}` : ""}${c.timezone ? ` · ${c.timezone}` : ""}`
+                            : `${c.dueAt ? ` · Due ${new Date(c.dueAt).toLocaleString()}` : ""}${c.startsAt ? ` · ${new Date(c.startsAt).toLocaleString()}` : ""}${c.durationMinutes ? ` · ${c.durationMinutes} min` : ""}`}
                         </small>
                         <q>{c.evidence}</q>
                         <em>
