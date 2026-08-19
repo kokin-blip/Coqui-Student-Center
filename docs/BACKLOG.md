@@ -212,13 +212,21 @@ with it would break the review queue's evidence. Syllabus PDFs are untouched —
 student reopens those, and settling their candidates says nothing about that. One
 preference turns it off.
 
-**Schedule fixtures are token streams, not images.** `test-fixtures/schedule/*.tsv`
-is what `parse_tesseract_tsv` produces, and it exercises the layout reasoning that
-is the actual subject of `schedule_reader.rs`. It does not exercise character
-recognition, and does not claim to. Committing PNGs instead would make every test
-depend on a Tesseract build and on that build's version-to-version drift, for a
-property the reader does not own. TSVs captured from real screenshots drop in
-without touching the tests, and are worth adding when a Tesseract build is at hand.
+**Schedule fixtures are real OCR output, and the images sit beside them.** The
+first generation was a synthesized token stream, and it passed every test while
+the reader could not read a single genuine week grid — the same failure the
+calendar fixture had, for the same reason. Regenerate with
+`scripts/fixtures/render-schedule-images.py` and `tesseract <png> <name> --psm 6
+tsv`. The committed TSVs keep the suite deterministic and independent of a local
+Tesseract; the PNGs keep it honest and reproducible.
+
+**A class must print its own time or it is not read.** A block's height is a
+drawn rectangle and OCR only ever sees the words inside it, so a calendar with
+its hours only in a left gutter cannot say how long a class runs. Deriving the
+start from the ruler and fitting the drawing inset works and is still wrong: it
+produces confident times quietly fifteen minutes out. Declining, and naming which
+kind of unreadable it hit, is the answer — that message is what tells a student
+the AI reader is worth trying.
 
 **Registrar calendars are read with patterns, not a CSS selector.** Registrar
 pages are frequently not tables and frequently not well-formed, so selecting a
