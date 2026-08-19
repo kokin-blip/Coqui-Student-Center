@@ -1,0 +1,36 @@
+[
+  {
+    "kind": "class_meeting",
+    "title": "CSE 240",
+    "course": "CSE 240",
+    "weekdays": [
+      1,
+      3
+    ],
+    "startsAtLocal": "13:30",
+    "endsAtLocal": "14:45"
+  },
+  {
+    "kind": "class_meeting",
+    "title": "MAT 142",
+    "course": "MAT 142",
+    "weekdays": [
+      2,
+      4
+    ],
+    "startsAtLocal": "11:00",
+    "endsAtLocal": "12:15"
+  },
+  {
+    "kind": "class_meeting",
+    "title": "PSY 101",
+    "course": "PSY 101",
+    "weekdays": [
+      1,
+      3,
+      5
+    ],
+    "startsAtLocal": "09:00",
+    "endsAtLocal": "09:50"
+  }
+]

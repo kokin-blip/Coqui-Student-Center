@@ -577,6 +577,7 @@ pub fn extract_document(
     file_name: &str,
     timezone: &str,
     ocr: &OcrRuntime,
+    layouts: &[crate::school_provider::ScheduleLayout],
 ) -> Result<Extraction, ImportError> {
     let kind = detect_document(bytes, file_name)?;
     let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
@@ -623,8 +624,50 @@ pub fn extract_document(
             candidates_from_segments(file_name, &segments, tz)
         }
         DocumentKind::Image(_) => {
-            let segment = ocr_image(path, "image", ocr)?;
-            candidates_from_segments(file_name, &[segment], tz)
+            // A pasted image has no file behind it, only bytes and a name, so
+            // one is materialised for the OCR process to read. It lives in the
+            // system temp dir and is dropped at the end of this call; the
+            // durable copy is the encrypted one already in the vault.
+            let scratch;
+            let image_path = if path.is_file() {
+                path
+            } else {
+                let mut file = tempfile::Builder::new()
+                    .prefix("student-center-paste-")
+                    .suffix(&format!(".{}", kind.extension()))
+                    .tempfile()
+                    .map_err(ImportError::Io)?;
+                std::io::Write::write_all(&mut file, bytes).map_err(ImportError::Io)?;
+                scratch = file;
+                scratch.path()
+            };
+            let segment = ocr_image(image_path, "image", ocr)?;
+
+            // A screenshot of a schedule is the common case, so the layout
+            // reader runs first. It declines rather than guesses, and when it
+            // does the ordinary date-scanning path still gets its turn.
+            let reading = crate::schedule_reader::read_schedule(
+                &segment,
+                &crate::schedule_reader::ScheduleContext {
+                    layouts,
+                    timezone: timezone.into(),
+                    source_locator: format!("{file_name} · schedule"),
+                    known_courses: Vec::new(),
+                },
+            );
+            if reading.candidates.is_empty() {
+                warnings.extend(reading.warnings);
+                candidates_from_segments(file_name, &[segment], tz)
+            } else {
+                if !reading.confident {
+                    // Surfaced rather than hidden: the student is the one who
+                    // can see whether the times are right.
+                    warnings.push(
+                        "Some class times could not be read cleanly. Check each one before approving.".into(),
+                    );
+                }
+                reading.candidates
+            }
         }
         DocumentKind::Docx => {
             let segments = extract_office_xml(bytes, "word/", "paragraph")?;
@@ -1408,6 +1451,13 @@ fn read_capped<R: Read>(mut reader: R) -> std::io::Result<Vec<u8>> {
 ///
 /// `word` is now read as well, so words within a line are ordered by their
 /// position rather than by the order Tesseract happened to emit them.
+/// Test-only door onto the TSV parser, so the schedule reader's fixtures can be
+/// token streams rather than pictures.
+#[cfg(test)]
+pub fn parse_tesseract_tsv_for_test(tsv: &str, locator: &str) -> Result<Segment, ImportError> {
+    parse_tesseract_tsv(tsv, locator)
+}
+
 fn parse_tesseract_tsv(tsv: &str, locator: &str) -> Result<Segment, ImportError> {
     let mut lines: BTreeMap<(u32, u32, u32, u32), Vec<(u32, String)>> = BTreeMap::new();
     let mut confidences = Vec::new();
@@ -1575,7 +1625,8 @@ mod tests {
                 pdf,
                 "broken.pdf",
                 "Etc/UTC",
-                &OcrRuntime::discover(None)
+                &OcrRuntime::discover(None),
+                &[]
             ),
             Err(ImportError::Malformed(_))
         ));
@@ -1827,6 +1878,7 @@ mod tests {
             "syllabus.docx",
             "America/Phoenix",
             &OcrRuntime::discover(None),
+            &[],
         )
         .unwrap()
         .candidates;
@@ -1850,6 +1902,7 @@ mod tests {
             "course.pptx",
             "America/Phoenix",
             &OcrRuntime::discover(None),
+            &[],
         )
         .unwrap()
         .candidates;

@@ -11,6 +11,7 @@ mod pin;
 mod planner;
 mod profile;
 mod school_calendar;
+mod schedule_reader;
 mod school_provider;
 mod sync_crypto;
 mod sync_transport;
@@ -6483,7 +6484,12 @@ fn ingest_document(
             |row| row.get::<_, String>(0),
         )
         .unwrap_or_else(|_| "Etc/UTC".into());
-    let extraction = imports::extract_document(source, &bytes, &name, &timezone, &state.ocr);
+    // The layouts of the school the student actually attends, so a screenshot is
+    // read with that registrar's weekday spellings. A student at a school nobody
+    // has described gets an empty list and the reader's English defaults.
+    let layouts = student_schedule_layouts(&db);
+    let extraction =
+        imports::extract_document(source, &bytes, &name, &timezone, &state.ocr, &layouts);
     let (status, extraction_error) = match &extraction {
         Ok(result) if result.candidates.is_empty() => (
             "needs_attention",
@@ -6666,6 +6672,26 @@ fn screenshot_retention(db: &Connection) -> String {
         |row| row.get::<_, String>(0),
     )
     .unwrap_or_else(|_| "shred_when_settled".into())
+}
+
+/// Schedule layouts for the school on this profile, if it has a descriptor.
+fn student_schedule_layouts(db: &Connection) -> Vec<school_provider::ScheduleLayout> {
+    let Ok(raw) = db.query_row(
+        "SELECT value FROM settings WHERE key='institution_selection'",
+        [],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return Vec::new();
+    };
+    let Ok(selection) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    selection
+        .get("id")
+        .and_then(|id| id.as_str())
+        .and_then(school_provider_for)
+        .map(|provider| provider.schedule_layouts.clone())
+        .unwrap_or_default()
 }
 
 /// Map a managed-AI candidate kind onto a kind this app can actually apply.
