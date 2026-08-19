@@ -30,6 +30,14 @@ const institutionProviders = JSON.parse(await readFile(
   new URL("../../apps/desktop/src-tauri/resources/institution-setup-providers.json", import.meta.url),
   "utf8",
 ));
+const mainRs = await readFile(
+  new URL("../../apps/desktop/src-tauri/src/main.rs", import.meta.url),
+  "utf8",
+);
+const firstRunSpec = await readFile(
+  new URL("../../e2e/specs/first-run.spec.mjs", import.meta.url),
+  "utf8",
+);
 
 test("first-run UI is a four-stage local onboarding flow with no demo review", () => {
   for (const copy of [
@@ -42,7 +50,22 @@ test("first-run UI is a four-stage local onboarding flow with no demo review", (
     assert.match(onboarding, new RegExp(copy));
   }
   assert.doesNotMatch(onboarding, /Alex Morgan|demoReviewRequired|demoCandidates/);
-  assert.match(native, /schemaVersion: 11/);
+  // Derived from the Rust constant rather than written out here. Pinning the
+  // number in this file is what let the browser fixtures and the e2e assertion
+  // sit on 11 for a whole release after the schema moved to 12.
+  const schemaVersion = Number(/const CURRENT_SCHEMA_VERSION: i64 = (\d+);/.exec(mainRs)?.[1]);
+  assert.ok(schemaVersion > 0, "CURRENT_SCHEMA_VERSION must be readable from main.rs");
+  assert.match(native, new RegExp(`schemaVersion: ${schemaVersion},`));
+  assert.doesNotMatch(
+    native,
+    new RegExp(`schemaVersion: (?!${schemaVersion},)\\d+,`),
+    "every browser fixture must report the current schema version",
+  );
+  assert.match(
+    firstRunSpec,
+    new RegExp(`assert\\.equal\\(bootstrap\\.schemaVersion, ${schemaVersion}\\);`),
+    "the e2e first-run spec asserts the schema version and drifts silently otherwise",
+  );
 });
 
 // A student can attend several ASU campuses at once, so the campus step is a

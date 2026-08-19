@@ -6454,6 +6454,15 @@ fn get_document_evidence(
     Uuid::parse_str(&document_id)
         .map_err(|_| AppError::Invalid("document identifier is invalid".into()))?;
     let db = state.db.lock().unwrap();
+    document_evidence_in(&db, &document_id)
+}
+
+/// The query behind `get_document_evidence`, split out so it can be tested
+/// without a Tauri `State`. The column list and the row indices below must stay
+/// in step: reading past the end of the `SELECT` is a runtime error that only
+/// fires once a document actually has candidates, which is how the four weekly
+/// pattern columns went missing here while the `dashboard` query had them.
+fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candidate>> {
     let exists = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1 AND vault_path!='')",
         params![document_id],
@@ -6464,7 +6473,8 @@ fn get_document_evidence(
     }
     let mut statement = db.prepare(
         "SELECT id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,
-                source_locator,source_type,source_url,confidence,warnings,status
+                source_locator,source_type,source_url,confidence,warnings,status,
+                weekdays,starts_at_local,ends_at_local,timezone
          FROM import_candidates WHERE document_id=?1
          ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
                   confidence DESC,id",
@@ -8274,6 +8284,45 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM courses", [], |row| row.get(0))
             .unwrap();
         assert_eq!(courses, 1, "importing twice should not duplicate the course");
+    }
+
+    // The evidence query used to select fifteen columns and then read indices
+    // fifteen through eighteen for the weekly pattern fields, so every call
+    // failed the moment a document had any candidate at all. Reading a
+    // class_meeting back is the case that regressed.
+    #[test]
+    fn document_evidence_returns_the_weekly_pattern_columns() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("evidence.db");
+        let key = random_key();
+        let conn = open_database(&path, &key).unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-1','schedule.png','image/png','v','k','n','c','s','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,
+                                           weekdays,starts_at_local,ends_at_local,timezone)
+             VALUES('cand-1','doc-1','class_meeting','Statistics 201','Statistics 201','STA 201 MWF 9:00',
+                    'screenshot','shot:sta201:weekly',0.9,'[1,3,5]','09:00','09:50','America/Phoenix')",
+            [],
+        )
+        .unwrap();
+
+        let evidence = document_evidence_in(&conn, "doc-1").unwrap();
+        assert_eq!(evidence.len(), 1);
+        let candidate = &evidence[0];
+        assert_eq!(candidate.kind, "class_meeting");
+        assert_eq!(candidate.evidence, "STA 201 MWF 9:00");
+        assert_eq!(candidate.weekdays, vec![1, 3, 5]);
+        assert_eq!(candidate.starts_at_local, "09:00");
+        assert_eq!(candidate.ends_at_local, "09:50");
+        assert_eq!(candidate.timezone, "America/Phoenix");
+
+        // A document with no vault blob is not evidence anyone can open.
+        assert!(document_evidence_in(&conn, "doc-missing").is_err());
     }
 
     #[test]
