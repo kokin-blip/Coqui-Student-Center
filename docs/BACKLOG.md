@@ -35,10 +35,12 @@ The refresh returns a diff and never writes; a changed term date surfaces as an
 explicit conflict. `calendar:verify` runs in CI and the release lane beside
 `catalog:verify`.
 
-**noClassDates are harvested.** `calendar:prepare` has been run against the live
-registrar page: six real no-class dates across three terms, and every term
-boundary the page states already agreed with the bundle. Re-run it when ASU
-publishes a new academic year.
+**noClassDates are harvested and wired.** `calendar:prepare` has been run
+against the live registrar page: six real no-class dates across three terms, and
+every term boundary the page states already agreed with the bundle. Since 0.10.1
+they reach `academic_calendar_events`, which the planner already honoured, so a
+holiday actually blocks scheduling. Re-run the harvest when ASU publishes a new
+academic year.
 
 **State.** 133 courses, 381 sections, 45 subject codes, Fall 2026 only. That is
 four General Studies categories (HUAD, GCSI, CIVI, AMIT) plus CSE 240 — whatever
@@ -184,6 +186,21 @@ a schedule that was never in the file.
 falling back to the active term, and approval fails with a plain message if no
 term exists. A calendar file has no notion of terms and a recurrence count says
 nothing about which term a class sits in.
+
+**A no-class day blocks study, not only classes.** `planner.rs` does not inspect
+`FixedConstraint.kind`, so a registrar holiday removes that day's capacity
+entirely rather than only its classes. That is what a student means by a holiday
+and it matches the existing UI copy ("No classes or schedulable work"), but it
+means a week-long spring break erases that week's study capacity. Kept
+deliberately in 0.10.1 rather than changed quietly; revisit it as a product
+question, not a bug.
+
+**Ship nothing that only a test can reach.** 0.10.0 shipped the calendar refresh
+built, registered, unit-tested and never called from the UI, and shipped
+harvested holidays that were displayed and then dropped. Both had passing tests
+and truthful-looking release notes. A feature is not done when its command
+works; it is done when a student can get to it and something changes as a
+result. Trace the path from a click to a stored record before writing the notes.
 
 **Vision-model grounding is anchored to locally-extracted OCR text.** The rule
 that a candidate's `evidence` must be a literal substring of the excerpt is what
