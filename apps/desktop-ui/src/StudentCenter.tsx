@@ -446,7 +446,6 @@ export function StudentCenter() {
     }, 150);
     return () => clearTimeout(timer);
   }, [modal, documentSearch, data?.candidates.length]);
-  const [dragActive, setDragActive] = useState(false);
   // What the registrar currently publishes, once the student has asked. Held
   // rather than applied: a term date is a critical academic date and a page
   // that changed under us is not authority to move anyone's finals.
@@ -1644,14 +1643,8 @@ export function StudentCenter() {
           close={() => setModal(null)}
         >
           <button
-            className={dragActive ? "dropzone dragging" : "dropzone"}
+            className="dropzone"
             disabled={busy}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragActive(true);
-            }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={() => setDragActive(false)}
             onClick={() =>
               run(async () => {
                 const next = await selectAndImport();

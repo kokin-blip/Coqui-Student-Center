@@ -1789,7 +1789,14 @@ export function pastedScheduleImage(event: ClipboardEvent): File | null {
   );
 }
 export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
-  return call<Dashboard>("import_document_bytes", { fileName, bytes: Array.from(bytes) });
+  // Sent as a raw body rather than Array.from(bytes): a 25 MB screenshot
+  // serialises to roughly 100 MB of JSON as a number array, built and parsed on
+  // both sides of the boundary, for every paste.
+  if (!isDesktop()) throw new Error("Native command unavailable in browser test mode");
+  return invoke<Dashboard>("import_document_bytes", {
+    fileName,
+    bytes: new Uint8Array(bytes),
+  });
 }
 export async function listDocuments(query = "") {
   if (!isDesktop()) {

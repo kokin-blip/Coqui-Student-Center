@@ -1394,11 +1394,12 @@ fn ocr_scanned_pdf(path: &Path, runtime: &OcrRuntime) -> Result<Vec<Segment>, Im
     }
     let mut segments = Vec::new();
     for (index, image) in images.iter().enumerate() {
-        segments.push(ocr_image(
-            image,
-            &format!("page {} OCR", index + 1),
-            runtime,
-        )?);
+        let mut segment = ocr_image(image, &format!("page {} OCR", index + 1), runtime)?;
+        // Only a screenshot is ever a schedule, and nothing reads a scanned
+        // PDF's word boxes. A hundred pages of them is a couple of hundred
+        // megabytes retained for no reader at all.
+        segment.tokens = Vec::new();
+        segments.push(segment);
     }
     if segments.is_empty() {
         return Err(ImportError::OcrUnavailable(
@@ -1408,6 +1409,7 @@ fn ocr_scanned_pdf(path: &Path, runtime: &OcrRuntime) -> Result<Vec<Segment>, Im
     Ok(segments)
 }
 
+/// OCR one image, keeping the per-word geometry the schedule reader needs.
 fn ocr_image(path: &Path, locator: &str, runtime: &OcrRuntime) -> Result<Segment, ImportError> {
     if !command_available(&runtime.tesseract) {
         return Err(ImportError::OcrUnavailable(

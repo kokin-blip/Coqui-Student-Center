@@ -529,6 +529,22 @@ fn strip_tags(body: &str) -> String {
             .get(..8)
             .map(|value| value.to_ascii_lowercase())
             .unwrap_or_default();
+        // Comments are skipped whole. Consuming only to the first `>` leaks the
+        // body of any comment containing one — a conditional comment, or a
+        // commented-out block of markup — straight into the parsed text as
+        // calendar rows. The JS mirror strips them; this did not.
+        if rest.starts_with("<!--") {
+            let end = rest.find("-->").map(|at| index + at + 3);
+            while let Some((next, _)) = chars.peek() {
+                if end.is_some_and(|end| *next < end) {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            out.push(' ');
+            continue;
+        }
         let skip_to = if lowered_start.starts_with("<script") {
             Some("</script")
         } else if lowered_start.starts_with("<style") {
@@ -924,6 +940,20 @@ mod tests {
         assert_eq!(entries.len(), 1, "read more than the one real row: {entries:?}");
         assert_eq!(entries[0].starts_on, "2026-08-20");
         assert_eq!(entries[0].label, "Classes begin");
+    }
+
+    // A comment containing `>` used to leak its body into the parsed text, so a
+    // commented-out block of markup became calendar rows. The JS mirror already
+    // stripped comments; these two are claimed to agree.
+    #[test]
+    fn html_comments_are_dropped_whole() {
+        let body = "<p>Classes begin</p><!-- <p>Classes begin</p><p>January 5, 2026</p> -->\
+                    <p>August 20, 2026</p>";
+        let text = strip_tags(body);
+        assert!(!text.contains("January"), "comment body leaked: {text:?}");
+        let entries = parse_calendar(body, &asu_source()).unwrap();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0].starts_on, "2026-08-20");
     }
 
     #[test]
