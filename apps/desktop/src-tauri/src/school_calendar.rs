@@ -84,7 +84,7 @@ pub struct CalendarDiff {
     pub unmatched: Vec<CalendarEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TermChange {
     pub term_id: String,

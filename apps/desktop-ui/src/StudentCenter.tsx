@@ -78,7 +78,9 @@ import {
   AcademicTermRecord,
   ClassMeetingSeriesRecord,
   InstructorRecord,
+  CalendarDiff,
   Dashboard,
+  TermChange,
   deleteAcademicEvent,
   deleteAcademicTerm,
   deleteClassMeeting,
@@ -106,8 +108,10 @@ import {
   listenForAccountChanges,
   listenForOcrStatus,
   OcrStatus,
+  applyCalendarDiff,
   listenForFileDrops,
   pastedScheduleImage,
+  refreshSchoolCalendar,
   readScheduleWithAi,
   listenForNavigation,
   lockApp,
@@ -198,6 +202,7 @@ type Modal =
   | "security"
   | "notifications"
   | "updates"
+  | "calendar-refresh"
   | "account"
   | "delete-profile"
   | "recovery"
@@ -442,6 +447,17 @@ export function StudentCenter() {
     return () => clearTimeout(timer);
   }, [modal, documentSearch, data?.candidates.length]);
   const [dragActive, setDragActive] = useState(false);
+  // What the registrar currently publishes, once the student has asked. Held
+  // rather than applied: a term date is a critical academic date and a page
+  // that changed under us is not authority to move anyone's finals.
+  const [calendarDiff, setCalendarDiff] = useState<CalendarDiff | null>(null);
+  const [declinedChanges, setDeclinedChanges] = useState<string[]>([]);
+  const changeKey = (change: TermChange) => `${change.termName}:${change.field}`;
+  // The school on this profile. Empty for a custom or unset school, in which
+  // case there is no published calendar to read and the control says so.
+  const institutionId = onboarding?.draft.institution.custom
+    ? ""
+    : (onboarding?.draft.institution.id ?? "");
   /**
    * Paste a screenshot straight into the vault.
    *
@@ -1892,6 +1908,104 @@ export function StudentCenter() {
           )}
         </Modal>
       )}
+      {modal === "calendar-refresh" && calendarDiff && (
+        <Modal
+          title="Your school's calendar"
+          subtitle={`Read from ${calendarDiff.sourceLabel || "the registrar"} just now. Nothing changes until you approve it.`}
+          close={() => setModal(null)}
+        >
+          {calendarDiff.changedTerms.length || calendarDiff.addedNoClassDates.length ? (
+            <>
+              {calendarDiff.changedTerms.length > 0 && (
+                <div className="candidate-list">
+                  <p className="field-help">
+                    A term date is a critical academic date, so each one is shown
+                    with the value you have now beside the one the registrar
+                    publishes. Anything you have edited yourself is left alone.
+                  </p>
+                  {calendarDiff.changedTerms.map((change) => {
+                    const declined = declinedChanges.includes(changeKey(change));
+                    return (
+                      <label key={changeKey(change)}>
+                        <input
+                          type="checkbox"
+                          checked={!declined}
+                          onChange={(event) =>
+                            setDeclinedChanges((current) =>
+                              event.target.checked
+                                ? current.filter((key) => key !== changeKey(change))
+                                : [...current, changeKey(change)],
+                            )
+                          }
+                        />
+                        <span>
+                          <strong>{change.termName}</strong>
+                          <small>
+                            {change.field} · {change.current || "unset"} → {change.proposed}
+                          </small>
+                          <q>{change.evidence}</q>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {calendarDiff.addedNoClassDates.length > 0 && (
+                <div className="candidate-list">
+                  <p className="field-help">
+                    Holidays and breaks. Approving these stops the planner
+                    scheduling on those days.
+                  </p>
+                  {calendarDiff.addedNoClassDates.map((date) => (
+                    <label key={`${date.startsOn}-${date.label}`}>
+                      <input type="checkbox" checked readOnly />
+                      <span>
+                        <strong>{date.label}</strong>
+                        <small>
+                          {date.startsOn}
+                          {date.endsOn ? ` – ${date.endsOn}` : ""}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="modal-actions split-actions">
+                <span />
+                <button className="outline" onClick={() => setModal(null)}>
+                  Not now
+                </button>
+                <button
+                  className="solid"
+                  disabled={busy}
+                  onClick={() =>
+                    run(
+                      () =>
+                        applyCalendarDiff({
+                          termChanges: calendarDiff.changedTerms.filter(
+                            (change) => !declinedChanges.includes(changeKey(change)),
+                          ),
+                          noClassDates: calendarDiff.addedNoClassDates,
+                        }),
+                      "Calendar updated.",
+                    ).then(() => {
+                      setCalendarDiff(null);
+                      setDeclinedChanges([]);
+                      setModal(null);
+                    })
+                  }
+                >
+                  Apply selected
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="empty compact-empty">
+              Your calendar already matches what {calendarDiff.sourceLabel || "your school"} publishes.
+            </div>
+          )}
+        </Modal>
+      )}
       {modal === "conflicts" && (
         <Modal
           title="Resolve planning conflicts"
@@ -2073,6 +2187,39 @@ export function StudentCenter() {
               void updateAccent(next).catch((value) => setError(String(value)));
             }}
           />
+          {/* Optional in every sense: it runs only when asked, it proposes
+              rather than applies, and every failure — no network, a blocked
+              host, a school that publishes nothing — leaves the dates you have
+              exactly as they are. */}
+          <section className="setup-fieldset">
+            <h3>Your school's calendar</h3>
+            <p className="field-help">
+              Coqui can read the term dates and holidays your school publishes
+              and show you what has changed. Nothing is applied until you approve
+              it, and dates you have edited yourself are never overwritten.
+            </p>
+            <button
+              className="outline"
+              disabled={busy || !institutionId}
+              onClick={() =>
+                run(async () => {
+                  const diff = await refreshSchoolCalendar(institutionId);
+                  setCalendarDiff(diff);
+                  setDeclinedChanges([]);
+                  setModal("calendar-refresh");
+                  return null;
+                }, "")
+              }
+            >
+              Check for calendar updates
+            </button>
+            {!institutionId && (
+              <small className="source-note">
+                Add your school in setup first, or enter dates by hand from
+                Records — both work with no network at all.
+              </small>
+            )}
+          </section>
         </Modal>
       )}
       {modal === "search" && (

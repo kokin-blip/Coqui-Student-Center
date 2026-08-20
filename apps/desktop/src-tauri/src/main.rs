@@ -3116,6 +3116,183 @@ async fn refresh_school_calendar(
     .map_err(|error| AppError::Invalid(error.to_string()))?
 }
 
+/// What a student approved out of a calendar diff.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CalendarDiffApproval {
+    #[serde(default)]
+    term_changes: Vec<school_calendar::TermChange>,
+    #[serde(default)]
+    no_class_dates: Vec<school_provider::NoClassDate>,
+}
+
+/// Apply the parts of a refresh the student approved, and only those.
+///
+/// Two rules make this safe to run against records a student may have edited.
+/// A change is applied only when the stored value still equals the `current`
+/// the diff was computed against — if they moved the date themselves, their
+/// edit wins and the row is reported as skipped rather than overwritten. And
+/// nothing is matched by position: a term is found by the name it was created
+/// with, so a diff for one term can never land on another.
+#[tauri::command]
+fn apply_calendar_diff(
+    state: tauri::State<AppState>,
+    approval: CalendarDiffApproval,
+) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let db = state.db.lock().unwrap();
+    let (applied, skipped) = apply_calendar_diff_in(&db, &approval)?;
+    regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
+    let notice = if applied == 0 {
+        "Nothing was changed.".to_string()
+    } else {
+        format!(
+            "{applied} calendar change{} applied{}.",
+            if applied == 1 { "" } else { "s" },
+            if skipped > 0 {
+                format!("; {skipped} skipped because your own edits are newer")
+            } else {
+                String::new()
+            }
+        )
+    };
+    dashboard_with_notice(&db, &state.ocr, Some(notice))
+}
+
+/// The body of `apply_calendar_diff`, split out so it can be tested without a
+/// Tauri `State`. Returns how much was applied and how much was deliberately
+/// left alone.
+fn apply_calendar_diff_in(
+    db: &Connection,
+    approval: &CalendarDiffApproval,
+) -> Result<(usize, usize)> {
+    let tx = db.unchecked_transaction()?;
+    let mut applied = 0usize;
+    let mut skipped = 0usize;
+
+    for change in &approval.term_changes {
+        let existing: Option<(String, String, String)> = tx
+            .query_row(
+                "SELECT id,starts_on,ends_on FROM academic_terms WHERE name=?1",
+                params![change.term_name],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((term_id, starts_on, ends_on)) = existing else {
+            skipped += 1;
+            continue;
+        };
+        match change.field.as_str() {
+            "startsOn" | "endsOn" => {
+                let stored = if change.field == "startsOn" {
+                    &starts_on
+                } else {
+                    &ends_on
+                };
+                if *stored != change.current {
+                    // The student moved this themselves since the snapshot.
+                    skipped += 1;
+                    continue;
+                }
+                let column = if change.field == "startsOn" {
+                    "starts_on"
+                } else {
+                    "ends_on"
+                };
+                tx.execute(
+                    &format!(
+                        "UPDATE academic_terms SET {column}=?2,version=version+1 WHERE id=?1"
+                    ),
+                    params![term_id, change.proposed],
+                )?;
+                mutation(&tx, "academic_term", &term_id, "updated", "{}")?;
+                applied += 1;
+            }
+            // `academic_terms` has nowhere to put the last day of classes or the
+            // start of finals, but they are dates a student plans around, so they
+            // land on the calendar as ordinary events rather than being dropped.
+            "classEndsOn" | "examStartsOn" => {
+                let title = if change.field == "classEndsOn" {
+                    "Last day of classes"
+                } else {
+                    "Final exams begin"
+                };
+                let known: i64 = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM academic_calendar_events
+                     WHERE term_id=?1 AND title=?2 AND starts_on=?3)",
+                    params![term_id, title, change.proposed],
+                    |row| row.get(0),
+                )?;
+                if known != 0 {
+                    skipped += 1;
+                    continue;
+                }
+                let id = Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO academic_calendar_events(id,term_id,title,starts_on,ends_on,all_day,no_class,source)
+                     VALUES(?1,?2,?3,?4,?4,1,0,'registrar')",
+                    params![id, term_id, title, change.proposed],
+                )?;
+                mutation(&tx, "academic_calendar_event", &id, "created", "{}")?;
+                applied += 1;
+            }
+            _ => skipped += 1,
+        }
+    }
+
+    for date in &approval.no_class_dates {
+        let starts_on = date.starts_on.trim();
+        let label = date.label.trim();
+        if starts_on.is_empty() || label.is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let ends_on = if date.ends_on.trim().is_empty() {
+            starts_on
+        } else {
+            date.ends_on.trim()
+        };
+        if ends_on < starts_on {
+            skipped += 1;
+            continue;
+        }
+        // Attach to whichever term contains the date; a holiday outside every
+        // term is not one this student needs.
+        let term_id: Option<String> = tx
+            .query_row(
+                "SELECT id FROM academic_terms WHERE ?1 BETWEEN starts_on AND ends_on LIMIT 1",
+                params![starts_on],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(term_id) = term_id else {
+            skipped += 1;
+            continue;
+        };
+        let known: i64 = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM academic_calendar_events
+             WHERE term_id=?1 AND starts_on=?2 AND ends_on=?3)",
+            params![term_id, starts_on, ends_on],
+            |row| row.get(0),
+        )?;
+        if known != 0 {
+            skipped += 1;
+            continue;
+        }
+        let id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO academic_calendar_events(id,term_id,title,starts_on,ends_on,all_day,no_class,source)
+             VALUES(?1,?2,?3,?4,?5,1,1,'registrar')",
+            params![id, term_id, label, starts_on, ends_on],
+        )?;
+        mutation(&tx, "academic_calendar_event", &id, "created", "{}")?;
+        applied += 1;
+    }
+
+    tx.commit()?;
+    Ok((applied, skipped))
+}
+
 #[tauri::command]
 async fn get_institution_setup_options(
     state: tauri::State<'_, AppState>,
@@ -8108,6 +8285,7 @@ fn main() {
             search_course_suggestions,
             get_institution_setup_options,
             refresh_school_calendar,
+            apply_calendar_diff,
             save_onboarding_draft,
             complete_onboarding,
             get_local_workspace,
@@ -8957,6 +9135,111 @@ mod tests {
     // then dropped on the floor: a student read "2 no-class dates" and still got
     // study blocks on Thanksgiving. The planner already knew how to honour them;
     // nothing was carrying them in.
+    // A refresh proposes; the student disposes. This is the half that was
+    // missing entirely in 0.10.0: the diff was computed and then discarded,
+    // because nothing could apply it.
+    #[test]
+    fn an_approved_calendar_change_applies_and_a_students_own_edit_wins() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("apply.db"), &random_key()).unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('t-fall','Fall 2026 — Session C','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('t-spring','Spring 2027 — Session C','2027-01-11','2027-05-08',0,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let change = |term: &str, field: &str, current: &str, proposed: &str| {
+            school_calendar::TermChange {
+                term_id: "descriptor-id".into(),
+                term_name: term.into(),
+                field: field.into(),
+                current: current.into(),
+                proposed: proposed.into(),
+                evidence: "Classes begin".into(),
+            }
+        };
+
+        // Accepted, matches what is stored -> applied.
+        let accepted = change(
+            "Fall 2026 — Session C",
+            "startsOn",
+            "2026-08-20",
+            "2026-08-24",
+        );
+        // The student already moved this one themselves; their edit must win.
+        let stale = change(
+            "Spring 2027 — Session C",
+            "endsOn",
+            "2027-05-08",
+            "2027-05-15",
+        );
+        conn.execute(
+            "UPDATE academic_terms SET ends_on='2027-05-10' WHERE id='t-spring'",
+            [],
+        )
+        .unwrap();
+        // A term this profile does not have cannot be created by a refresh.
+        let unknown = change("Summer 2027", "startsOn", "2027-05-17", "2027-05-18");
+
+        let approval = CalendarDiffApproval {
+            term_changes: vec![accepted, stale, unknown],
+            no_class_dates: vec![
+                school_provider::NoClassDate {
+                    starts_on: "2026-11-26".into(),
+                    ends_on: "2026-11-27".into(),
+                    label: "Thanksgiving holiday".into(),
+                },
+                // Outside every term this student has.
+                school_provider::NoClassDate {
+                    starts_on: "2030-07-04".into(),
+                    ends_on: String::new(),
+                    label: "Independence Day".into(),
+                },
+            ],
+        };
+        let (applied, skipped) = apply_calendar_diff_in(&conn, &approval).unwrap();
+        assert_eq!(applied, 2, "the start date and the holiday");
+        assert_eq!(skipped, 3, "the student's edit, the unknown term, the stray date");
+
+        let fall_start: String = conn
+            .query_row(
+                "SELECT starts_on FROM academic_terms WHERE id='t-fall'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fall_start, "2026-08-24", "the approved change applied");
+
+        let spring_end: String = conn
+            .query_row(
+                "SELECT ends_on FROM academic_terms WHERE id='t-spring'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(spring_end, "2027-05-10", "a student's own edit is never overwritten");
+
+        let holidays: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM academic_calendar_events WHERE no_class=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(holidays, 1);
+
+        // Applying the same diff twice adds nothing further.
+        let (again, _) = apply_calendar_diff_in(&conn, &approval).unwrap();
+        assert_eq!(again, 0, "applying twice is a no-op");
+    }
+
     #[test]
     fn harvested_holidays_become_no_class_days_the_planner_honours() {
         let directory = tempfile::tempdir().unwrap();

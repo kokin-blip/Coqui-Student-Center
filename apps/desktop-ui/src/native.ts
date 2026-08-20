@@ -910,6 +910,19 @@ export async function getInstitutionSetupOptions(institutionId: string): Promise
   return structuredClone(institutionId === asuSetupOptions.institutionId ? asuSetupOptions : { institutionId, campuses: [], terms: [] });
 }
 /**
+ * Apply the parts of a calendar refresh the student approved, and only those.
+ *
+ * A change is applied only when the stored value still matches what the diff
+ * was computed against, so a date the student moved themselves is never
+ * overwritten — those come back reported as skipped.
+ */
+export async function applyCalendarDiff(approval: {
+  termChanges: TermChange[];
+  noClassDates: NoClassDate[];
+}): Promise<Dashboard> {
+  return call<Dashboard>("apply_calendar_diff", { approval });
+}
+/**
  * Ask the school's registrar what it currently publishes.
  *
  * Optional in every sense: it is only reachable from an explicit action, it
