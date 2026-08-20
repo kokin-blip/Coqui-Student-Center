@@ -34,6 +34,17 @@ const GOLDEN_CLOCK_VECTOR = [
   ["11:59 PM", "23:59"],
 ];
 
+// Dotted meridiems, which the Rust reader has to handle because registrar and
+// Canvas pages print them. to24Hour in the catalog script does not accept them
+// and does not need to: it reads ASU class-search exports, which do not use
+// them. Kept as a separate table so the shared vector above stays a statement
+// about what BOTH implementations do.
+const RUST_ONLY_CLOCK_VECTOR = [
+  ["1:30 p.m.", "13:30"],
+  ["9:00 a.m.", "09:00"],
+  ["11:05 A.M.", "11:05"],
+];
+
 test("weekday parsing matches the published golden vector", () => {
   for (const [input, expected] of GOLDEN_WEEKDAY_VECTOR) {
     assert.deepEqual([...parseDays(input)].sort((a, b) => a - b), expected, `parsing ${input}`);
@@ -45,6 +56,11 @@ test("weekday parsing matches the published golden vector", () => {
 test("clock parsing matches the published golden vector", () => {
   for (const [input, expected] of GOLDEN_CLOCK_VECTOR) {
     assert.equal(to24Hour(input), expected, `parsing ${input}`);
+  }
+  // Documents the asymmetry rather than hiding it: these are Rust-side only,
+  // and the Rust suite asserts them.
+  for (const [input] of RUST_ONLY_CLOCK_VECTOR) {
+    assert.equal(to24Hour(input), "", `${input} is not expected to parse here`);
   }
 });
 

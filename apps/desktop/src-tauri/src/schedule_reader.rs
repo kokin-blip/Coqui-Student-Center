@@ -197,8 +197,14 @@ const DEFAULT_WEEKDAY_TOKENS: &[(&str, u8)] = &[
 /// widened to accept a 24-hour reading too, since not every schedule is printed
 /// with a meridiem. Pinned by the same golden vector.
 pub fn to_minutes(value: &str) -> Option<u32> {
-    let trimmed = value.trim().trim_end_matches('.');
-    let folded = trimmed.to_lowercase().replace(' ', "");
+    // Dots are decoration on a meridiem, not part of it. "1:30 p.m." has to read
+    // as "1:30pm" or it parses as half past one in the morning and the
+    // waking-hours guard then discards the class entirely — so a page written
+    // with dotted meridiems yielded no times at all.
+    let folded = value
+        .trim()
+        .to_lowercase()
+        .replace([' ', '.'], "");
     let (clock, meridiem) = if let Some(rest) = folded.strip_suffix("am") {
         (rest, Some(false))
     } else if let Some(rest) = folded.strip_suffix("pm") {
@@ -1022,6 +1028,11 @@ mod tests {
         ("12:30 AM", "00:30"),
         ("1:15 PM", "13:15"),
         ("11:59 PM", "23:59"),
+        // Dotted meridiems. These read as None until 0.10.1, so a schedule
+        // printed this way produced no times at all and every row was dropped.
+        ("1:30 p.m.", "13:30"),
+        ("9:00 a.m.", "09:00"),
+        ("11:05 A.M.", "11:05"),
     ];
 
     #[test]
@@ -1329,3 +1340,4 @@ mod tests {
         assert!(!reading.warnings.is_empty());
     }
 }
+

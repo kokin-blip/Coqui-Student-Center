@@ -423,6 +423,10 @@ struct DocumentSummary {
     candidate_count: i64,
     pending_count: i64,
     approved_count: i64,
+    /// False once a settled screenshot's image has been shredded. The row and
+    /// its evidence survive, but anything that needs the picture itself — the
+    /// AI re-read in particular — has nothing left to send.
+    original_available: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -5787,10 +5791,19 @@ fn decrypt(key: &[u8; 32], nonce: &[u8; 24], encrypted: &[u8]) -> Result<Vec<u8>
         .map_err(|_| AppError::Crypto)
 }
 
+/// The name of an existing document with these bytes, if one is still stored.
+///
+/// A shredded screenshot is deliberately not a duplicate. Its row survives so
+/// its evidence still reads, but the image is gone, so answering "this already
+/// exists in your vault" would strand a student with nothing to look at and no
+/// way to import it again. Re-pasting a screenshot after approving its classes
+/// is an ordinary thing to do.
 fn duplicate_document_name(conn: &Connection, hash: &str) -> Result<Option<String>> {
     Ok(conn
         .query_row(
-            "SELECT file_name FROM documents WHERE sha256=?1 ORDER BY imported_at LIMIT 1",
+            "SELECT file_name FROM documents
+             WHERE sha256=?1 AND vault_path!='' AND content_shredded=0
+             ORDER BY imported_at LIMIT 1",
             params![hash],
             |row| row.get::<_, String>(0),
         )
@@ -6614,12 +6627,14 @@ fn list_documents(
         "SELECT d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error,
                 COUNT(c.id),
                 COALESCE(SUM(CASE WHEN c.status='pending' THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN c.status='approved' THEN 1 ELSE 0 END),0)
+                COALESCE(SUM(CASE WHEN c.status='approved' THEN 1 ELSE 0 END),0),
+                d.vault_path!='' AND d.content_shredded=0
          FROM documents d
          LEFT JOIN import_candidates c ON c.document_id=d.id
          WHERE (d.vault_path!='' OR d.content_shredded=1)
            AND (?1='' OR lower(d.file_name) LIKE ?2 ESCAPE '\\')
-         GROUP BY d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error
+         GROUP BY d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error,
+                  d.vault_path,d.content_shredded
          ORDER BY datetime(d.imported_at) DESC,d.id DESC
          LIMIT 250",
     )?;
@@ -6635,6 +6650,7 @@ fn list_documents(
                 candidate_count: row.get(6)?,
                 pending_count: row.get(7)?,
                 approved_count: row.get(8)?,
+                original_available: row.get::<_, i64>(9)? != 0,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -8571,8 +8587,11 @@ mod tests {
     fn duplicate_hash_lookup_returns_the_original_document() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-      "CREATE TABLE documents(file_name TEXT NOT NULL,sha256 TEXT NOT NULL,imported_at TEXT NOT NULL);
-       INSERT INTO documents VALUES('syllabus.pdf','same-hash','2026-08-12T00:00:00Z');",
+      // Mirrors the real columns the lookup reads: a document only counts as a
+      // duplicate while its bytes are still stored.
+      "CREATE TABLE documents(file_name TEXT NOT NULL,sha256 TEXT NOT NULL,imported_at TEXT NOT NULL,
+                              vault_path TEXT NOT NULL DEFAULT '',content_shredded INTEGER NOT NULL DEFAULT 0);
+       INSERT INTO documents VALUES('syllabus.pdf','same-hash','2026-08-12T00:00:00Z','vault/a.vault',0);",
     )
     .unwrap();
         assert_eq!(
@@ -8926,6 +8945,51 @@ mod tests {
 
         // Running the sweep again is a no-op rather than an error.
         shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+    }
+
+    // Approving every class from a screenshot shreds the image. Re-pasting that
+    // same screenshot afterwards is an ordinary thing to do, and it used to be
+    // answered with "this already exists in your vault" — naming a document
+    // whose image had been deleted, importing nothing, and leaving no way
+    // forward.
+    #[test]
+    fn a_shredded_screenshot_can_be_imported_again() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("dedupe.db"), &random_key()).unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-live','schedule.png','image/png','v','k','n','c','samehash','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            duplicate_document_name(&conn, "samehash").unwrap().as_deref(),
+            Some("schedule.png"),
+            "a stored document is still a duplicate"
+        );
+
+        // Now shred it, exactly as the sweep does.
+        conn.execute(
+            "UPDATE documents SET vault_path='',wrapped_key='',key_nonce='',content_nonce='',
+                                  content_shredded=1 WHERE id='doc-live'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            duplicate_document_name(&conn, "samehash").unwrap(),
+            None,
+            "a shredded screenshot must be importable again"
+        );
+
+        // A Canvas stub has no blob either and was never importable content, so
+        // it must not start counting as a duplicate for some unrelated file.
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-stub','Canvas','text/plain','','','','','stubhash','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(duplicate_document_name(&conn, "stubhash").unwrap(), None);
     }
 
     #[test]

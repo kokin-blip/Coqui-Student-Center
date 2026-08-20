@@ -50,6 +50,9 @@ export type DocumentSummary = {
   candidateCount: number;
   pendingCount: number;
   approvedCount: number;
+  // False once a settled screenshot's image has been shredded. The evidence
+  // still reads; anything needing the picture itself has nothing left to send.
+  originalAvailable: boolean;
 };
 export type ManagedAiCapability =
   | "brain_dump"
@@ -1750,6 +1753,24 @@ export async function importDocumentPath(path: string) {
 export async function readScheduleWithAi(documentId: string, consent: boolean) {
   return call<ManagedAiResult>("read_schedule_with_ai", { documentId, consent });
 }
+/**
+ * The image on a paste event, if this paste is a screenshot import at all.
+ *
+ * Shared by the workspace and by onboarding because both accept a pasted
+ * schedule, but neither shares the other's way of reporting what happened —
+ * onboarding has no toast and no review modal, so a handler written for the
+ * workspace fires there and shows nothing.
+ */
+export function pastedScheduleImage(event: ClipboardEvent): File | null {
+  // Pasting into a field the student is typing in is a paste, not an import.
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, [contenteditable='true']")) return null;
+  return (
+    Array.from(event.clipboardData?.files ?? []).find(
+      (file) => file.type === "image/png" || file.type === "image/jpeg",
+    ) ?? null
+  );
+}
 export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
   return call<Dashboard>("import_document_bytes", { fileName, bytes: Array.from(bytes) });
 }
@@ -1765,6 +1786,7 @@ export async function listDocuments(query = "") {
         candidateCount: 2,
         pendingCount: 1,
         approvedCount: 1,
+        originalAvailable: true,
       },
     ];
     const needle = query.trim().toLowerCase();

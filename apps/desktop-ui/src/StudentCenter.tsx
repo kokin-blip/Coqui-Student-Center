@@ -107,6 +107,7 @@ import {
   listenForOcrStatus,
   OcrStatus,
   listenForFileDrops,
+  pastedScheduleImage,
   readScheduleWithAi,
   listenForNavigation,
   lockApp,
@@ -451,14 +452,11 @@ export function StudentCenter() {
    * whenever it likes.
    */
   useEffect(() => {
-    if (!isDesktop()) return;
+    // Onboarding renders instead of the workspace, so setToast/setError/setModal
+    // would write to state nobody displays. Onboarding runs its own handler.
+    if (!isDesktop() || onboarding?.required) return;
     const onPaste = (event: ClipboardEvent) => {
-      // Pasting into a field the student is typing in is a paste, not an import.
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, [contenteditable='true']")) return;
-      const image = Array.from(event.clipboardData?.files ?? []).find((file) =>
-        file.type === "image/png" || file.type === "image/jpeg",
-      );
+      const image = pastedScheduleImage(event);
       if (!image) return;
       event.preventDefault();
       void (async () => {
@@ -482,11 +480,12 @@ export function StudentCenter() {
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, []);
+  }, [onboarding?.required]);
   useEffect(() => {
-    // Subscribed whenever the app is running rather than only while the import
-    // modal is open, so a schedule can be dropped from onboarding too.
-    if (!isDesktop()) return;
+    // Subscribed across the whole workspace rather than only while the import
+    // modal is open, so a schedule can be dropped anywhere in it. Onboarding is
+    // excluded for the same reason as paste: nothing here is rendered there.
+    if (!isDesktop() || onboarding?.required) return;
     let disposed = false;
     let unlisten = () => {};
     listenForFileDrops(async (paths) => {
@@ -516,7 +515,7 @@ export function StudentCenter() {
       disposed = true;
       unlisten();
     };
-  }, []);
+  }, [onboarding?.required]);
   const pending = data?.candidates.filter((c) => c.status === "pending") ?? [];
   const conflictCandidateIds = useMemo(
     () =>
@@ -1735,8 +1734,16 @@ export function StudentCenter() {
                     never sends a picture of a student's screen on its own
                     initiative, and the copy has to read that way rather than
                     burying it in a settings toggle. */}
-                {documents.find((document) => document.id === vaultEvidence.documentId)
-                  ?.mime.startsWith("image/") && (
+                {/* Only while the image is still stored. Shredding happens
+                    exactly when every candidate is settled, which is also when a
+                    student is most likely to be reading the evidence — so
+                    offering this then would put the failure on the common path. */}
+                {(() => {
+                  const source = documents.find(
+                    (document) => document.id === vaultEvidence.documentId,
+                  );
+                  return source?.mime.startsWith("image/") && source.originalAvailable;
+                })() && (
                   <div className="ai-reread">
                     <p>
                       <ShieldCheck aria-hidden="true" /> Coqui read this

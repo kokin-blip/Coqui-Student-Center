@@ -20,6 +20,7 @@ import {
   completeOnboarding,
   importDocumentBytes,
   isDesktop,
+  pastedScheduleImage,
   getTimezoneSuggestion,
   getInstitutionSetupOptions,
   OnboardingCourseInput,
@@ -127,6 +128,28 @@ export function OnboardingExperience({
   const [sectionPicker, setSectionPicker] = useState<{ courseIndex: number; suggestion: CourseSuggestion } | null>(null);
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotNotice, setScreenshotNotice] = useState("");
+  // Onboarding reports its own results. The workspace's paste handler writes to
+  // a toast and a review modal that are not rendered here, so a paste during
+  // setup used to import successfully and then say nothing at all.
+  const importScreenshot = async (file: File) => {
+    setScreenshotBusy(true);
+    setScreenshotNotice("");
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const next = await importDocumentBytes(file.name || "pasted-image.png", bytes);
+      const classes = next.candidates.filter(
+        (candidate) => candidate.kind === "class_meeting" && candidate.status === "pending",
+      );
+      setScreenshotNotice(classes.length
+        ? `${classes.length} class${classes.length === 1 ? "" : "es"} read and waiting for your review after setup.`
+        : "That image was saved but no class times could be read from it. Add your courses below instead.");
+      setImportAfter(true);
+    } catch (next) {
+      setScreenshotNotice(String(next));
+    } finally {
+      setScreenshotBusy(false);
+    }
+  };
   const [importAfter, setImportAfter] = useState(false);
 
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) => {
@@ -144,6 +167,17 @@ export function OnboardingExperience({
     }).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    if (!isDesktop() || step !== 2) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const image = pastedScheduleImage(event);
+      if (!image) return;
+      event.preventDefault();
+      void importScreenshot(image);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [step]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       saveOnboardingDraft(draft).then((next) => {
@@ -368,25 +402,10 @@ export function OnboardingExperience({
             {isDesktop() && <div className="screenshot-step">
               <label className="field full">
                 <span><ImageUp aria-hidden="true" /> Import a screenshot of your schedule</span>
-                <input type="file" accept="image/png,image/jpeg" disabled={screenshotBusy} onChange={async (event) => {
+                <input type="file" accept="image/png,image/jpeg" disabled={screenshotBusy} onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
-                  if (!file) return;
-                  setScreenshotBusy(true);
-                  setScreenshotNotice("");
-                  try {
-                    const bytes = new Uint8Array(await file.arrayBuffer());
-                    const next = await importDocumentBytes(file.name, bytes);
-                    const classes = next.candidates.filter((candidate) => candidate.kind === "class_meeting" && candidate.status === "pending");
-                    setScreenshotNotice(classes.length
-                      ? `${classes.length} class${classes.length === 1 ? "" : "es"} read and waiting for your review after setup.`
-                      : "That image was saved but no class times could be read from it. Add your courses below instead.");
-                    setImportAfter(true);
-                  } catch (next) {
-                    setScreenshotNotice(String(next));
-                  } finally {
-                    setScreenshotBusy(false);
-                  }
+                  if (file) void importScreenshot(file);
                 }} />
               </label>
               <p className="field-help">Or press Ctrl/Cmd+V anywhere with a screenshot copied. It is encrypted on your computer and read there; nothing is sent anywhere and nothing is added to your plan until you approve it.</p>
