@@ -571,8 +571,32 @@ fn detect_ooxml(bytes: &[u8]) -> Result<DocumentKind, ImportError> {
     }
 }
 
+/// Where a document's bytes came from.
+///
+/// `is_file()` on a caller-supplied path is not a safe way to answer this. A
+/// pasted screenshot has only a basename, so the check resolved against the
+/// process working directory: any unrelated file sharing that name would have
+/// been read by OCR while entirely different bytes were encrypted and hashed,
+/// and the evidence would not have described the stored document.
+#[derive(Debug, Clone, Copy)]
+pub enum DocumentSource<'a> {
+    /// A real file the student chose. Readers that need a path may use it.
+    File(&'a Path),
+    /// Bytes handed straight to the app, with no file behind them.
+    Bytes,
+}
+
+impl DocumentSource<'_> {
+    fn path(&self) -> Option<&Path> {
+        match self {
+            Self::File(path) => Some(path),
+            Self::Bytes => None,
+        }
+    }
+}
+
 pub fn extract_document(
-    path: &Path,
+    source: DocumentSource<'_>,
     bytes: &[u8],
     file_name: &str,
     timezone: &str,
@@ -586,7 +610,14 @@ pub fn extract_document(
     let candidates = match &kind {
         DocumentKind::Ics => extract_ics(bytes, tz)?,
         DocumentKind::Csv => extract_csv(bytes, file_name, tz)?,
-        DocumentKind::Xlsx => extract_xlsx(path, tz)?,
+        DocumentKind::Xlsx => {
+            // Calamine reads from a path. A pasted spreadsheet has none, and
+            // inventing one is how the wrong file gets read.
+            let path = source.path().ok_or_else(|| {
+                ImportError::Unsupported("a spreadsheet must be imported as a file".into())
+            })?;
+            extract_xlsx(path, tz)?
+        }
         DocumentKind::Pdf => {
             let pages = pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|error| {
                 let message = error.to_string();
@@ -611,7 +642,16 @@ pub fn extract_document(
                 })
                 .collect();
             if segments.is_empty() {
-                match ocr_scanned_pdf(path, ocr) {
+                // A scanned PDF is rendered page by page by a subprocess that
+                // takes a path. Pasted bytes have none.
+                let Some(pdf_path) = source.path() else {
+                    warnings.push("A scanned PDF must be imported as a file.".into());
+                    return Ok(Extraction {
+                        candidates: Vec::new(),
+                        warnings,
+                    });
+                };
+                match ocr_scanned_pdf(pdf_path, ocr) {
                     Ok(ocr_segments) => segments = ocr_segments,
                     Err(error) => {
                         warnings.push(error.to_string());
@@ -630,7 +670,7 @@ pub fn extract_document(
             // system temp dir and is dropped at the end of this call; the
             // durable copy is the encrypted one already in the vault.
             let scratch;
-            let image_path = if path.is_file() {
+            let image_path = if let Some(path) = source.path() {
                 path
             } else {
                 let mut file = tempfile::Builder::new()
@@ -1707,7 +1747,7 @@ mod tests {
         let temp = tempfile::NamedTempFile::new().unwrap();
         assert!(matches!(
             extract_document(
-                temp.path(),
+                DocumentSource::File(temp.path()),
                 pdf,
                 "broken.pdf",
                 "Etc/UTC",
@@ -1827,6 +1867,34 @@ mod tests {
     // exact inverse. Inverting is cheap and guarded — the caller keeps the
     // inverted reading only when it recognised more — so a page that merely
     // looked dark cannot be made worse by it.
+    // Pasted bytes must never be able to pick up a file from the working
+    // directory. Before `DocumentSource`, the image branch called `is_file()` on
+    // a caller-supplied basename, so a file of that name in the CWD would have
+    // been OCR'd while different bytes were encrypted and hashed — the evidence
+    // would not have described the stored document.
+    #[test]
+    fn pasted_bytes_never_read_a_file_from_the_working_directory() {
+        assert!(DocumentSource::Bytes.path().is_none());
+        let decoy = Path::new("schedule.png");
+        assert_eq!(DocumentSource::File(decoy).path(), Some(decoy));
+
+        // The formats that genuinely need a file say so rather than reaching for
+        // one. A spreadsheet has no bytes-only reader.
+        let xlsx = include_bytes!("../test-fixtures/ocr/syllabus.tsv");
+        let error = extract_document(
+            DocumentSource::Bytes,
+            xlsx,
+            "not-really.xlsx",
+            "Etc/UTC",
+            &OcrRuntime::discover(None),
+            &[],
+            &[],
+        );
+        // Sniffing rejects it long before the path question arises, which is the
+        // outer guard; the inner one is asserted above.
+        assert!(error.is_err());
+    }
+
     #[test]
     fn a_dark_capture_is_inverted_and_a_light_one_is_left_alone() {
         fn png(shade: u8) -> Vec<u8> {
@@ -2001,7 +2069,7 @@ mod tests {
             "<document><p><t>Research memo due Sep 12, 2030 at 11:30 PM</t></p></document>",
         )]);
         let docx_rows = extract_document(
-            Path::new("syllabus.docx"),
+            DocumentSource::File(Path::new("syllabus.docx")),
             &docx,
             "syllabus.docx",
             "America/Phoenix",
@@ -2026,7 +2094,7 @@ mod tests {
             ),
         ]);
         let pptx_rows = extract_document(
-            Path::new("course.pptx"),
+            DocumentSource::File(Path::new("course.pptx")),
             &pptx,
             "course.pptx",
             "America/Phoenix",

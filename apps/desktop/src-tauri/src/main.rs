@@ -6624,7 +6624,7 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
         .and_then(|value| value.to_str())
         .unwrap_or("document")
         .to_string();
-    ingest_document(&state, &source, bytes, name)
+    ingest_document(&state, imports::DocumentSource::File(&source), bytes, name)
 }
 
 /// Import bytes the app was handed directly rather than read off disk.
@@ -6655,17 +6655,18 @@ fn import_document_bytes(
         .filter(|value| !value.is_empty())
         .unwrap_or("pasted-image.png")
         .to_string();
-    // `extract_document` takes a path for its extension check and for the PDF
-    // renderer; the bytes are what it actually reads.
-    let source = PathBuf::from(&name);
-    ingest_document(&state, &source, bytes, name)
+    // Explicitly "there is no file behind this". Passing a bare basename and
+    // letting the reader call `is_file()` on it resolved against the process
+    // working directory, so an unrelated file with the same name could be read
+    // while different bytes were encrypted and hashed.
+    ingest_document(&state, imports::DocumentSource::Bytes, bytes, name)
 }
 
 /// Encrypt a document into the vault, extract from it, and file every candidate
 /// for review. Shared by every import path so they cannot diverge.
 fn ingest_document(
     state: &AppState,
-    source: &Path,
+    source: imports::DocumentSource<'_>,
     bytes: Vec<u8>,
     name: String,
 ) -> Result<Dashboard> {
@@ -6971,6 +6972,17 @@ async fn read_schedule_with_ai(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         state.require_unlocked()?;
+        {
+            let db = state.db.lock().unwrap();
+            // The same gate request_managed_ai applies. Sending anything before
+            // there is a profile to review it against makes no sense.
+            if profile::onboarding_state(&db)?.required {
+                return Err(AppError::Invalid(
+                    "finish local onboarding before using managed AI".into(),
+                ));
+            }
+        }
+        let started = Instant::now();
         let (bytes, excerpt) = {
             let db = state.db.lock().unwrap();
             let bytes = decrypt_document_bytes(&state, &db, &document_id)?;
@@ -6995,29 +7007,56 @@ async fn read_schedule_with_ai(
         let image = managed_ai::AiImage::encode(&bytes)?;
         let (account_id, access_token) = signed_in_account_and_token(&state)?;
         let client = managed_ai::ManagedAiClient::compiled()?;
-        let response = client.request(
+        let response = match client.request(
             &access_token,
             managed_ai::AiCapability::DocumentExtraction,
             &excerpt,
             "en-US",
             Some(&image),
-        )?;
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                // A picture of the student's screen left this machine and
+                // failed. That belongs in the record as much as a success does.
+                let db = state.db.lock().unwrap();
+                record_ai_invocation(
+                    &db,
+                    managed_ai::AiCapability::DocumentExtraction,
+                    None,
+                    started.elapsed().as_millis().min(i64::MAX as u128) as i64,
+                    0,
+                    0,
+                    "failed",
+                )?;
+                return Err(AppError::ManagedAi(error));
+            }
+        };
         if response.account_id != account_id {
             return Err(AppError::ManagedAi(
                 managed_ai::ManagedAiError::InvalidResponse,
             ));
         }
 
-        let db = state.db.lock().unwrap();
-        let timezone = db
+        let latency_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+        let mut db = state.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let timezone = tx
             .query_row("SELECT value FROM settings WHERE key='timezone'", [], |row| {
                 row.get::<_, String>(0)
             })
             .unwrap_or_else(|_| "Etc/UTC".into());
         let candidates_created = response.candidates.len();
+        // Asking twice is a re-read, not a second schedule. Without this the
+        // same classes pile up: source_uid is stable across invocations and
+        // nothing in the schema forbids the duplicate.
+        tx.execute(
+            "DELETE FROM import_candidates
+             WHERE document_id=?1 AND source_type='managed_ai' AND status='pending'",
+            params![document_id],
+        )?;
         for (index, candidate) in response.candidates.iter().enumerate() {
             let kind = local_candidate_kind(&candidate.kind);
-            db.execute(
+            tx.execute(
                 "INSERT INTO import_candidates(
                    id,document_id,kind,title,course,evidence,source_locator,source_type,source_uid,
                    observed_at,confidence,warnings,status,weekdays,starts_at_local,ends_at_local,timezone
@@ -7041,6 +7080,16 @@ async fn read_schedule_with_ai(
                 ],
             )?;
         }
+        record_ai_invocation(
+            &tx,
+            managed_ai::AiCapability::DocumentExtraction,
+            Some(&response.model),
+            latency_ms,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            "review_created",
+        )?;
+        tx.commit()?;
         let dashboard = dashboard_with_notice(
             &db,
             &state.ocr,
