@@ -694,13 +694,6 @@ input:focus-visible {
   place-items: center;
   color: var(--teal);
 }
-/* A dashed target that never reacts reads as decoration rather than a place to
-   drop something. */
-.dropzone.dragging {
-  border-color: var(--teal);
-  border-style: solid;
-  background: color-mix(in srgb, var(--teal) 8%, var(--bg-surface));
-}
 .dropzone svg {
   width: 28px;
   margin-bottom: 9px;

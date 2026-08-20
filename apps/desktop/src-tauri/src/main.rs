@@ -423,6 +423,10 @@ struct DocumentSummary {
     candidate_count: i64,
     pending_count: i64,
     approved_count: i64,
+    /// False once a settled screenshot's image has been shredded. The row and
+    /// its evidence survive, but anything that needs the picture itself — the
+    /// AI re-read in particular — has nothing left to send.
+    original_available: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -3112,6 +3116,183 @@ async fn refresh_school_calendar(
     .map_err(|error| AppError::Invalid(error.to_string()))?
 }
 
+/// What a student approved out of a calendar diff.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CalendarDiffApproval {
+    #[serde(default)]
+    term_changes: Vec<school_calendar::TermChange>,
+    #[serde(default)]
+    no_class_dates: Vec<school_provider::NoClassDate>,
+}
+
+/// Apply the parts of a refresh the student approved, and only those.
+///
+/// Two rules make this safe to run against records a student may have edited.
+/// A change is applied only when the stored value still equals the `current`
+/// the diff was computed against — if they moved the date themselves, their
+/// edit wins and the row is reported as skipped rather than overwritten. And
+/// nothing is matched by position: a term is found by the name it was created
+/// with, so a diff for one term can never land on another.
+#[tauri::command]
+fn apply_calendar_diff(
+    state: tauri::State<AppState>,
+    approval: CalendarDiffApproval,
+) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let db = state.db.lock().unwrap();
+    let (applied, skipped) = apply_calendar_diff_in(&db, &approval)?;
+    regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
+    let notice = if applied == 0 {
+        "Nothing was changed.".to_string()
+    } else {
+        format!(
+            "{applied} calendar change{} applied{}.",
+            if applied == 1 { "" } else { "s" },
+            if skipped > 0 {
+                format!("; {skipped} skipped because your own edits are newer")
+            } else {
+                String::new()
+            }
+        )
+    };
+    dashboard_with_notice(&db, &state.ocr, Some(notice))
+}
+
+/// The body of `apply_calendar_diff`, split out so it can be tested without a
+/// Tauri `State`. Returns how much was applied and how much was deliberately
+/// left alone.
+fn apply_calendar_diff_in(
+    db: &Connection,
+    approval: &CalendarDiffApproval,
+) -> Result<(usize, usize)> {
+    let tx = db.unchecked_transaction()?;
+    let mut applied = 0usize;
+    let mut skipped = 0usize;
+
+    for change in &approval.term_changes {
+        let existing: Option<(String, String, String)> = tx
+            .query_row(
+                "SELECT id,starts_on,ends_on FROM academic_terms WHERE name=?1",
+                params![change.term_name],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((term_id, starts_on, ends_on)) = existing else {
+            skipped += 1;
+            continue;
+        };
+        match change.field.as_str() {
+            "startsOn" | "endsOn" => {
+                let stored = if change.field == "startsOn" {
+                    &starts_on
+                } else {
+                    &ends_on
+                };
+                if *stored != change.current {
+                    // The student moved this themselves since the snapshot.
+                    skipped += 1;
+                    continue;
+                }
+                let column = if change.field == "startsOn" {
+                    "starts_on"
+                } else {
+                    "ends_on"
+                };
+                tx.execute(
+                    &format!(
+                        "UPDATE academic_terms SET {column}=?2,version=version+1 WHERE id=?1"
+                    ),
+                    params![term_id, change.proposed],
+                )?;
+                mutation(&tx, "academic_term", &term_id, "updated", "{}")?;
+                applied += 1;
+            }
+            // `academic_terms` has nowhere to put the last day of classes or the
+            // start of finals, but they are dates a student plans around, so they
+            // land on the calendar as ordinary events rather than being dropped.
+            "classEndsOn" | "examStartsOn" => {
+                let title = if change.field == "classEndsOn" {
+                    "Last day of classes"
+                } else {
+                    "Final exams begin"
+                };
+                let known: i64 = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM academic_calendar_events
+                     WHERE term_id=?1 AND title=?2 AND starts_on=?3)",
+                    params![term_id, title, change.proposed],
+                    |row| row.get(0),
+                )?;
+                if known != 0 {
+                    skipped += 1;
+                    continue;
+                }
+                let id = Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO academic_calendar_events(id,term_id,title,starts_on,ends_on,all_day,no_class,source)
+                     VALUES(?1,?2,?3,?4,?4,1,0,'registrar')",
+                    params![id, term_id, title, change.proposed],
+                )?;
+                mutation(&tx, "academic_calendar_event", &id, "created", "{}")?;
+                applied += 1;
+            }
+            _ => skipped += 1,
+        }
+    }
+
+    for date in &approval.no_class_dates {
+        let starts_on = date.starts_on.trim();
+        let label = date.label.trim();
+        if starts_on.is_empty() || label.is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let ends_on = if date.ends_on.trim().is_empty() {
+            starts_on
+        } else {
+            date.ends_on.trim()
+        };
+        if ends_on < starts_on {
+            skipped += 1;
+            continue;
+        }
+        // Attach to whichever term contains the date; a holiday outside every
+        // term is not one this student needs.
+        let term_id: Option<String> = tx
+            .query_row(
+                "SELECT id FROM academic_terms WHERE ?1 BETWEEN starts_on AND ends_on LIMIT 1",
+                params![starts_on],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(term_id) = term_id else {
+            skipped += 1;
+            continue;
+        };
+        let known: i64 = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM academic_calendar_events
+             WHERE term_id=?1 AND starts_on=?2 AND ends_on=?3)",
+            params![term_id, starts_on, ends_on],
+            |row| row.get(0),
+        )?;
+        if known != 0 {
+            skipped += 1;
+            continue;
+        }
+        let id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO academic_calendar_events(id,term_id,title,starts_on,ends_on,all_day,no_class,source)
+             VALUES(?1,?2,?3,?4,?5,1,1,'registrar')",
+            params![id, term_id, label, starts_on, ends_on],
+        )?;
+        mutation(&tx, "academic_calendar_event", &id, "created", "{}")?;
+        applied += 1;
+    }
+
+    tx.commit()?;
+    Ok((applied, skipped))
+}
+
 #[tauri::command]
 async fn get_institution_setup_options(
     state: tauri::State<'_, AppState>,
@@ -5787,10 +5968,19 @@ fn decrypt(key: &[u8; 32], nonce: &[u8; 24], encrypted: &[u8]) -> Result<Vec<u8>
         .map_err(|_| AppError::Crypto)
 }
 
+/// The name of an existing document with these bytes, if one is still stored.
+///
+/// A shredded screenshot is deliberately not a duplicate. Its row survives so
+/// its evidence still reads, but the image is gone, so answering "this already
+/// exists in your vault" would strand a student with nothing to look at and no
+/// way to import it again. Re-pasting a screenshot after approving its classes
+/// is an ordinary thing to do.
 fn duplicate_document_name(conn: &Connection, hash: &str) -> Result<Option<String>> {
     Ok(conn
         .query_row(
-            "SELECT file_name FROM documents WHERE sha256=?1 ORDER BY imported_at LIMIT 1",
+            "SELECT file_name FROM documents
+             WHERE sha256=?1 AND vault_path!='' AND content_shredded=0
+             ORDER BY imported_at LIMIT 1",
             params![hash],
             |row| row.get::<_, String>(0),
         )
@@ -6434,7 +6624,7 @@ fn import_document(state: tauri::State<AppState>, path: String) -> Result<Dashbo
         .and_then(|value| value.to_str())
         .unwrap_or("document")
         .to_string();
-    ingest_document(&state, &source, bytes, name)
+    ingest_document(&state, imports::DocumentSource::File(&source), bytes, name)
 }
 
 /// Import bytes the app was handed directly rather than read off disk.
@@ -6465,17 +6655,18 @@ fn import_document_bytes(
         .filter(|value| !value.is_empty())
         .unwrap_or("pasted-image.png")
         .to_string();
-    // `extract_document` takes a path for its extension check and for the PDF
-    // renderer; the bytes are what it actually reads.
-    let source = PathBuf::from(&name);
-    ingest_document(&state, &source, bytes, name)
+    // Explicitly "there is no file behind this". Passing a bare basename and
+    // letting the reader call `is_file()` on it resolved against the process
+    // working directory, so an unrelated file with the same name could be read
+    // while different bytes were encrypted and hashed.
+    ingest_document(&state, imports::DocumentSource::Bytes, bytes, name)
 }
 
 /// Encrypt a document into the vault, extract from it, and file every candidate
 /// for review. Shared by every import path so they cannot diverge.
 fn ingest_document(
     state: &AppState,
-    source: &Path,
+    source: imports::DocumentSource<'_>,
     bytes: Vec<u8>,
     name: String,
 ) -> Result<Dashboard> {
@@ -6614,12 +6805,14 @@ fn list_documents(
         "SELECT d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error,
                 COUNT(c.id),
                 COALESCE(SUM(CASE WHEN c.status='pending' THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN c.status='approved' THEN 1 ELSE 0 END),0)
+                COALESCE(SUM(CASE WHEN c.status='approved' THEN 1 ELSE 0 END),0),
+                d.vault_path!='' AND d.content_shredded=0
          FROM documents d
          LEFT JOIN import_candidates c ON c.document_id=d.id
          WHERE (d.vault_path!='' OR d.content_shredded=1)
            AND (?1='' OR lower(d.file_name) LIKE ?2 ESCAPE '\\')
-         GROUP BY d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error
+         GROUP BY d.id,d.file_name,d.mime,d.imported_at,d.extraction_status,d.extraction_error,
+                  d.vault_path,d.content_shredded
          ORDER BY datetime(d.imported_at) DESC,d.id DESC
          LIMIT 250",
     )?;
@@ -6635,6 +6828,7 @@ fn list_documents(
                 candidate_count: row.get(6)?,
                 pending_count: row.get(7)?,
                 approved_count: row.get(8)?,
+                original_available: row.get::<_, i64>(9)? != 0,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -6778,6 +6972,17 @@ async fn read_schedule_with_ai(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         state.require_unlocked()?;
+        {
+            let db = state.db.lock().unwrap();
+            // The same gate request_managed_ai applies. Sending anything before
+            // there is a profile to review it against makes no sense.
+            if profile::onboarding_state(&db)?.required {
+                return Err(AppError::Invalid(
+                    "finish local onboarding before using managed AI".into(),
+                ));
+            }
+        }
+        let started = Instant::now();
         let (bytes, excerpt) = {
             let db = state.db.lock().unwrap();
             let bytes = decrypt_document_bytes(&state, &db, &document_id)?;
@@ -6802,29 +7007,56 @@ async fn read_schedule_with_ai(
         let image = managed_ai::AiImage::encode(&bytes)?;
         let (account_id, access_token) = signed_in_account_and_token(&state)?;
         let client = managed_ai::ManagedAiClient::compiled()?;
-        let response = client.request(
+        let response = match client.request(
             &access_token,
             managed_ai::AiCapability::DocumentExtraction,
             &excerpt,
             "en-US",
             Some(&image),
-        )?;
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                // A picture of the student's screen left this machine and
+                // failed. That belongs in the record as much as a success does.
+                let db = state.db.lock().unwrap();
+                record_ai_invocation(
+                    &db,
+                    managed_ai::AiCapability::DocumentExtraction,
+                    None,
+                    started.elapsed().as_millis().min(i64::MAX as u128) as i64,
+                    0,
+                    0,
+                    "failed",
+                )?;
+                return Err(AppError::ManagedAi(error));
+            }
+        };
         if response.account_id != account_id {
             return Err(AppError::ManagedAi(
                 managed_ai::ManagedAiError::InvalidResponse,
             ));
         }
 
-        let db = state.db.lock().unwrap();
-        let timezone = db
+        let latency_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+        let mut db = state.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let timezone = tx
             .query_row("SELECT value FROM settings WHERE key='timezone'", [], |row| {
                 row.get::<_, String>(0)
             })
             .unwrap_or_else(|_| "Etc/UTC".into());
         let candidates_created = response.candidates.len();
+        // Asking twice is a re-read, not a second schedule. Without this the
+        // same classes pile up: source_uid is stable across invocations and
+        // nothing in the schema forbids the duplicate.
+        tx.execute(
+            "DELETE FROM import_candidates
+             WHERE document_id=?1 AND source_type='managed_ai' AND status='pending'",
+            params![document_id],
+        )?;
         for (index, candidate) in response.candidates.iter().enumerate() {
             let kind = local_candidate_kind(&candidate.kind);
-            db.execute(
+            tx.execute(
                 "INSERT INTO import_candidates(
                    id,document_id,kind,title,course,evidence,source_locator,source_type,source_uid,
                    observed_at,confidence,warnings,status,weekdays,starts_at_local,ends_at_local,timezone
@@ -6848,6 +7080,16 @@ async fn read_schedule_with_ai(
                 ],
             )?;
         }
+        record_ai_invocation(
+            &tx,
+            managed_ai::AiCapability::DocumentExtraction,
+            Some(&response.model),
+            latency_ms,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            "review_created",
+        )?;
+        tx.commit()?;
         let dashboard = dashboard_with_notice(
             &db,
             &state.ocr,
@@ -8092,6 +8334,7 @@ fn main() {
             search_course_suggestions,
             get_institution_setup_options,
             refresh_school_calendar,
+            apply_calendar_diff,
             save_onboarding_draft,
             complete_onboarding,
             get_local_workspace,
@@ -8571,8 +8814,11 @@ mod tests {
     fn duplicate_hash_lookup_returns_the_original_document() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-      "CREATE TABLE documents(file_name TEXT NOT NULL,sha256 TEXT NOT NULL,imported_at TEXT NOT NULL);
-       INSERT INTO documents VALUES('syllabus.pdf','same-hash','2026-08-12T00:00:00Z');",
+      // Mirrors the real columns the lookup reads: a document only counts as a
+      // duplicate while its bytes are still stored.
+      "CREATE TABLE documents(file_name TEXT NOT NULL,sha256 TEXT NOT NULL,imported_at TEXT NOT NULL,
+                              vault_path TEXT NOT NULL DEFAULT '',content_shredded INTEGER NOT NULL DEFAULT 0);
+       INSERT INTO documents VALUES('syllabus.pdf','same-hash','2026-08-12T00:00:00Z','vault/a.vault',0);",
     )
     .unwrap();
         assert_eq!(
@@ -8622,6 +8868,7 @@ mod tests {
                 term_name: "Fall 2026".into(),
                 term_starts_on: "2026-08-01".into(),
                 term_ends_on: "2026-12-20".into(),
+                term_no_class_dates: Vec::new(),
                 course_title: "Planning 101".into(),
                 course_code: "PLN 101".into(),
                 institution: profile::InstitutionSelection::default(),
@@ -8926,6 +9173,273 @@ mod tests {
 
         // Running the sweep again is a no-op rather than an error.
         shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+    }
+
+    // Approving every class from a screenshot shreds the image. Re-pasting that
+    // same screenshot afterwards is an ordinary thing to do, and it used to be
+    // answered with "this already exists in your vault" — naming a document
+    // whose image had been deleted, importing nothing, and leaving no way
+    // forward.
+    // The registrar's holidays were harvested, shown on the term preset, and
+    // then dropped on the floor: a student read "2 no-class dates" and still got
+    // study blocks on Thanksgiving. The planner already knew how to honour them;
+    // nothing was carrying them in.
+    // A refresh proposes; the student disposes. This is the half that was
+    // missing entirely in 0.10.0: the diff was computed and then discarded,
+    // because nothing could apply it.
+    #[test]
+    fn an_approved_calendar_change_applies_and_a_students_own_edit_wins() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("apply.db"), &random_key()).unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('t-fall','Fall 2026 — Session C','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
+             VALUES('t-spring','Spring 2027 — Session C','2027-01-11','2027-05-08',0,'2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let change = |term: &str, field: &str, current: &str, proposed: &str| {
+            school_calendar::TermChange {
+                term_id: "descriptor-id".into(),
+                term_name: term.into(),
+                field: field.into(),
+                current: current.into(),
+                proposed: proposed.into(),
+                evidence: "Classes begin".into(),
+            }
+        };
+
+        // Accepted, matches what is stored -> applied.
+        let accepted = change(
+            "Fall 2026 — Session C",
+            "startsOn",
+            "2026-08-20",
+            "2026-08-24",
+        );
+        // The student already moved this one themselves; their edit must win.
+        let stale = change(
+            "Spring 2027 — Session C",
+            "endsOn",
+            "2027-05-08",
+            "2027-05-15",
+        );
+        conn.execute(
+            "UPDATE academic_terms SET ends_on='2027-05-10' WHERE id='t-spring'",
+            [],
+        )
+        .unwrap();
+        // A term this profile does not have cannot be created by a refresh.
+        let unknown = change("Summer 2027", "startsOn", "2027-05-17", "2027-05-18");
+
+        let approval = CalendarDiffApproval {
+            term_changes: vec![accepted, stale, unknown],
+            no_class_dates: vec![
+                school_provider::NoClassDate {
+                    starts_on: "2026-11-26".into(),
+                    ends_on: "2026-11-27".into(),
+                    label: "Thanksgiving holiday".into(),
+                },
+                // Outside every term this student has.
+                school_provider::NoClassDate {
+                    starts_on: "2030-07-04".into(),
+                    ends_on: String::new(),
+                    label: "Independence Day".into(),
+                },
+            ],
+        };
+        let (applied, skipped) = apply_calendar_diff_in(&conn, &approval).unwrap();
+        assert_eq!(applied, 2, "the start date and the holiday");
+        assert_eq!(skipped, 3, "the student's edit, the unknown term, the stray date");
+
+        let fall_start: String = conn
+            .query_row(
+                "SELECT starts_on FROM academic_terms WHERE id='t-fall'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fall_start, "2026-08-24", "the approved change applied");
+
+        let spring_end: String = conn
+            .query_row(
+                "SELECT ends_on FROM academic_terms WHERE id='t-spring'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(spring_end, "2027-05-10", "a student's own edit is never overwritten");
+
+        let holidays: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM academic_calendar_events WHERE no_class=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(holidays, 1);
+
+        // Applying the same diff twice adds nothing further.
+        let (again, _) = apply_calendar_diff_in(&conn, &approval).unwrap();
+        assert_eq!(again, 0, "applying twice is a no-op");
+    }
+
+    #[test]
+    fn harvested_holidays_become_no_class_days_the_planner_honours() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn = open_database(&directory.path().join("holidays.db"), &random_key()).unwrap();
+        profile::complete_onboarding(
+            &mut conn,
+            &profile::OnboardingDraft {
+                name: "Holiday Test".into(),
+                timezone: "America/Phoenix".into(),
+                term_name: "Fall 2026 — Session C".into(),
+                term_starts_on: "2026-08-20".into(),
+                term_ends_on: "2026-12-12".into(),
+                term_no_class_dates: vec![
+                    profile::NoClassDateInput {
+                        starts_on: "2026-11-26".into(),
+                        ends_on: "2026-11-27".into(),
+                        label: "Thanksgiving holiday".into(),
+                    },
+                    profile::NoClassDateInput {
+                        starts_on: "2026-10-10".into(),
+                        ends_on: String::new(),
+                        label: "Fall break".into(),
+                    },
+                    // Malformed rows are skipped rather than stored: an unlabelled
+                    // or backwards range is not a holiday.
+                    profile::NoClassDateInput {
+                        starts_on: "2026-10-20".into(),
+                        ends_on: "2026-10-19".into(),
+                        label: "Backwards".into(),
+                    },
+                    profile::NoClassDateInput {
+                        starts_on: "2026-10-21".into(),
+                        ends_on: String::new(),
+                        label: "   ".into(),
+                    },
+                ],
+                course_title: String::new(),
+                course_code: String::new(),
+                institution: profile::InstitutionSelection::default(),
+                courses: Vec::new(),
+                appearance: profile::AppearancePreference::System,
+                sleep_start: "23:00".into(),
+                sleep_end: "07:00".into(),
+                max_session_minutes: 60,
+                break_minutes: 10,
+                transition_minutes: 10,
+                default_commute_minutes: 0,
+                availability: (0..7)
+                    .map(|weekday| profile::AvailabilityInput {
+                        weekday,
+                        starts_at_local: "08:00".into(),
+                        ends_at_local: "22:00".into(),
+                    })
+                    .collect(),
+                commitments: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let mut statement = conn
+            .prepare("SELECT title,starts_on,ends_on,no_class,source FROM academic_calendar_events ORDER BY starts_on")
+            .unwrap();
+        let rows: Vec<(String, String, String, i64, String)> = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        drop(statement);
+
+        assert_eq!(rows.len(), 2, "malformed rows are skipped: {rows:?}");
+        // A single-day holiday spans one day rather than being left open-ended.
+        assert_eq!(
+            rows[0],
+            (
+                "Fall break".into(),
+                "2026-10-10".into(),
+                "2026-10-10".into(),
+                1,
+                "registrar".into()
+            )
+        );
+        assert_eq!(rows[1].1, "2026-11-26");
+        assert_eq!(rows[1].2, "2026-11-27");
+
+        // The point of all of it: the planner sees those days as occupied.
+        let effective = chrono_tz::America::Phoenix
+            .with_ymd_and_hms(2026, 11, 26, 9, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        let snapshot =
+            planner_snapshot(&conn, effective, planner::PlannerTrigger::Initial).unwrap();
+        assert!(
+            snapshot
+                .fixed_constraints
+                .iter()
+                .any(|constraint| constraint.title.contains("Thanksgiving")),
+            "the holiday must reach the planner as a fixed constraint: {:?}",
+            snapshot
+                .fixed_constraints
+                .iter()
+                .map(|c| &c.title)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_shredded_screenshot_can_be_imported_again() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("dedupe.db"), &random_key()).unwrap();
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-live','schedule.png','image/png','v','k','n','c','samehash','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            duplicate_document_name(&conn, "samehash").unwrap().as_deref(),
+            Some("schedule.png"),
+            "a stored document is still a duplicate"
+        );
+
+        // Now shred it, exactly as the sweep does.
+        conn.execute(
+            "UPDATE documents SET vault_path='',wrapped_key='',key_nonce='',content_nonce='',
+                                  content_shredded=1 WHERE id='doc-live'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            duplicate_document_name(&conn, "samehash").unwrap(),
+            None,
+            "a shredded screenshot must be importable again"
+        );
+
+        // A Canvas stub has no blob either and was never importable content, so
+        // it must not start counting as a duplicate for some unrelated file.
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('doc-stub','Canvas','text/plain','','','','','stubhash','2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(duplicate_document_name(&conn, "stubhash").unwrap(), None);
     }
 
     #[test]

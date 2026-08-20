@@ -50,6 +50,9 @@ export type DocumentSummary = {
   candidateCount: number;
   pendingCount: number;
   approvedCount: number;
+  // False once a settled screenshot's image has been shredded. The evidence
+  // still reads; anything needing the picture itself has nothing left to send.
+  originalAvailable: boolean;
 };
 export type ManagedAiCapability =
   | "brain_dump"
@@ -196,6 +199,10 @@ export type OnboardingDraft = {
   termName: string;
   termStartsOn: string;
   termEndsOn: string;
+  // Registrar holidays and breaks for the chosen term. The planner already
+  // honours academic_calendar_events.no_class; this is how the harvested dates
+  // reach it.
+  termNoClassDates?: NoClassDate[];
   courseTitle: string;
   courseCode: string;
   institution: InstitutionSelection;
@@ -901,6 +908,19 @@ const asuSetupOptions: InstitutionSetupOptions = {
 export async function getInstitutionSetupOptions(institutionId: string): Promise<InstitutionSetupOptions> {
   if (isDesktop()) return call("get_institution_setup_options", { institutionId });
   return structuredClone(institutionId === asuSetupOptions.institutionId ? asuSetupOptions : { institutionId, campuses: [], terms: [] });
+}
+/**
+ * Apply the parts of a calendar refresh the student approved, and only those.
+ *
+ * A change is applied only when the stored value still matches what the diff
+ * was computed against, so a date the student moved themselves is never
+ * overwritten — those come back reported as skipped.
+ */
+export async function applyCalendarDiff(approval: {
+  termChanges: TermChange[];
+  noClassDates: NoClassDate[];
+}): Promise<Dashboard> {
+  return call<Dashboard>("apply_calendar_diff", { approval });
 }
 /**
  * Ask the school's registrar what it currently publishes.
@@ -1750,8 +1770,33 @@ export async function importDocumentPath(path: string) {
 export async function readScheduleWithAi(documentId: string, consent: boolean) {
   return call<ManagedAiResult>("read_schedule_with_ai", { documentId, consent });
 }
+/**
+ * The image on a paste event, if this paste is a screenshot import at all.
+ *
+ * Shared by the workspace and by onboarding because both accept a pasted
+ * schedule, but neither shares the other's way of reporting what happened —
+ * onboarding has no toast and no review modal, so a handler written for the
+ * workspace fires there and shows nothing.
+ */
+export function pastedScheduleImage(event: ClipboardEvent): File | null {
+  // Pasting into a field the student is typing in is a paste, not an import.
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, [contenteditable='true']")) return null;
+  return (
+    Array.from(event.clipboardData?.files ?? []).find(
+      (file) => file.type === "image/png" || file.type === "image/jpeg",
+    ) ?? null
+  );
+}
 export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
-  return call<Dashboard>("import_document_bytes", { fileName, bytes: Array.from(bytes) });
+  // Sent as a raw body rather than Array.from(bytes): a 25 MB screenshot
+  // serialises to roughly 100 MB of JSON as a number array, built and parsed on
+  // both sides of the boundary, for every paste.
+  if (!isDesktop()) throw new Error("Native command unavailable in browser test mode");
+  return invoke<Dashboard>("import_document_bytes", {
+    fileName,
+    bytes: new Uint8Array(bytes),
+  });
 }
 export async function listDocuments(query = "") {
   if (!isDesktop()) {
@@ -1765,6 +1810,7 @@ export async function listDocuments(query = "") {
         candidateCount: 2,
         pendingCount: 1,
         approvedCount: 1,
+        originalAvailable: true,
       },
     ];
     const needle = query.trim().toLowerCase();

@@ -91,6 +91,10 @@ impl WeekdayVocabulary {
     /// generalised from that function's fixed digraph list to longest-match over
     /// the vocabulary. Pinned against it by a shared golden vector — see
     /// `weekday_parsing_matches_the_published_golden_vector`.
+    /// Lenient scan, kept as the shape the cross-language golden vector asserts
+    /// against `parseDays` in the catalog script. The readers use the strict
+    /// variant below; this is what the two implementations agree on.
+    #[cfg(test)]
     fn parse_days(&self, value: &str) -> Vec<u8> {
         self.scan_days(value).0
     }
@@ -197,8 +201,14 @@ const DEFAULT_WEEKDAY_TOKENS: &[(&str, u8)] = &[
 /// widened to accept a 24-hour reading too, since not every schedule is printed
 /// with a meridiem. Pinned by the same golden vector.
 pub fn to_minutes(value: &str) -> Option<u32> {
-    let trimmed = value.trim().trim_end_matches('.');
-    let folded = trimmed.to_lowercase().replace(' ', "");
+    // Dots are decoration on a meridiem, not part of it. "1:30 p.m." has to read
+    // as "1:30pm" or it parses as half past one in the morning and the
+    // waking-hours guard then discards the class entirely — so a page written
+    // with dotted meridiems yielded no times at all.
+    let folded = value
+        .trim()
+        .to_lowercase()
+        .replace([' ', '.'], "");
     let (clock, meridiem) = if let Some(rest) = folded.strip_suffix("am") {
         (rest, Some(false))
     } else if let Some(rest) = folded.strip_suffix("pm") {
@@ -370,15 +380,14 @@ pub fn read_schedule(segment: &Segment, context: &ScheduleContext) -> ScheduleRe
     // The grid is tried first only when a weekday header row is actually
     // present. Without one there are no columns to assign anything to, and
     // guessing at them is how a reader invents a timetable.
-    let prefers_grid = context
-        .layouts
-        .iter()
-        .any(|layout| layout.shape == ScheduleShape::Grid);
+    // A weekday header row is the evidence that this *is* a grid, so finding one
+    // is the condition. Gating on the descriptor as well meant a school that
+    // declared only a list layout lost the grid reader entirely — strictly worse
+    // than a school nobody has described, which keeps it. Adding a descriptor
+    // must never remove capability.
     let mut reading = match find_header_row(&rows, &vocabulary) {
-        Some(header) if prefers_grid || context.layouts.is_empty() => {
-            read_grid(&rows, header, &vocabulary, context)
-        }
-        _ => ScheduleReading::default(),
+        Some(header) => read_grid(&rows, header, &vocabulary, context),
+        None => ScheduleReading::default(),
     };
     if reading.candidates.is_empty() {
         // The list reader gets its turn, but the grid reader's diagnosis is kept:
@@ -730,77 +739,6 @@ impl Meeting {
     }
 }
 
-/// Split a day-column into individual classes and read each one.
-fn meetings_from_column(tokens: &[OcrToken], _context: &ScheduleContext) -> Vec<Meeting> {
-    let rows = cluster_rows(tokens);
-    let mut meetings = Vec::new();
-    let mut current: Vec<&Row> = Vec::new();
-    // A row that carries a time range opens a new class; the rows beneath it
-    // belong to it until the next one does.
-    for row in &rows {
-        let raw: Vec<&str> = row.tokens.iter().map(|t| t.text.as_str()).collect();
-        let stitched = join_meridiems(&raw);
-        let has_time = stitched.iter().any(|word| clock_token(word));
-        if has_time && !current.is_empty() {
-            if let Some(meeting) = meeting_from_rows(&current) {
-                meetings.push(meeting);
-            }
-            current.clear();
-        }
-        current.push(row);
-    }
-    if let Some(meeting) = meeting_from_rows(&current) {
-        meetings.push(meeting);
-    }
-    meetings
-}
-
-fn meeting_from_rows(rows: &[&Row]) -> Option<Meeting> {
-    if rows.is_empty() {
-        return None;
-    }
-    let text = rows
-        .iter()
-        .map(|row| row.text())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let raw: Vec<&str> = text.split_whitespace().collect();
-    let stitched = join_meridiems(&raw);
-    let words: Vec<&str> = stitched.iter().map(String::as_str).collect();
-    let (starts, ends) = time_range(&words)?;
-    let course = course_code(&words).unwrap_or_default();
-    let title = if course.is_empty() {
-        words
-            .iter()
-            .filter(|word| !clock_token(word) && **word != "-" && **word != "–")
-            .take(6)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        course.clone()
-    };
-    if title.trim().is_empty() {
-        return None;
-    }
-    let confidence = rows
-        .iter()
-        .flat_map(|row| row.tokens.iter())
-        .map(|token| token.confidence)
-        .sum::<f64>()
-        / rows.iter().map(|row| row.tokens.len()).sum::<usize>().max(1) as f64;
-    Some(Meeting {
-        title,
-        course,
-        starts,
-        ends,
-        // Evidence has to be a literal span of the OCR text, because that is what
-        // the review queue quotes back and what the managed-AI path is checked
-        // against. Building it from the tokens keeps that true by construction.
-        evidence: text,
-        confidence: confidence.clamp(0.0, 1.0),
-    })
-}
 
 /// The first plausible start/end pair in a row.
 fn time_range(words: &[&str]) -> Option<(u32, u32)> {
@@ -1022,6 +960,11 @@ mod tests {
         ("12:30 AM", "00:30"),
         ("1:15 PM", "13:15"),
         ("11:59 PM", "23:59"),
+        // Dotted meridiems. These read as None until 0.10.1, so a schedule
+        // printed this way produced no times at all and every row was dropped.
+        ("1:30 p.m.", "13:30"),
+        ("9:00 a.m.", "09:00"),
+        ("11:05 A.M.", "11:05"),
     ];
 
     #[test]
@@ -1329,3 +1272,4 @@ mod tests {
         assert!(!reading.warnings.is_empty());
     }
 }
+

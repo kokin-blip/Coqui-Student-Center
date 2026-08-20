@@ -28,6 +28,11 @@ pub struct OnboardingDraft {
     pub term_name: String,
     pub term_starts_on: String,
     pub term_ends_on: String,
+    /// Holidays and breaks the school publishes for this term. Carried from the
+    /// term preset so the planner stops scheduling study time on Labor Day; the
+    /// mechanism that honours them already existed and only lacked any data.
+    #[serde(default)]
+    pub term_no_class_dates: Vec<NoClassDateInput>,
     pub course_title: String,
     pub course_code: String,
     #[serde(default)]
@@ -71,6 +76,16 @@ pub struct InstitutionSelection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NoClassDateInput {
+    pub starts_on: String,
+    /// Empty for a single day.
+    #[serde(default)]
+    pub ends_on: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnboardingCourseInput {
     pub code: String,
@@ -750,6 +765,31 @@ pub fn complete_onboarding(
         "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at) VALUES(?1,?2,?3,?4,1,?5)",
         params![term_id, input.term_name.trim(), input.term_starts_on, input.term_ends_on, now],
     )?;
+    // Registrar holidays and breaks. `planner_snapshot` already expands
+    // `no_class` events into fixed constraints and the planner already treats
+    // those as occupied, so this is the one missing link: without it a student
+    // saw "2 no-class dates" on the term preset and still got study blocks on
+    // Thanksgiving.
+    for date in &input.term_no_class_dates {
+        let starts_on = date.starts_on.trim();
+        let label = date.label.trim();
+        if starts_on.is_empty() || label.is_empty() {
+            continue;
+        }
+        let ends_on = if date.ends_on.trim().is_empty() {
+            starts_on
+        } else {
+            date.ends_on.trim()
+        };
+        if ends_on < starts_on {
+            continue;
+        }
+        transaction.execute(
+            "INSERT INTO academic_calendar_events(id,term_id,title,starts_on,ends_on,all_day,no_class,source)
+             VALUES(?1,?2,?3,?4,?5,1,1,'registrar')",
+            params![Uuid::new_v4().to_string(), term_id, label, starts_on, ends_on],
+        )?;
+    }
     // The legacy single-course fields are only a fallback for older drafts. When
     // both they and `courses` are empty the student skipped the step, so no
     // course rows are written at all — inserting one would create an untitled
@@ -1544,6 +1584,7 @@ fn default_draft(profile: Option<(String, String, i64)>) -> OnboardingDraft {
         term_name: "Current term".into(),
         term_starts_on: format!("{year}-08-01"),
         term_ends_on: format!("{}-05-31", year + 1),
+        term_no_class_dates: Vec::new(),
         course_title: String::new(),
         course_code: String::new(),
         institution: InstitutionSelection::default(),

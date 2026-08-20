@@ -79,23 +79,20 @@ describe("importing a schedule", () => {
       core.invoke("delete_local_profile", { confirmation: "DELETE MY PROFILE" }),
     );
 
-    // A calendar refresh is optional in every sense. With no network, a blocked
-    // host, or a school that publishes nothing, it fails closed and setup
-    // carries on — so a rejection here is a pass, and only a hang or a wrong
-    // answer is a failure.
+    // Deliberately a school with no descriptor, so this exercises the refusal
+    // path without reaching the network. Hitting a real registrar from a CI
+    // runner makes the suite depend on someone else's uptime and costs twenty
+    // seconds of timeout when the host is blocked.
     const refresh = await browser.tauri.execute(async ({ core }) => {
       try {
-        return { ok: true, diff: await core.invoke("refresh_school_calendar", { institutionId: "104151" }) };
+        await core.invoke("refresh_school_calendar", { institutionId: "000000" });
+        return { ok: true };
       } catch (error) {
         return { ok: false, message: String(error) };
       }
     });
-    if (refresh.ok) {
-      // A diff is a proposal. It must never have applied itself.
-      assert.ok(Array.isArray(refresh.diff.changedTerms));
-    } else {
-      assert.match(refresh.message, /calendar|network|reach|timed out|nothing was changed/i);
-    }
+    assert.equal(refresh.ok, false, "a school with no published calendar must refuse");
+    assert.match(refresh.message, /no published calendar/i);
 
     // The bundled dates are still there with no network at all, which is what
     // makes manual entry a complete path rather than a fallback.
