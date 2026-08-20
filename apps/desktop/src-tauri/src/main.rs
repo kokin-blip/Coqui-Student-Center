@@ -8641,6 +8641,7 @@ mod tests {
                 term_name: "Fall 2026".into(),
                 term_starts_on: "2026-08-01".into(),
                 term_ends_on: "2026-12-20".into(),
+                term_no_class_dates: Vec::new(),
                 course_title: "Planning 101".into(),
                 course_code: "PLN 101".into(),
                 institution: profile::InstitutionSelection::default(),
@@ -8952,6 +8953,123 @@ mod tests {
     // answered with "this already exists in your vault" — naming a document
     // whose image had been deleted, importing nothing, and leaving no way
     // forward.
+    // The registrar's holidays were harvested, shown on the term preset, and
+    // then dropped on the floor: a student read "2 no-class dates" and still got
+    // study blocks on Thanksgiving. The planner already knew how to honour them;
+    // nothing was carrying them in.
+    #[test]
+    fn harvested_holidays_become_no_class_days_the_planner_honours() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn = open_database(&directory.path().join("holidays.db"), &random_key()).unwrap();
+        profile::complete_onboarding(
+            &mut conn,
+            &profile::OnboardingDraft {
+                name: "Holiday Test".into(),
+                timezone: "America/Phoenix".into(),
+                term_name: "Fall 2026 — Session C".into(),
+                term_starts_on: "2026-08-20".into(),
+                term_ends_on: "2026-12-12".into(),
+                term_no_class_dates: vec![
+                    profile::NoClassDateInput {
+                        starts_on: "2026-11-26".into(),
+                        ends_on: "2026-11-27".into(),
+                        label: "Thanksgiving holiday".into(),
+                    },
+                    profile::NoClassDateInput {
+                        starts_on: "2026-10-10".into(),
+                        ends_on: String::new(),
+                        label: "Fall break".into(),
+                    },
+                    // Malformed rows are skipped rather than stored: an unlabelled
+                    // or backwards range is not a holiday.
+                    profile::NoClassDateInput {
+                        starts_on: "2026-10-20".into(),
+                        ends_on: "2026-10-19".into(),
+                        label: "Backwards".into(),
+                    },
+                    profile::NoClassDateInput {
+                        starts_on: "2026-10-21".into(),
+                        ends_on: String::new(),
+                        label: "   ".into(),
+                    },
+                ],
+                course_title: String::new(),
+                course_code: String::new(),
+                institution: profile::InstitutionSelection::default(),
+                courses: Vec::new(),
+                appearance: profile::AppearancePreference::System,
+                sleep_start: "23:00".into(),
+                sleep_end: "07:00".into(),
+                max_session_minutes: 60,
+                break_minutes: 10,
+                transition_minutes: 10,
+                default_commute_minutes: 0,
+                availability: (0..7)
+                    .map(|weekday| profile::AvailabilityInput {
+                        weekday,
+                        starts_at_local: "08:00".into(),
+                        ends_at_local: "22:00".into(),
+                    })
+                    .collect(),
+                commitments: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let mut statement = conn
+            .prepare("SELECT title,starts_on,ends_on,no_class,source FROM academic_calendar_events ORDER BY starts_on")
+            .unwrap();
+        let rows: Vec<(String, String, String, i64, String)> = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        drop(statement);
+
+        assert_eq!(rows.len(), 2, "malformed rows are skipped: {rows:?}");
+        // A single-day holiday spans one day rather than being left open-ended.
+        assert_eq!(
+            rows[0],
+            (
+                "Fall break".into(),
+                "2026-10-10".into(),
+                "2026-10-10".into(),
+                1,
+                "registrar".into()
+            )
+        );
+        assert_eq!(rows[1].1, "2026-11-26");
+        assert_eq!(rows[1].2, "2026-11-27");
+
+        // The point of all of it: the planner sees those days as occupied.
+        let effective = chrono_tz::America::Phoenix
+            .with_ymd_and_hms(2026, 11, 26, 9, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        let snapshot =
+            planner_snapshot(&conn, effective, planner::PlannerTrigger::Initial).unwrap();
+        assert!(
+            snapshot
+                .fixed_constraints
+                .iter()
+                .any(|constraint| constraint.title.contains("Thanksgiving")),
+            "the holiday must reach the planner as a fixed constraint: {:?}",
+            snapshot
+                .fixed_constraints
+                .iter()
+                .map(|c| &c.title)
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn a_shredded_screenshot_can_be_imported_again() {
         let directory = tempfile::tempdir().unwrap();

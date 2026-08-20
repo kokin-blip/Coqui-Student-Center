@@ -218,6 +218,7 @@ export function OnboardingExperience({
               termName: preset.name,
               termStartsOn: preset.startsOn,
               termEndsOn: preset.endsOn,
+              termNoClassDates: preset.noClassDates ?? [],
             };
           });
         }
@@ -235,6 +236,10 @@ export function OnboardingExperience({
       termName: preset.name,
       termStartsOn: preset.startsOn,
       termEndsOn: preset.endsOn,
+      // Carried, not just displayed. These were shown on the chip and then
+      // dropped, so a student read "2 no-class dates" and still got study
+      // blocks scheduled on Thanksgiving.
+      termNoClassDates: preset.noClassDates ?? [],
     }));
     setSaved(false);
   };

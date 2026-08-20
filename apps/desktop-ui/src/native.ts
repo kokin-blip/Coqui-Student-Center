@@ -199,6 +199,10 @@ export type OnboardingDraft = {
   termName: string;
   termStartsOn: string;
   termEndsOn: string;
+  // Registrar holidays and breaks for the chosen term. The planner already
+  // honours academic_calendar_events.no_class; this is how the harvested dates
+  // reach it.
+  termNoClassDates?: NoClassDate[];
   courseTitle: string;
   courseCode: string;
   institution: InstitutionSelection;
