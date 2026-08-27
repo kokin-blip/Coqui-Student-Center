@@ -1,6 +1,6 @@
 {
   "name": "coqui-student-center",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "private": true,
   "description": "Local-first Student Center desktop application",
   "workspaces": [

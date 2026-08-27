@@ -90,7 +90,7 @@ export const AiImage = z.object({
 export type AiImage = z.infer<typeof AiImage>;
 
 export const AiStructureRequest = z.object({
-  capability:z.enum(["brain_dump","document_extraction","task_decomposition","explanation"]),
+  capability:z.enum(["brain_dump","document_extraction","task_decomposition","planner_explanation"]),
   excerpt:z.string().trim().min(1).max(12_000),
   locale:z.string().trim().min(2).max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/).default("en-US"),
   image:AiImage.optional()
@@ -145,6 +145,106 @@ export const AiStructureResult = z.object({
 export type AiStructureRequest = z.infer<typeof AiStructureRequest>;
 export type AiCandidate = z.infer<typeof AiCandidate>;
 export type AiStructureResult = z.infer<typeof AiStructureResult>;
+
+export const AiProviderId = z.enum(["openai", "anthropic", "gemini"]);
+export type AiProviderId = z.infer<typeof AiProviderId>;
+
+export const AiCapability = z.enum([
+  "brain_dump",
+  "document_extraction",
+  "schedule_vision",
+  "task_decomposition",
+  "planner_explanation",
+  "source_qa",
+  "study_guide",
+  "flashcards",
+  "practice_questions",
+  "practice_test",
+]);
+export type AiCapability = z.infer<typeof AiCapability>;
+
+export const AiCapabilityRequirements = z.object({
+  text:z.boolean(), image:z.boolean(), structuredOutput:z.boolean(), streaming:z.boolean(),
+  minimumContextTokens:z.number().int().positive().optional()
+});
+export type AiCapabilityRequirements = z.infer<typeof AiCapabilityRequirements>;
+
+export const AiProviderStatus = z.object({
+  provider:AiProviderId, connected:z.boolean(), healthy:z.boolean(), model:z.string(),
+  maskedKey:z.string().optional(), capabilities:z.array(AiCapability), lastCheckedAt:z.string().datetime().optional(),
+  disclosureUrl:z.string().url()
+});
+export type AiProviderStatus = z.infer<typeof AiProviderStatus>;
+
+export const AiRoutingPreference = z.object({ order:z.array(AiProviderId).length(3) });
+export type AiRoutingPreference = z.infer<typeof AiRoutingPreference>;
+
+export const AiUsageSummary = z.object({
+  provider:AiProviderId, model:z.string(), requests:z.number().int().nonnegative(),
+  failures:z.number().int().nonnegative(), inputTokens:z.number().int().nonnegative(),
+  outputTokens:z.number().int().nonnegative(), averageLatencyMs:z.number().nonnegative()
+});
+export type AiUsageSummary = z.infer<typeof AiUsageSummary>;
+
+export const AiInvocationResult = z.object({
+  invocationId:z.string().uuid(), provider:AiProviderId, model:z.string(), capability:AiCapability,
+  status:z.enum(["review_created","artifact_created","explanation_created","failed"]),
+  inputTokens:z.number().int().nonnegative(), outputTokens:z.number().int().nonnegative(),
+  latencyMs:z.number().int().nonnegative(), errorCategory:z.string().optional()
+});
+export type AiInvocationResult = z.infer<typeof AiInvocationResult>;
+
+export const CanvasCalendarConnection = z.object({
+  id:z.string().uuid(), origin:z.string().url(), label:z.string(), status:z.string(),
+  credentialRef:z.string(),
+  refreshOnStartup:z.boolean(), lastRefreshedAt:z.string().datetime().optional(),
+  nextEligibleRefreshAt:z.string().datetime().optional(), lastError:z.string().optional(),
+  pendingCandidates:z.number().int().nonnegative()
+});
+export type CanvasCalendarConnection = z.infer<typeof CanvasCalendarConnection>;
+
+export const SourceRetentionDecision = z.enum(["keep_encrypted", "delete_now"]);
+export type SourceRetentionDecision = z.infer<typeof SourceRetentionDecision>;
+
+export const ScheduleCandidate = z.object({
+  id:z.string(), sourceId:z.string(), courseName:z.string().min(1), courseCode:z.string().optional(),
+  section:z.string().optional(), weekdays:z.array(z.number().int().min(0).max(6)).max(7),
+  startsAtLocal:localClock.optional(), endsAtLocal:localClock.optional(), location:z.string().optional(),
+  modality:z.string().optional(), termStartsOn:z.string().date().optional(), termEndsOn:z.string().date().optional(),
+  termId:z.string().uuid().optional(),
+  confidence:z.number().min(0).max(1), evidence:z.string().min(1), warnings:z.array(z.string()),
+  action:z.enum(["add","update","ignore","resolve_conflict"]).optional()
+});
+export type ScheduleCandidate = z.infer<typeof ScheduleCandidate>;
+
+export const FieldProvenance = z.object({
+  sourceKind:z.string().min(1), sanitizedSourceIdentifier:z.string().min(1),
+  externalStableId:z.string().optional(), evidence:z.string(), confidence:z.number().min(0).max(1),
+  importTime:z.string().datetime({offset:true}), studentEdited:z.boolean(),
+  lastObservedSourceValue:z.string().optional()
+});
+export type FieldProvenance = z.infer<typeof FieldProvenance>;
+
+export const ExternalCalendarCandidate = z.object({
+  stableId:z.string().min(1), recurrenceInstanceId:z.string().optional(), kind:z.enum(["class","commitment","assignment","exam"]),
+  title:z.string().min(1), startsAt:z.string().datetime({offset:true}).optional(), endsAt:z.string().datetime({offset:true}).optional(),
+  dueAt:z.string().datetime({offset:true}).optional(), evidence:z.string().min(1), confidence:z.number().min(0).max(1)
+});
+export type ExternalCalendarCandidate = z.infer<typeof ExternalCalendarCandidate>;
+
+export const ScheduleImportSession = z.object({
+  id:z.string().uuid(), sourceKind:z.enum(["canvas_calendar","screenshot","pdf","ics","document","manual"]),
+  status:z.enum(["analyzing","review","applied","cancelled","settled","failed"]), candidateIds:z.array(z.string()),
+  conflictIds:z.array(z.string()), startedAt:z.string().datetime(), settledAt:z.string().datetime().optional(),
+  retentionDecision:SourceRetentionDecision.optional()
+});
+export type ScheduleImportSession = z.infer<typeof ScheduleImportSession>;
+
+export const ImportConflict = z.object({
+  id:z.string(), candidateId:z.string().optional(), field:z.string(), currentValue:z.string().optional(),
+  proposedValue:z.string().optional(), resolution:z.enum(["keep_existing", "use_source"]).optional()
+});
+export type ImportConflict = z.infer<typeof ImportConflict>;
 
 // The bundled school descriptor. Kept in its own module because it mirrors a
 // resource file rather than a wire format, and because the Rust side is a

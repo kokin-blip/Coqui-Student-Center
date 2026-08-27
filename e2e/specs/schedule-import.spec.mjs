@@ -22,13 +22,16 @@ describe("importing a schedule", () => {
     browser.tauri.execute(async ({ core }) => {
       const state = await core.invoke("get_onboarding_state");
       return core.invoke("complete_onboarding", {
-        input: {
+        draft: {
           ...state.draft,
           name: "Screenshot Test",
           timezone: "America/Phoenix",
           termName: "Fall 2026 — Session C",
           termStartsOn: "2026-08-20",
           termEndsOn: "2026-12-12",
+          courses: [],
+          courseTitle: "",
+          courseCode: "",
         },
       });
     });

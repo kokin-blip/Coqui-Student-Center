@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test } from "vitest";
 import { StudentCenter } from "../src/StudentCenter";
 import { THEMES } from "../src/components/ThemeControls";
@@ -18,7 +19,7 @@ const stylesheets = [
 ];
 
 describe("application shell", () => {
-  test("navigation is grouped into Plan, Tools, and Account", async () => {
+  test("navigation exposes the five student destinations and keeps administration in Settings", async () => {
     render(<StudentCenter />);
 
     const plan = await screen.findByRole(
@@ -26,21 +27,12 @@ describe("application shell", () => {
       { name: "Primary navigation" },
       { timeout: 8000 },
     );
-    for (const item of ["Today", "Timetable", "Assignments", "Courses"]) {
+    for (const item of ["Today", "Calendar", "Work", "Courses", "Study"]) {
       expect(within(plan).getByRole("button", { name: item })).toBeInTheDocument();
     }
-
-    const tools = screen.getByRole("navigation", { name: "Tools" });
-    for (const item of ["Document vault", "Canvas", "Backups", "Data recovery"]) {
-      expect(within(tools).getByRole("button", { name: item })).toBeInTheDocument();
-    }
-
-    const account = screen.getByRole("navigation", { name: "Account" });
-    for (const item of ["Optional account", "App updates"]) {
-      expect(
-        within(account).getByRole("button", { name: item }),
-      ).toBeInTheDocument();
-    }
+    expect(screen.queryByRole("navigation", { name: "Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
   test("the selected destination is marked on exactly one nav item", async () => {
@@ -55,6 +47,49 @@ describe("application shell", () => {
       .filter((button) => button.classList.contains("active"));
     expect(active).toHaveLength(1);
     expect(active[0]).toHaveAccessibleName("Today");
+  });
+
+  test("Study exposes grounded learning, materials, and grades without adding sidebar destinations", async () => {
+    const user = userEvent.setup();
+    render(<StudentCenter />);
+    const plan = await screen.findByRole(
+      "navigation",
+      { name: "Primary navigation" },
+      { timeout: 8000 },
+    );
+    await user.click(within(plan).getByRole("button", { name: "Study" }));
+    expect(await screen.findByRole("heading", { name: "Study" })).toBeInTheDocument();
+    const sections = screen.getByRole("navigation", { name: "Study sections" });
+    for (const item of ["Learn", "Materials", "Grades"])
+      expect(within(sections).getByRole("button", { name: item })).toBeInTheDocument();
+    expect(screen.getByText(/Citations are required/)).toBeInTheDocument();
+  });
+
+  test("dialogs trap focus, close with Escape, and restore the opener", async () => {
+    const user = userEvent.setup();
+    render(<StudentCenter />);
+    const settings = await screen.findByRole("button", { name: "Settings" }, { timeout: 8000 });
+    await user.click(settings);
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+    expect(settings).toHaveFocus();
+  });
+
+  test("changing destinations resets the content scroll position", async () => {
+    const user = userEvent.setup();
+    render(<StudentCenter />);
+    const plan = await screen.findByRole(
+      "navigation",
+      { name: "Primary navigation" },
+      { timeout: 8000 },
+    );
+    const main = document.querySelector<HTMLElement>(".main");
+    expect(main).not.toBeNull();
+    main!.scrollTop = 420;
+    await user.click(within(plan).getByRole("button", { name: "Calendar" }));
+    await waitFor(() => expect(main!.scrollTop).toBe(0));
   });
 });
 

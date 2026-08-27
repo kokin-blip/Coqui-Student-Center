@@ -4,7 +4,7 @@ Coqui Student Center is a downloadable, local-first desktop application for Wind
 
 ## What works in the desktop vertical slice
 
-- Polished Today, Timetable, Assignments, Courses, and More navigation with Quick Add, source-aware empty states, restrained motion, and system/light/dark themes.
+- Polished Today, Calendar, Work, Courses, and Study navigation with one global Quick Add, source-aware empty states, restrained motion, and system/light/dark themes. Administrative and privacy controls live in Settings.
 - Four-stage autosaving onboarding for a private local profile, one of 6,243 bundled US institutions or a custom worldwide school, academic term, multiple courses and recurring class meetings, and the student's weekly rhythm.
 - Assignments and exams, instructors, recurring class series, academic no-class events, accessible agenda fallbacks, and planner regeneration after relevant changes.
 - No production sample seeding. Exact untouched legacy fixtures are quarantined before UI bootstrap and can be restored or purged later without interrupting onboarding.
@@ -14,10 +14,10 @@ Coqui Student Center is a downloadable, local-first desktop application for Wind
 - XChaCha20-Poly1305 document vault with unique per-file keys and SHA-256 integrity metadata.
 - Native file picker, drag-and-drop, and clipboard paste, plus content-validated PDF, text, DOCX, PPTX, CSV, XLSX, and deterministic ICS extraction with field evidence and approval before mutation.
 - Image and scanned-PDF OCR adapters with confidence-aware evidence, bounded native processes, and an in-app readiness report; imports remain encrypted and visibly marked for attention when the verified local OCR runtime is unavailable.
-- Schedule screenshots read locally into weekly class meetings. OCR keeps each word's position, so a grid is read as a grid: weekday headers anchor the columns, a class drawn once per column collapses into one editable weekly pattern, and one-row-per-class lists are read too. A capture it cannot read produces nothing rather than a guess. A managed-AI second reading is offered per import, never invoked on the app's initiative, and grounded in the text the machine itself extracted.
+- Schedule screenshots read locally into weekly class meetings. OCR keeps each word's position, so a grid is read as a grid: weekday headers anchor the columns, a class drawn once per column collapses into one editable weekly pattern, and one-row-per-class lists are read too. A capture it cannot read produces nothing rather than a guess. A BYOK AI second reading is offered per import, never invoked on the app's initiative, and grounded in the text the machine itself extracted.
 - Declarative school descriptors: campuses, term dates, session codes, no-class dates, where the registrar publishes its academic calendar and how to read that page, and the schedule layouts a screenshot might use. No school gets a code path; adding one is a JSON edit, gated by `npm run calendar:verify`.
 - In-app academic calendar refresh over a DNS-pinned, redirect-blocking, private-network-blocking client, reachable from Settings. It returns a diff for review and never writes on its own; approving applies only what was ticked, a date the student edited themselves is never overwritten, and holidays become no-class days the planner honours. Setup works identically with no network, on the bundled snapshot.
-- Native, read-only Canvas personal-token sync for active courses, assignments, and calendar events, with DNS-pinned HTTPS, redirect/private-network blocking, opaque pagination, idempotent immutable snapshots, sync history, mandatory review, and explicit critical-date conflict resolution that never duplicates canonical tasks.
+- Native, read-only Canvas calendar-link sync is the default: the full secret feed URL lives only in the OS credential vault, every HTTPS redirect and DNS answer is revalidated, refresh is bounded and idempotent, and all changes remain reviewable. The personal-token Canvas Full Connection remains available in Advanced settings.
 - Offline tasks, fixed commitments, deterministic non-overlapping planning, next-action reason codes, completion, and disruption replanning.
 - Opt-in native reminders with encrypted local preferences/delivery history, student-timezone quiet hours, privacy-safe locked previews, and in-app Start, Complete, Snooze, and Dismiss controls.
 - Strict `studentcenter://` plan-block deep links, single-instance focus, and persisted desktop window state.
@@ -30,7 +30,7 @@ Coqui Student Center is a downloadable, local-first desktop application for Wind
 - Deterministic local merge on download: last-writer-wins per entity with stable device tie-breaking, an observed-remove set for task dependencies, and critical academic dates that are never silently overwritten but raised as an explicit conflict to review. Changes whose entity type this version does not recognize are kept encrypted on the device and applied automatically after an update, rather than being discarded.
 - Append-only local mutation log. Plans, plan blocks, document metadata, reminders, notification preferences, and integration connections are recorded locally as provenance but are deliberately never uploaded: they have no cross-device merge rule, so replicating them would spend storage on records no other computer could apply.
 - Portable `.studentcenter` backup and restore: age passphrase encryption wraps a consistent SQLCipher snapshot, encrypted vault objects, and integrity metadata; restore previews and fingerprints the archive before an explicit non-destructive replacement transaction rekeys it to the receiving device.
-- Verified-account, ciphertext-only sync/device/release service contracts, Supabase RLS migrations, and optional managed OpenAI structured extraction.
+- Verified-account, ciphertext-only sync/device/release service contracts and Supabase RLS migrations. Optional AI runs directly from the native desktop boundary with student-owned OpenAI, Anthropic, or Gemini keys; the cloud service has no AI route.
 - Browser output only for interface development and automated testing; it is not an end-user product.
 
 ## Repository structure
@@ -39,7 +39,7 @@ Coqui Student Center is a downloadable, local-first desktop application for Wind
 apps/desktop-ui       Bundled React/Vite interface
 apps/desktop          Tauri host and Rust domain commands
 packages/contracts    Encrypted sync and AI schemas
-services/cloud-api    Optional account, ciphertext sync, releases, and managed AI
+services/cloud-api    Optional account, ciphertext sync, and releases
 ```
 
 ## Develop and test
@@ -63,7 +63,7 @@ Release updater artifacts are deliberately separate from normal development/CI b
 
 OCR release builds reconstruct a pinned runtime containing PDFium, a source-built static Tesseract 5.5.2 executable, and official `tessdata_fast` English data. Scanned-PDF rendering runs in an isolated helper invocation of the desktop executable, loads documents from memory for Unicode-safe paths, and emits compressed PNG pages under process, page, and 512 MiB output limits. Preparation collects PDFium and every vcpkg dependency notice, then emits a source-bound SHA-256 lock. `npm run ocr:verify -- --target=windows-x64 --require-ready` (or `macos-arm64`) is mandatory before packaging. Development overrides are `STUDENT_CENTER_PDFIUM`, `STUDENT_CENTER_TESSERACT`, and `STUDENT_CENTER_TESSDATA`.
 
-Managed AI is optional and runs only in `services/cloud-api`. Configure `OPENAI_API_KEY` and optionally `OPENAI_MODEL` (default `gpt-5.6-terra`) on that service. The desktop app never receives the provider key and sends no excerpt without explicit student action.
+AI is optional and uses student-owned OpenAI, Anthropic, or Gemini API keys stored in the operating-system credential vault. Requests run from the desktop native boundary only after the student reviews the provider, model, and data scope. The cloud service never receives provider keys or AI request content.
 
 The cloud API fails closed unless `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are set. Apply the migrations in `supabase/migrations` before starting it. Account-bound routes verify Supabase JWTs against the project's remote JWKS, derive the account UUID only from the verified `sub` claim, and forward the user's access token to PostgREST so database RLS remains active. The in-memory repository exists only as an injected test adapter; the production server never falls back to it.
 

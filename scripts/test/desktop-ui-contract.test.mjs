@@ -10,6 +10,10 @@ const native = await readFile(
   new URL("../../apps/desktop-ui/src/native.ts", import.meta.url),
   "utf8",
 );
+const workspaceView = await readFile(
+  new URL("../../apps/desktop-ui/src/components/WorkspaceView.tsx", import.meta.url),
+  "utf8",
+);
 const onboarding = await readFile(
   new URL("../../apps/desktop-ui/src/components/OnboardingExperience.tsx", import.meta.url),
   "utf8",
@@ -68,6 +72,24 @@ test("first-run UI is a four-stage local onboarding flow with no demo review", (
   );
 });
 
+test("onboarding offers the same four review-first schedule sources as Calendar", () => {
+  for (const copy of [
+    "Connect a Canvas calendar link",
+    "Capture screen area",
+    "Import a file or document",
+    "Your courses",
+  ]) {
+    assert.match(onboarding, new RegExp(copy));
+  }
+  assert.match(onboarding, /const submittedUrl = canvasFeedUrl\.trim\(\)[\s\S]{0,500}connectCanvasCalendar\(submittedUrl\)/);
+  assert.match(onboarding, /launchScheduleCapture\(\)/);
+  assert.match(onboarding, /selectAndImport\(\)/);
+  // A source imported during setup is already in the review queue. It must not
+  // turn on the separate “choose a syllabus after setup” picker.
+  assert.doesNotMatch(onboarding, /setImportAfter\(true\)/);
+  assert.match(ui, /result\.dashboard\.candidates\.some[\s\S]{0,200}setModal\("review"\)/);
+});
+
 // A student can attend several ASU campuses at once, so the campus step is a
 // set rather than a single choice. The first pick stays primary because it fills
 // the location on new class meetings, and "Online or multiple campuses" is a
@@ -90,15 +112,17 @@ test("campus selection is multi-select with a primary and an exclusive flexible 
 // into positional CSS, where adding or reordering a panel silently merged the
 // two screens.
 test("assignments and courses are separated in markup, not by grid position", () => {
-  assert.match(ui, /\{mode === "courses" && \(/);
-  assert.match(ui, /\{mode === "assignments" && \(/);
+  assert.match(workspaceView, /\{mode === "courses" && \(/);
+  assert.match(workspaceView, /\{mode === "assignments" && \(/);
   assert.doesNotMatch(styles, /\.workspace-grid\.\w+\s*>\s*\.workspace-panel:(first-child|nth-child)/);
   assert.doesNotMatch(styles, /\.mode-(courses|assignments) \.\w+-editor\s*\{?[^}]*display:\s*none/);
 });
 
-test("timetable, assignments, and courses expose complete local controls", () => {
+test("calendar, work, and courses expose complete local controls", () => {
+  const interfaceSource = `${workspaceView}\n${ui}`;
   for (const control of [
-    "Seven-day visual calendar",
+    "Week calendar",
+    "time grid from 6 AM to 10 PM",
     "Seven-day agenda view",
     "Prerequisites",
     "Minimum session",
@@ -121,7 +145,7 @@ test("timetable, assignments, and courses expose complete local controls", () =>
     "Edit academic event",
     "Search your workspace",
   ]) {
-    assert.match(ui, new RegExp(control));
+    assert.match(interfaceSource, new RegExp(control));
   }
   // Quick Add silently dropped the due date, leaving the planner nothing to
   // schedule against.
@@ -139,7 +163,7 @@ test("timetable, assignments, and courses expose complete local controls", () =>
     "updateAcademicEvent(",
     "deleteAcademicEvent(",
   ]) {
-    assert.ok(ui.includes(caller), `${caller} has no caller in the interface`);
+    assert.ok(workspaceView.includes(caller), `${caller} has no caller in the interface`);
   }
   for (const command of [
     "get_calendar_agenda",
@@ -153,6 +177,8 @@ test("timetable, assignments, and courses expose complete local controls", () =>
   ]) {
     assert.match(native, new RegExp(command));
   }
+  assert.match(ui, /const submittedKey=aiKey;setAiKey\(""\);[\s\S]{0,200}saveAiProviderKey\(aiProvider,submittedKey/);
+  assert.match(ui, /const submittedUrl = canvasUrl\.trim\(\);[\s\S]{0,200}setCanvasUrl\(""\);[\s\S]{0,500}connectCanvasCalendar\(submittedUrl/);
 });
 
 test("Coqui branding, themes, and source-labeled predictions are bundled", () => {
@@ -290,7 +316,7 @@ test("loading screens surface an error and a retry instead of hanging", () => {
     assert.ok(ui.includes(copy), `missing recovery copy: ${copy}`);
   }
   // A null dashboard after onboarding must re-fetch rather than strand the app.
-  assert.match(ui, /if \(result\.dashboard\) setData\(result\.dashboard\);\s*\n\s*else retryBoot\(\);/);
+  assert.match(ui, /if \(result\.dashboard\) \{[\s\S]{0,500}setData\(result\.dashboard\);[\s\S]{0,500}\}\s*else retryBoot\(\);/);
   assert.ok(ui.includes('role="alert"'));
 });
 
@@ -302,9 +328,9 @@ test("startup work is deferred off the main thread", () => {
   assert.ok(ui.includes("Checking local OCR"));
 });
 
-test("vault and managed AI remain review-first and explicitly consented", () => {
+test("vault and BYOK AI remain review-first and explicitly consented", () => {
   for (const copy of [
-    "Choose or drop academic files",
+    "Paste, choose, or drop a schedule",
     "Document library",
     "Saved source evidence",
     "I consent to sending only this excerpt",
@@ -315,7 +341,7 @@ test("vault and managed AI remain review-first and explicitly consented", () => 
   for (const command of [
     "list_documents",
     "get_document_evidence",
-    "request_managed_ai",
+    "request_ai_capability",
     "onDragDropEvent",
   ]) {
     assert.match(native, new RegExp(command));

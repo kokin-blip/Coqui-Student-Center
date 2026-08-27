@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AiStructureRequest, AiStructureResult, EncryptedMutation, encryptedMutationSigningMessage } from "../src/index.js";
+import { AiStructureRequest, AiStructureResult, EncryptedMutation, encryptedMutationSigningMessage, FieldProvenance } from "../src/index.js";
 
 /**
  * Fixed envelope shared with the Rust golden-vector test in sync_transport.rs. The signing message
@@ -135,4 +135,18 @@ test("an oversized image is rejected rather than crashing the parser",()=>{
   const oversized="A".repeat(12*1024*1024);
   const result=AiStructureRequest.safeParse({capability:"document_extraction",excerpt:"STA 201",locale:"en-US",image:{mimeType:"image/png",data:oversized}});
   assert.equal(result.success,false);
+});
+
+test("field provenance distinguishes source observation from a student edit",()=>{
+  const result=FieldProvenance.safeParse({
+    sourceKind:"canvas_calendar",
+    sanitizedSourceIdentifier:"canvas-calendar-source:connection-id",
+    externalStableId:"canvas-calendar:event-uid:instance",
+    evidence:"SUMMARY:Midterm Exam",
+    confidence:0.92,
+    importTime:"2026-08-25T12:00:00Z",
+    studentEdited:true,
+    lastObservedSourceValue:"2026-09-03T19:00:00Z"
+  });
+  assert.equal(result.success,true);
 });

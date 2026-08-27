@@ -1,6 +1,6 @@
 {
   "name": "@student-center/cloud-api",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,6 @@
     "@student-center/contracts": "*",
     "fastify": "^5.6.0",
     "jose": "^6.1.0",
-    "openai": "^5.20.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

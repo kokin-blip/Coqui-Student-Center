@@ -7,12 +7,10 @@ const timeout = { timeout: 8000 };
 
 const openAccount = async () => {
   const user = userEvent.setup();
-  const [account] = await screen.findAllByRole(
-    "button",
-    { name: "Optional account" },
-    timeout,
+  await user.click(await screen.findByRole("button", { name: "Settings" }, timeout));
+  await user.click(
+    await screen.findByRole("button", { name: /Account & encrypted sync/ }, timeout),
   );
-  await user.click(account);
   return user;
 };
 
@@ -42,7 +40,7 @@ test("staged changes from a newer version are described honestly", async () => {
 test("the staged-changes notice is absent when nothing is waiting", async () => {
   render(<StudentCenter />);
   await openAccount();
-  await screen.findAllByRole("button", { name: "Optional account" }, timeout);
+  await screen.findByRole("heading", { name: "Optional Student Center account" }, timeout);
 
   expect(
     screen.queryByText("Changes from a newer version are waiting"),

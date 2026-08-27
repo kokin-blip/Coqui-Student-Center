@@ -1,5 +1,8 @@
 {
   "identifier": "app.studentcenter.desktop.e2e",
+  "build": {
+    "beforeBuildCommand": "npm run build:e2e --workspace @student-center/desktop-ui"
+  },
   "app": {
     "withGlobalTauri": true,
     "security": {

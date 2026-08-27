@@ -30,7 +30,7 @@ export function AppearanceSettings({
       <fieldset>
         <legend>Theme</legend>
         <p className="field-help">
-          System follows Windows and switches automatically.
+          System follows your operating system and switches automatically.
         </p>
         <div className="theme-grid" role="radiogroup" aria-label="Theme">
           {THEMES.map((item) => (

@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod auth;
+mod ai_providers;
 mod backup;
 mod canvas;
+mod canvas_calendar;
 mod device_key;
 mod imports;
 mod managed_ai;
@@ -48,9 +50,29 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 17;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
+
+#[cfg(any(test, feature = "wdio"))]
+fn isolated_wdio_data_root(path: PathBuf) -> std::io::Result<PathBuf> {
+    if !path.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the E2E data directory must be absolute",
+        ));
+    }
+    fs::create_dir_all(&path)?;
+    let root = path.canonicalize()?;
+    let temporary_root = std::env::temp_dir().canonicalize()?;
+    if !root.starts_with(&temporary_root) || root == temporary_root {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the E2E data directory must be a dedicated directory below the operating-system temporary directory",
+        ));
+    }
+    Ok(root)
+}
 
 #[derive(thiserror::Error, Debug)]
 enum AppError {
@@ -78,7 +100,7 @@ enum AppError {
     SyncTransport(#[from] sync_transport::SyncTransportError),
     #[error("profile operation failed: {0}")]
     Profile(#[from] profile::ProfileError),
-    #[error("managed AI failed: {0}")]
+    #[error("AI provider request failed: {0}")]
     ManagedAi(#[from] managed_ai::ManagedAiError),
     #[error("background operation failed: {0}")]
     Background(String),
@@ -389,6 +411,7 @@ struct UpdateStatus {
 #[serde(rename_all = "camelCase")]
 struct Candidate {
     id: String,
+    document_id: String,
     kind: String,
     title: String,
     course: String,
@@ -409,6 +432,12 @@ struct Candidate {
     starts_at_local: String,
     ends_at_local: String,
     timezone: String,
+    section_number: String,
+    location: String,
+    modality: String,
+    term_id: String,
+    suggested_action: String,
+    student_edited_fields: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -427,6 +456,33 @@ struct DocumentSummary {
     /// its evidence survive, but anything that needs the picture itself — the
     /// AI re-read in particular — has nothing left to send.
     original_available: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleSourcePreview {
+    file_name: String,
+    mime: String,
+    data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CandidateEditInput {
+    title: String,
+    course: String,
+    due_at: Option<String>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    duration_minutes: Option<i64>,
+    weekdays: Vec<i64>,
+    starts_at_local: String,
+    ends_at_local: String,
+    timezone: String,
+    section_number: String,
+    location: String,
+    modality: String,
+    term_id: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -451,11 +507,14 @@ struct SourceConflictSummary {
 #[serde(rename_all = "camelCase")]
 struct CanvasConnectionSummary {
     id: String,
+    provider: String,
     base_url: String,
     account_name: String,
     status: String,
     last_synced_at: Option<String>,
     last_error: Option<String>,
+    refresh_on_startup: bool,
+    next_eligible_refresh_at: Option<String>,
     pending_candidates: i64,
 }
 
@@ -512,6 +571,7 @@ struct Dashboard {
     conflicts: Vec<SourceConflictSummary>,
     ocr: OcrStatus,
     import_notice: Option<String>,
+    unsettled_schedule_sources: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -540,7 +600,86 @@ struct ManagedAiResult {
     explanation: Option<String>,
     candidates_created: usize,
     model: String,
+    provider: String,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiProviderStatus {
+    provider: String,
+    connected: bool,
+    healthy: bool,
+    model: String,
+    masked_key: Option<String>,
+    capabilities: Vec<String>,
+    last_checked_at: Option<String>,
+    disclosure_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiUsageSummary {
+    provider: String,
+    model: String,
+    requests: i64,
+    failures: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    average_latency_ms: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GroundedStudyInput {
+    capability: managed_ai::AiCapability,
+    course_ids: Vec<String>,
+    document_ids: Vec<String>,
+    prompt: String,
+    title: String,
+    consent: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GradeBand { label: String, minimum_percent: f64, grade_points: f64 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StudyMaterialSummary { id:String,file_name:String,mime:String,course_ids:Vec<String>,segment_count:i64 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StudyArtifactSummary { id:String,course_id:String,kind:String,title:String,content:String,citations:Vec<ai_providers::GroundedCitation>,provider:String,model:String,updated_at:String }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StudyReviewSummary { id:String,artifact_id:String,confidence:i64,misses:i64,interval_days:i64,next_review_at:String,last_reviewed_at:Option<String> }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GradeCategorySummary { id:String,course_id:String,name:String,weight:f64 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GradeItemSummary { id:String,course_id:String,category_id:Option<String>,title:String,score:Option<f64>,points_possible:f64,due_at:Option<String>,status:String }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CourseGradeSummary { course_id:String,current_percent:Option<f64>,missing_work_impact:f64,projected_letter:Option<String>,credit_hours:f64 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CourseGradingScaleSummary { course_id:String,bands:Vec<GradeBand>,credit_hours:f64 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GradeWhatIf { percent:Option<f64>,projected_letter:Option<String> }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StudyWorkspace { materials:Vec<StudyMaterialSummary>,artifacts:Vec<StudyArtifactSummary>,reviews:Vec<StudyReviewSummary>,grade_categories:Vec<GradeCategorySummary>,grade_items:Vec<GradeItemSummary>,course_grades:Vec<CourseGradeSummary>,grading_scales:Vec<CourseGradingScaleSummary>,gpa_projection:Option<f64> }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GroundedStudyResult { workspace:StudyWorkspace,artifact_id:String,provider:String,model:String }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GradeCategoryInput { id:Option<String>,course_id:String,name:String,weight:f64 }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GradeItemInput { id:Option<String>,course_id:String,category_id:Option<String>,title:String,score:Option<f64>,points_possible:f64,due_at:Option<String>,status:String }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -587,8 +726,8 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS source_objects(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,source_type TEXT NOT NULL,source_uid TEXT NOT NULL,source_url TEXT NOT NULL,observed_at TEXT NOT NULL,payload_hash TEXT NOT NULL,payload TEXT NOT NULL,FOREIGN KEY(connection_id) REFERENCES integration_connections(id),UNIQUE(connection_id,source_uid,payload_hash));
       CREATE TABLE IF NOT EXISTS integration_sync_runs(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,started_at TEXT NOT NULL,completed_at TEXT,status TEXT NOT NULL,pulled_count INTEGER NOT NULL DEFAULT 0,created_count INTEGER NOT NULL DEFAULT 0,error TEXT,FOREIGN KEY(connection_id) REFERENCES integration_connections(id));
       CREATE TABLE IF NOT EXISTS courses(id TEXT PRIMARY KEY,title TEXT NOT NULL,code TEXT NOT NULL DEFAULT '',source_uid TEXT NOT NULL DEFAULT '',source_candidate_id TEXT,version INTEGER NOT NULL DEFAULT 1,UNIQUE(source_uid));
-      CREATE TABLE IF NOT EXISTS import_candidates(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,source_object_id TEXT,kind TEXT NOT NULL DEFAULT 'task',title TEXT NOT NULL,course TEXT NOT NULL,due_at TEXT,starts_at TEXT,ends_at TEXT,duration_minutes INTEGER,evidence TEXT NOT NULL,source_locator TEXT NOT NULL,source_type TEXT NOT NULL DEFAULT 'document',source_url TEXT,source_uid TEXT NOT NULL DEFAULT '',observed_at TEXT,confidence REAL NOT NULL,warnings TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'pending',canonical_entity_id TEXT,weekdays TEXT NOT NULL DEFAULT '[]',starts_at_local TEXT NOT NULL DEFAULT '',ends_at_local TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',FOREIGN KEY(document_id) REFERENCES documents(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id));
-      CREATE TABLE IF NOT EXISTS provenance_links(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,candidate_id TEXT NOT NULL,source_object_id TEXT,field_name TEXT NOT NULL,source_value TEXT,evidence TEXT NOT NULL,created_at TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,FOREIGN KEY(candidate_id) REFERENCES import_candidates(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id),UNIQUE(entity_type,entity_id,candidate_id,field_name));
+      CREATE TABLE IF NOT EXISTS import_candidates(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,source_object_id TEXT,kind TEXT NOT NULL DEFAULT 'task',title TEXT NOT NULL,course TEXT NOT NULL,due_at TEXT,starts_at TEXT,ends_at TEXT,duration_minutes INTEGER,evidence TEXT NOT NULL,source_locator TEXT NOT NULL,source_type TEXT NOT NULL DEFAULT 'document',source_url TEXT,source_uid TEXT NOT NULL DEFAULT '',observed_at TEXT,confidence REAL NOT NULL,warnings TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'pending',canonical_entity_id TEXT,weekdays TEXT NOT NULL DEFAULT '[]',starts_at_local TEXT NOT NULL DEFAULT '',ends_at_local TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',section_number TEXT NOT NULL DEFAULT '',location TEXT NOT NULL DEFAULT '',modality TEXT NOT NULL DEFAULT '',student_edited_fields TEXT NOT NULL DEFAULT '[]',last_observed_payload TEXT NOT NULL DEFAULT '{}',FOREIGN KEY(document_id) REFERENCES documents(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id));
+      CREATE TABLE IF NOT EXISTS provenance_links(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,candidate_id TEXT NOT NULL,source_object_id TEXT,field_name TEXT NOT NULL,source_value TEXT,evidence TEXT NOT NULL,created_at TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,source_kind TEXT NOT NULL DEFAULT '',sanitized_source_identifier TEXT NOT NULL DEFAULT '',external_stable_id TEXT NOT NULL DEFAULT '',confidence REAL NOT NULL DEFAULT 0,import_time TEXT,last_observed_source_value TEXT,student_edited INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(candidate_id) REFERENCES import_candidates(id),FOREIGN KEY(source_object_id) REFERENCES source_objects(id),UNIQUE(entity_type,entity_id,candidate_id,field_name));
       CREATE TABLE IF NOT EXISTS mutations(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,operation TEXT NOT NULL,hlc TEXT NOT NULL,device_id TEXT NOT NULL,tombstone INTEGER NOT NULL DEFAULT 0,payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sync_state(account_id TEXT PRIMARY KEY,device_id TEXT NOT NULL,connected_at TEXT NOT NULL,last_pushed_at TEXT,last_push_cursor TEXT NOT NULL DEFAULT '0',last_pull_cursor TEXT NOT NULL DEFAULT '0');
       CREATE TABLE IF NOT EXISTS sync_outbox(account_id TEXT NOT NULL,mutation_id TEXT NOT NULL,envelope TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(account_id,mutation_id),FOREIGN KEY(mutation_id) REFERENCES mutations(id) ON DELETE CASCADE);
@@ -607,6 +746,16 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
         "TEXT NOT NULL DEFAULT 'complete'",
     )?;
     ensure_column(&conn, "documents", "extraction_error", "TEXT")?;
+    ensure_column(&conn, "documents", "source_retention", "TEXT NOT NULL DEFAULT 'ask'")?;
+    if previous_schema_version < 15 {
+        // Existing vault items predate the per-import decision and must not
+        // suddenly interrupt an upgraded student. New imports keep the column
+        // default (`ask`) and always enter the explicit retention flow.
+        conn.execute("UPDATE documents SET source_retention='keep_encrypted'", [])?;
+    }
+    ensure_column(&conn, "integration_connections", "refresh_on_startup", "INTEGER NOT NULL DEFAULT 1")?;
+    ensure_column(&conn, "integration_connections", "last_attempted_at", "TEXT")?;
+    ensure_column(&conn, "integration_connections", "credential_ref", "TEXT NOT NULL DEFAULT ''")?;
     // Set when the encrypted image has been deleted but the row is kept so its
     // evidence still resolves. Distinct from the empty `vault_path` that marks a
     // remote Canvas stub, which never had a blob to begin with.
@@ -622,6 +771,7 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
         "kind",
         "TEXT NOT NULL DEFAULT 'task'",
     )?;
+    ensure_column(&conn, "import_candidates", "term_id", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(&conn, "import_candidates", "starts_at", "TEXT")?;
     ensure_column(&conn, "import_candidates", "ends_at", "TEXT")?;
     ensure_column(&conn, "import_candidates", "duration_minutes", "INTEGER")?;
@@ -673,6 +823,18 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
         "timezone",
         "TEXT NOT NULL DEFAULT ''",
     )?;
+    ensure_column(&conn, "import_candidates", "section_number", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn, "import_candidates", "location", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn, "import_candidates", "modality", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn, "import_candidates", "student_edited_fields", "TEXT NOT NULL DEFAULT '[]'")?;
+    ensure_column(&conn, "import_candidates", "last_observed_payload", "TEXT NOT NULL DEFAULT '{}'")?;
+    ensure_column(&conn, "provenance_links", "source_kind", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn, "provenance_links", "sanitized_source_identifier", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn, "provenance_links", "external_stable_id", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn, "provenance_links", "confidence", "REAL NOT NULL DEFAULT 0")?;
+    ensure_column(&conn, "provenance_links", "import_time", "TEXT")?;
+    ensure_column(&conn, "provenance_links", "last_observed_source_value", "TEXT")?;
+    ensure_column(&conn, "provenance_links", "student_edited", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(&conn, "import_candidates", "canonical_entity_id", "TEXT")?;
     ensure_column(&conn, "tasks", "source_uid", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(&conn, "tasks", "source_candidate_id", "TEXT")?;
@@ -734,6 +896,8 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
              CREATE INDEX IF NOT EXISTS ai_invocations_created_idx
              ON ai_invocations(created_at,id);",
         )?;
+        ensure_column(&conn, "ai_invocations", "provider", "TEXT NOT NULL DEFAULT 'legacy_managed'")?;
+        ensure_column(&conn, "ai_invocations", "error_category", "TEXT")?;
         Ok(())
     })();
     match managed_ai_schema_result {
@@ -745,6 +909,51 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
             return Err(error);
         }
     }
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS document_segments(
+           id TEXT PRIMARY KEY,document_id TEXT NOT NULL,locator TEXT NOT NULL,text TEXT NOT NULL,
+           confidence REAL NOT NULL,position INTEGER NOT NULL,
+           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+           UNIQUE(document_id,position)
+         );
+         CREATE TABLE IF NOT EXISTS study_materials(
+           document_id TEXT NOT NULL,course_id TEXT NOT NULL,added_at TEXT NOT NULL,
+           PRIMARY KEY(document_id,course_id),
+           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+           FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS study_artifacts(
+           id TEXT PRIMARY KEY,course_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,
+           content TEXT NOT NULL,citations TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL,
+           model TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,
+           FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS study_reviews(
+           id TEXT PRIMARY KEY,artifact_id TEXT NOT NULL,confidence INTEGER NOT NULL DEFAULT 0,
+           misses INTEGER NOT NULL DEFAULT 0,interval_days INTEGER NOT NULL DEFAULT 1,
+           next_review_at TEXT NOT NULL,last_reviewed_at TEXT,
+           FOREIGN KEY(artifact_id) REFERENCES study_artifacts(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS grade_categories(
+           id TEXT PRIMARY KEY,course_id TEXT NOT NULL,name TEXT NOT NULL,weight REAL NOT NULL,
+           FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+           UNIQUE(course_id,name)
+         );
+         CREATE TABLE IF NOT EXISTS grade_items(
+           id TEXT PRIMARY KEY,course_id TEXT NOT NULL,category_id TEXT,title TEXT NOT NULL,
+           score REAL,points_possible REAL NOT NULL,due_at TEXT,status TEXT NOT NULL DEFAULT 'graded',
+           FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+           FOREIGN KEY(category_id) REFERENCES grade_categories(id) ON DELETE SET NULL
+         );
+         CREATE TABLE IF NOT EXISTS course_grading_scales(
+           course_id TEXT PRIMARY KEY,scale TEXT NOT NULL,credit_hours REAL NOT NULL DEFAULT 3,
+           FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS document_segments_document_idx ON document_segments(document_id,position);
+         CREATE INDEX IF NOT EXISTS study_artifacts_course_idx ON study_artifacts(course_id,updated_at);
+         CREATE INDEX IF NOT EXISTS study_reviews_due_idx ON study_reviews(next_review_at);
+         CREATE INDEX IF NOT EXISTS grade_items_course_idx ON grade_items(course_id,status);"
+    )?;
     conn.execute_batch("SAVEPOINT canonical_sync_v2_migration")?;
     let canonical_sync_result = (|| -> Result<()> {
         conn.execute_batch(
@@ -905,6 +1114,7 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     )?;
     backfill_legacy_canvas_links(&conn)?;
     profile::migrate(&conn, previous_schema_version)?;
+    ensure_column(&conn, "class_meeting_series", "modality", "TEXT NOT NULL DEFAULT ''")?;
     profile::initialize_defaults(&conn)?;
     conn.execute_batch(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))?;
     Ok(conn)
@@ -2141,33 +2351,26 @@ fn dashboard_with_notice(
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut candidate_query = conn.prepare(
-    "SELECT id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_type,source_url,confidence,warnings,status,
-            weekdays,starts_at_local,ends_at_local,timezone
-     FROM import_candidates ORDER BY status,confidence DESC",
+    "SELECT id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_type,source_url,confidence,warnings,status,
+            weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality,student_edited_fields,term_id,
+            CASE WHEN ic.source_uid!='' AND (
+              (ic.kind='task' AND EXISTS(SELECT 1 FROM tasks t WHERE t.source_uid=ic.source_uid)) OR
+              (ic.kind='commitment' AND EXISTS(SELECT 1 FROM commitments c WHERE c.source_uid=ic.source_uid)) OR
+              (ic.kind='course' AND EXISTS(SELECT 1 FROM courses c WHERE c.source_uid=ic.source_uid)) OR
+              (ic.kind='class_meeting' AND EXISTS(SELECT 1 FROM class_meeting_series m WHERE m.source_uid=ic.source_uid))
+            ) THEN 'update' ELSE 'add' END
+     FROM import_candidates ic ORDER BY status,confidence DESC",
   )?;
     let candidates = candidate_query
         .query_map([], |row| {
-            let warnings: String = row.get(13)?;
+            let warnings: String = row.get(14)?;
             Ok(Candidate {
                 id: row.get(0)?,
-                kind: row.get(1)?,
-                title: row.get(2)?,
-                course: row.get(3)?,
-                due_at: row.get(4)?,
-                starts_at: row.get(5)?,
-                ends_at: row.get(6)?,
-                duration_minutes: row.get(7)?,
-                evidence: row.get(8)?,
-                source_locator: row.get(9)?,
-                source_type: row.get(10)?,
-                source_url: row.get(11)?,
-                confidence: row.get(12)?,
+                document_id: row.get(1)?,
+                kind: row.get(2)?, title: row.get(3)?, course: row.get(4)?, due_at: row.get(5)?, starts_at: row.get(6)?, ends_at: row.get(7)?, duration_minutes: row.get(8)?, evidence: row.get(9)?, source_locator: row.get(10)?, source_type: row.get(11)?, source_url: row.get(12)?, confidence: row.get(13)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
-                status: row.get(14)?,
-                weekdays: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
-                starts_at_local: row.get(16)?,
-                ends_at_local: row.get(17)?,
-                timezone: row.get(18)?,
+                status: row.get(15)?, weekdays: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(), starts_at_local: row.get(17)?, ends_at_local: row.get(18)?, timezone: row.get(19)?,
+                section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -2201,20 +2404,25 @@ fn dashboard_with_notice(
     };
     let canvas_connections = {
         let mut connection_query = conn.prepare(
-            "SELECT c.id,c.base_url,c.account_name,c.status,c.last_synced_at,c.last_error,
+            "SELECT c.id,c.provider,c.base_url,c.account_name,c.status,c.last_synced_at,c.last_error,
              (SELECT COUNT(*) FROM import_candidates ic JOIN source_objects so ON so.id=ic.source_object_id WHERE so.connection_id=c.id AND ic.status='pending')
-             FROM integration_connections c WHERE c.provider='canvas' ORDER BY c.created_at,c.id",
+             ,c.refresh_on_startup,c.last_attempted_at
+             FROM integration_connections c WHERE c.provider IN ('canvas','canvas_calendar') ORDER BY c.created_at,c.id",
         )?;
         let connections = connection_query
             .query_map([], |row| {
+                let last_attempted_at: Option<String> = row.get(9)?;
                 Ok(CanvasConnectionSummary {
                     id: row.get(0)?,
-                    base_url: row.get(1)?,
-                    account_name: row.get(2)?,
-                    status: row.get(3)?,
-                    last_synced_at: row.get(4)?,
-                    last_error: row.get(5)?,
-                    pending_candidates: row.get(6)?,
+                    provider: row.get(1)?,
+                    base_url: row.get(2)?,
+                    account_name: row.get(3)?,
+                    status: row.get(4)?,
+                    last_synced_at: row.get(5)?,
+                    last_error: row.get(6)?,
+                    refresh_on_startup: row.get::<_, i64>(8)? != 0,
+                    next_eligible_refresh_at: last_attempted_at.as_deref().and_then(parse_utc).map(|value| (value + chrono::Duration::hours(24)).to_rfc3339()),
+                    pending_candidates: row.get(7)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -2224,7 +2432,7 @@ fn dashboard_with_notice(
         let mut run_query = conn.prepare(
             "SELECT r.id,r.connection_id,r.started_at,r.completed_at,r.status,r.pulled_count,r.created_count,r.error
              FROM integration_sync_runs r JOIN integration_connections c ON c.id=r.connection_id
-             WHERE c.provider='canvas' ORDER BY r.started_at DESC,r.id DESC LIMIT 20",
+             WHERE c.provider IN ('canvas','canvas_calendar') ORDER BY r.started_at DESC,r.id DESC LIMIT 20",
         )?;
         let runs = run_query
             .query_map([], |row| {
@@ -2298,6 +2506,17 @@ fn dashboard_with_notice(
                 },
             )
         });
+    let unsettled_schedule_sources = {
+        let mut query = conn.prepare(
+            "SELECT d.id FROM documents d
+             WHERE d.source_retention='ask' AND d.vault_path!=''
+             ORDER BY d.imported_at,d.id",
+        )?;
+        let values = query
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
     Ok(Dashboard {
         student_name: setting("student_name"),
         timezone: setting("timezone"),
@@ -2312,6 +2531,7 @@ fn dashboard_with_notice(
         conflicts,
         ocr: ocr.status(),
         import_notice,
+        unsettled_schedule_sources,
     })
 }
 
@@ -2622,6 +2842,21 @@ fn set_plan_block_lock(
     regenerate_plan_for_trigger(&conn, None, planner::PlannerTrigger::PreferenceChanged)?;
     dashboard(&conn, &state.ocr)
 }
+
+#[derive(Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+struct CalendarUndo { block_id:String,starts_at:String,ends_at:String,locked:bool }
+
+#[tauri::command]
+fn move_plan_block(state:tauri::State<AppState>,block_id:String,starts_at:String,ends_at:String)->Result<Dashboard>{
+    state.require_unlocked()?;let starts=parse_utc(&starts_at).ok_or_else(||AppError::Invalid("calendar start is invalid".into()))?;let ends=parse_utc(&ends_at).ok_or_else(||AppError::Invalid("calendar end is invalid".into()))?;let minutes=(ends-starts).num_minutes();if starts<Utc::now()-chrono::Duration::minutes(1)||!(5..=480).contains(&minutes){return Err(AppError::Invalid("calendar block must be 5–480 minutes in the future".into()));}
+    let conn=state.db.lock().unwrap();require_onboarded(&conn)?;let previous=conn.query_row("SELECT starts_at,ends_at,locked FROM plan_blocks WHERE id=?1 AND task_id IS NOT NULL AND completed=0",params![block_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?!=0))).optional()?.ok_or_else(||AppError::Invalid("only unfinished study blocks can be moved".into()))?;
+    let overlaps=conn.query_row("SELECT EXISTS(SELECT 1 FROM plan_blocks WHERE id!=?1 AND completed=0 AND datetime(starts_at)<datetime(?3) AND datetime(ends_at)>datetime(?2))",params![block_id,starts_at,ends_at],|row|row.get::<_,i64>(0))?!=0;if overlaps{return Err(AppError::Invalid("that time overlaps another class, commitment, or study block".into()));}
+    let undo=CalendarUndo{block_id:block_id.clone(),starts_at:previous.0,ends_at:previous.1,locked:previous.2};conn.execute("INSERT INTO settings(key,value) VALUES('calendar_undo',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serde_json::to_string(&undo).map_err(|error|AppError::Background(error.to_string()))?])?;conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=1,reason_codes='[\"manual_calendar_move\"]' WHERE id=?1",params![block_id,starts.to_rfc3339(),ends.to_rfc3339()])?;mutation(&conn,"plan_block",&block_id,"moved","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Study block moved and locked. Undo is available from Calendar.".into()))
+}
+
+#[tauri::command]
+fn undo_calendar_change(state:tauri::State<AppState>)->Result<Dashboard>{state.require_unlocked()?;let conn=state.db.lock().unwrap();let raw=conn.query_row("SELECT value FROM settings WHERE key='calendar_undo'",[],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("there is no calendar change to undo".into()))?;let undo:CalendarUndo=serde_json::from_str(&raw).map_err(|_|AppError::Invalid("saved calendar undo is invalid".into()))?;let changed=conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=?4 WHERE id=?1 AND completed=0",params![undo.block_id,undo.starts_at,undo.ends_at,i64::from(undo.locked)])?;if changed!=1{return Err(AppError::Invalid("the moved block is no longer available".into()));}conn.execute("DELETE FROM settings WHERE key='calendar_undo'",[])?;mutation(&conn,"plan_block",&undo.block_id,"move_undone","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Calendar change undone.".into()))}
 
 #[tauri::command]
 fn get_onboarding_state(state: tauri::State<AppState>) -> Result<profile::OnboardingState> {
@@ -3836,16 +4071,24 @@ async fn delete_local_profile(
 
 fn reset_local_database(state: &AppState) -> Result<()> {
     let mut conn = state.db.lock().unwrap();
-    let connection_ids = {
-        let mut query =
-            conn.prepare("SELECT id FROM integration_connections WHERE provider='canvas'")?;
-        let ids = query
-            .query_map([], |row| row.get::<_, String>(0))?
+    let connections = {
+        let mut query = conn.prepare(
+            "SELECT id,provider FROM integration_connections WHERE provider IN ('canvas','canvas_calendar')",
+        )?;
+        let values = query
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        ids
+        values
     };
     let tx = conn.transaction()?;
     for table in [
+        "study_reviews",
+        "study_artifacts",
+        "study_materials",
+        "document_segments",
+        "grade_items",
+        "grade_categories",
+        "course_grading_scales",
         "reminder_deliveries",
         "provenance_links",
         "source_conflicts",
@@ -3880,8 +4123,15 @@ fn reset_local_database(state: &AppState) -> Result<()> {
     )?;
     tx.commit()?;
     profile::initialize_defaults(&conn)?;
-    for id in connection_ids {
-        let _ = canvas_token_entry(&id)?.delete_credential();
+    for (id, provider) in connections {
+        if provider == "canvas" {
+            let _ = canvas_token_entry(&id)?.delete_credential();
+        } else {
+            let _ = canvas_calendar_entry(&id)?.delete_credential();
+        }
+    }
+    for provider in ai_providers::ProviderId::ALL {
+        let _ = ai_providers::remove_key(provider);
     }
     Ok(())
 }
@@ -5994,6 +6244,119 @@ fn canvas_token_entry(connection_id: &str) -> Result<keyring::Entry> {
     )?)
 }
 
+fn canvas_calendar_entry(connection_id: &str) -> Result<keyring::Entry> {
+    Ok(keyring::Entry::new("app.studentcenter.desktop", &format!("canvas-calendar-feed:{connection_id}"))?)
+}
+
+fn delete_credential_if_present(entry: keyring::Entry) -> Result<()> {
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn integration_credential_targets(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut query = conn.prepare(
+        "SELECT id,provider FROM integration_connections WHERE provider IN ('canvas','canvas_calendar')",
+    )?;
+    let targets = query
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(targets)
+}
+
+fn remove_integration_credentials(targets: &[(String, String)]) -> Result<()> {
+    for (id, provider) in targets {
+        let entry = if provider == "canvas" {
+            canvas_token_entry(id)?
+        } else {
+            canvas_calendar_entry(id)?
+        };
+        delete_credential_if_present(entry)?;
+    }
+    Ok(())
+}
+
+fn persist_canvas_calendar_pull(conn: &Connection, connection_id: &str, pull: &canvas_calendar::FeedPull, run_id: &str) -> Result<usize> {
+    let observed_at=Utc::now().to_rfc3339();
+    let previous_hash=conn.query_row("SELECT sync_cursor FROM integration_connections WHERE id=?1 AND provider='canvas_calendar'",params![connection_id],|row| row.get::<_,Option<String>>(0)).optional()?.flatten();
+    if previous_hash.as_deref()==Some(&pull.hash) {
+        conn.execute("UPDATE integration_connections SET status='connected',last_synced_at=?2,last_attempted_at=?2,last_error=NULL WHERE id=?1",params![connection_id,observed_at])?;
+        conn.execute("UPDATE integration_sync_runs SET completed_at=?2,status='complete',pulled_count=0,created_count=0 WHERE id=?1",params![run_id,observed_at])?;
+        return Ok(0);
+    }
+    let document_id=format!("canvas-calendar-source:{connection_id}");
+    conn.execute("INSERT OR IGNORE INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at,extraction_status) VALUES(?1,?2,'text/calendar','','','','',?3,?4,'remote')",
+        params![document_id,format!("Canvas calendar · {}",pull.origin),hex::encode(Sha256::digest(pull.origin.as_bytes())),observed_at])?;
+    let mut created=0usize;
+    for candidate in &pull.candidates {
+        let payload=serde_json::json!({"kind":candidate.kind,"title":candidate.title,"course":candidate.course,"dueAt":candidate.due_at,"startsAt":candidate.starts_at,"endsAt":candidate.ends_at,"weekdays":candidate.weekdays,"startsAtLocal":candidate.starts_at_local,"endsAtLocal":candidate.ends_at_local,"timezone":candidate.timezone});
+        let payload_text=payload.to_string(); let payload_hash=hex::encode(Sha256::digest(payload_text.as_bytes()));
+        let exists=conn.query_row("SELECT EXISTS(SELECT 1 FROM source_objects WHERE connection_id=?1 AND source_uid=?2 AND payload_hash=?3)",params![connection_id,candidate.source_uid,payload_hash],|row| row.get::<_,i64>(0))?!=0;
+        if exists { continue; }
+        let source_object_id=Uuid::new_v4().to_string();
+        conn.execute("INSERT INTO source_objects(id,connection_id,source_type,source_uid,source_url,observed_at,payload_hash,payload) VALUES(?1,?2,'canvas_calendar',?3,?4,?5,?6,?7)",
+            params![source_object_id,connection_id,candidate.source_uid,pull.origin,observed_at,payload_hash,payload_text])?;
+        let candidate_id=Uuid::new_v4().to_string();
+        conn.execute("INSERT INTO import_candidates(id,document_id,source_object_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_type,source_url,source_uid,observed_at,confidence,warnings,weekdays,starts_at_local,ends_at_local,timezone) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'canvas_calendar',?13,?14,?15,?16,?17,?18,?19,?20,?21)",
+            params![candidate_id,document_id,source_object_id,candidate.kind,candidate.title,candidate.course,candidate.due_at,candidate.starts_at,candidate.ends_at,candidate.duration_minutes,candidate.evidence,candidate.source_locator,pull.origin,candidate.source_uid,observed_at,candidate.confidence,serde_json::to_string(&candidate.warnings).unwrap_or_else(|_|"[]".into()),serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_|"[]".into()),candidate.starts_at_local,candidate.ends_at_local,candidate.timezone])?;
+        candidate_conflict(conn,&candidate_id,candidate)?; created+=1;
+    }
+    conn.execute("UPDATE integration_connections SET status='connected',account_name='Canvas calendar',last_synced_at=?2,last_attempted_at=?2,last_error=NULL,sync_cursor=?3,version=version+1 WHERE id=?1",params![connection_id,observed_at,pull.hash])?;
+    conn.execute("UPDATE integration_sync_runs SET completed_at=?2,status='complete',pulled_count=?3,created_count=?4 WHERE id=?1",params![run_id,observed_at,pull.candidates.len() as i64,created as i64])?;
+    mutation(conn,"integration_connection",connection_id,"synced","{}")?;
+    Ok(created)
+}
+
+fn canvas_calendar_timezone(conn: &Connection) -> Tz {
+    conn.query_row("SELECT value FROM settings WHERE key='timezone'",[],|row| row.get::<_,String>(0)).ok().and_then(|value| value.parse().ok()).unwrap_or(chrono_tz::UTC)
+}
+
+fn connect_canvas_calendar_blocking(state: &AppState, feed_url: String, label: String, refresh_on_startup: bool) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let timezone={let db=state.db.lock().unwrap();canvas_calendar_timezone(&db)};
+    let feed=Zeroizing::new(feed_url); let pull=canvas_calendar::fetch(&feed,timezone)?;
+    let connection_id=Uuid::new_v4().to_string();
+    canvas_calendar_entry(&connection_id)?.set_password(&feed)?;
+    let result=(|| {
+        let db=state.db.lock().unwrap();
+        db.execute("INSERT INTO integration_connections(id,provider,base_url,account_name,status,created_at,refresh_on_startup,last_attempted_at,credential_ref) VALUES(?1,'canvas_calendar',?2,?3,'connecting',?4,?5,?4,?6)",params![connection_id,pull.origin,if label.trim().is_empty(){"Canvas calendar"}else{label.trim()},Utc::now().to_rfc3339(),i64::from(refresh_on_startup),format!("canvas-calendar-feed:{connection_id}")])?;
+        let run_id=begin_sync_run(&db,&connection_id)?; let created=persist_canvas_calendar_pull(&db,&connection_id,&pull,&run_id)?;
+        dashboard_with_notice(&db,&state.ocr,Some(format!("Canvas calendar connected read-only; {created} item{} await review.",if created==1{""}else{"s"})))
+    })();
+    if result.is_err(){let _=canvas_calendar_entry(&connection_id)?.delete_credential();}
+    result
+}
+
+#[tauri::command]
+async fn connect_canvas_calendar(state: tauri::State<'_,AppState>, feed_url:String, label:String, refresh_on_startup:bool)->Result<Dashboard>{
+    state.require_unlocked()?; let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||connect_canvas_calendar_blocking(&state,feed_url,label,refresh_on_startup)).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+fn refresh_canvas_calendar_blocking(state:&AppState,connection_id:String)->Result<Dashboard>{
+    state.require_unlocked()?;
+    let (origin,timezone,run_id)={let db=state.db.lock().unwrap(); let origin=db.query_row("SELECT base_url FROM integration_connections WHERE id=?1 AND provider='canvas_calendar' AND status IN ('connected','error')",params![connection_id],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("Canvas calendar connection not found".into()))?; let run_id=begin_sync_run(&db,&connection_id)?;(origin,canvas_calendar_timezone(&db),run_id)};
+    let feed=match canvas_calendar_entry(&connection_id)?.get_password(){Ok(value)=>Zeroizing::new(value),Err(keyring::Error::NoEntry)=>{let db=state.db.lock().unwrap();fail_sync_run(&db,&connection_id,&run_id,"Calendar link must be connected again",true)?;return Err(AppError::Invalid("Canvas calendar link must be connected again".into()));},Err(error)=>return Err(error.into())};
+    match canvas_calendar::fetch(&feed,timezone){Ok(pull)=>{let db=state.db.lock().unwrap();let created=persist_canvas_calendar_pull(&db,&connection_id,&pull,&run_id)?;dashboard_with_notice(&db,&state.ocr,Some(format!("Canvas calendar refreshed; {created} changed item{} await review.",if created==1{""}else{"s"})))} Err(error)=>{let db=state.db.lock().unwrap();fail_sync_run(&db,&connection_id,&run_id,"Canvas calendar refresh failed",false)?;let _=origin;Err(error.into())}}
+}
+
+#[tauri::command]
+async fn refresh_canvas_calendar(state:tauri::State<'_,AppState>,connection_id:String)->Result<Dashboard>{state.require_unlocked()?;let state=state.inner().clone();tauri::async_runtime::spawn_blocking(move||refresh_canvas_calendar_blocking(&state,connection_id)).await.map_err(|error|AppError::Background(error.to_string()))?}
+
+#[tauri::command]
+fn set_canvas_calendar_refresh(state:tauri::State<AppState>,connection_id:String,refresh_on_startup:bool)->Result<Dashboard>{
+    state.require_unlocked()?;
+    let db=state.db.lock().unwrap();
+    let changed=db.execute("UPDATE integration_connections SET refresh_on_startup=?2,version=version+1 WHERE id=?1 AND provider='canvas_calendar' AND status!='disconnected'",params![connection_id,i64::from(refresh_on_startup)])?;
+    if changed==0{return Err(AppError::Invalid("Canvas calendar connection not found".into()));}
+    mutation(&db,"integration_connection",&connection_id,"refresh_preference_changed",&serde_json::json!({"refreshOnStartup":refresh_on_startup}).to_string())?;
+    dashboard_with_notice(&db,&state.ocr,Some(format!("Automatic Canvas refresh {}.",if refresh_on_startup{"enabled"}else{"disabled"})))
+}
+
+#[tauri::command]
+fn disconnect_canvas_calendar(state:tauri::State<AppState>,connection_id:String)->Result<Dashboard>{state.require_unlocked()?;let db=state.db.lock().unwrap();let changed=db.execute("UPDATE integration_connections SET status='disconnected',version=version+1 WHERE id=?1 AND provider='canvas_calendar'",params![connection_id])?;if changed==0{return Err(AppError::Invalid("Canvas calendar connection not found".into()));}let _=canvas_calendar_entry(&connection_id)?.delete_credential();mutation(&db,"integration_connection",&connection_id,"disconnected","{}")?;dashboard_with_notice(&db,&state.ocr,Some("Canvas calendar disconnected; approved records were preserved.".into()))}
+
 fn ensure_canvas_source_document(
     conn: &Connection,
     connection_id: &str,
@@ -6265,15 +6628,22 @@ fn due_canvas_reconciliations(conn: &Connection, now: DateTime<Utc>) -> Result<V
     Ok(rows)
 }
 
+fn due_canvas_calendar_reconciliations(conn:&Connection,now:DateTime<Utc>)->Result<Vec<String>>{
+    let cutoff=(now-Duration::hours(24)).to_rfc3339();
+    let mut statement=conn.prepare("SELECT id FROM integration_connections WHERE provider='canvas_calendar' AND status='connected' AND refresh_on_startup=1 AND (last_attempted_at IS NULL OR datetime(last_attempted_at)<=datetime(?1)) ORDER BY COALESCE(datetime(last_attempted_at),datetime('1970-01-01')),id LIMIT 10")?;
+    let rows=statement.query_map(params![cutoff],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    Ok(rows)
+}
+
 fn start_canvas_reconciliation_worker(state: AppState) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(StdDuration::from_secs(60 * 60));
         if state.locked.load(Ordering::Acquire) {
+            std::thread::sleep(StdDuration::from_secs(30));
             continue;
         }
-        let connection_ids = {
+        let (connection_ids,calendar_ids) = {
             let db = state.db.lock().unwrap();
-            due_canvas_reconciliations(&db, Utc::now()).unwrap_or_default()
+            (due_canvas_reconciliations(&db, Utc::now()).unwrap_or_default(),due_canvas_calendar_reconciliations(&db,Utc::now()).unwrap_or_default())
         };
         for connection_id in connection_ids {
             if state.locked.load(Ordering::Acquire) {
@@ -6281,6 +6651,8 @@ fn start_canvas_reconciliation_worker(state: AppState) {
             }
             let _ = sync_canvas_blocking(&state, connection_id);
         }
+        for connection_id in calendar_ids { if state.locked.load(Ordering::Acquire){break;} let _=refresh_canvas_calendar_blocking(&state,connection_id); }
+        std::thread::sleep(StdDuration::from_secs(60 * 60));
     });
 }
 
@@ -6409,39 +6781,328 @@ fn candidate_conflict(
 }
 
 fn ai_capability_name(capability: managed_ai::AiCapability) -> &'static str {
-    match capability {
-        managed_ai::AiCapability::BrainDump => "brain_dump",
-        managed_ai::AiCapability::DocumentExtraction => "document_extraction",
-        managed_ai::AiCapability::TaskDecomposition => "task_decomposition",
-        managed_ai::AiCapability::Explanation => "explanation",
+    capability.as_str()
+}
+
+fn ai_provider_order(conn: &Connection) -> Vec<ai_providers::ProviderId> {
+    let saved = conn.query_row("SELECT value FROM settings WHERE key='ai_provider_order'", [], |row| row.get::<_, String>(0)).ok();
+    let parsed = saved.and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok()).unwrap_or_default();
+    let mut order = parsed.into_iter().filter_map(|value| value.parse().ok()).collect::<Vec<_>>();
+    for provider in ai_providers::ProviderId::ALL { if !order.contains(&provider) { order.push(provider); } }
+    order
+}
+
+fn ai_model(conn: &Connection, provider: ai_providers::ProviderId) -> String {
+    conn.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_model_{}", provider.as_str())], |row| row.get::<_, String>(0))
+        .ok().filter(|value| !value.trim().is_empty()).unwrap_or_else(|| provider.default_model().into())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AiCapabilityRequirements {
+    text: bool,
+    images: bool,
+    structured_output: bool,
+    streaming: bool,
+    minimum_context_tokens: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AiProviderFeatures {
+    text: bool,
+    images: bool,
+    structured_output: bool,
+    streaming: bool,
+    context_tokens: usize,
+}
+
+fn ai_capability_requirements(capability: managed_ai::AiCapability) -> AiCapabilityRequirements {
+    AiCapabilityRequirements {
+        text: true,
+        images: matches!(capability, managed_ai::AiCapability::ScheduleVision),
+        structured_output: true,
+        streaming: false,
+        minimum_context_tokens: if matches!(capability, managed_ai::AiCapability::SourceQa | managed_ai::AiCapability::StudyGuide | managed_ai::AiCapability::Flashcards | managed_ai::AiCapability::PracticeQuestions | managed_ai::AiCapability::PracticeTest) { 64_000 } else { 16_000 },
     }
 }
 
+fn ai_provider_features(provider: ai_providers::ProviderId) -> AiProviderFeatures {
+    match provider {
+        ai_providers::ProviderId::Openai => AiProviderFeatures { text:true, images:true, structured_output:true, streaming:true, context_tokens:128_000 },
+        ai_providers::ProviderId::Anthropic | ai_providers::ProviderId::Gemini => AiProviderFeatures { text:true, images:true, structured_output:true, streaming:true, context_tokens:1_000_000 },
+    }
+}
+
+fn provider_meets_requirements(features: AiProviderFeatures, requirements: AiCapabilityRequirements) -> bool {
+    (!requirements.text || features.text)
+        && (!requirements.images || features.images)
+        && (!requirements.structured_output || features.structured_output)
+        && (!requirements.streaming || features.streaming)
+        && features.context_tokens >= requirements.minimum_context_tokens
+}
+
+fn provider_supports(provider: ai_providers::ProviderId, capability: managed_ai::AiCapability) -> bool {
+    provider_meets_requirements(ai_provider_features(provider), ai_capability_requirements(capability))
+}
+
+fn resolve_ai_provider(conn: &Connection, capability: managed_ai::AiCapability) -> Result<(ai_providers::ProviderId, Zeroizing<String>, String)> {
+    for provider in ai_provider_order(conn) {
+        if !provider_supports(provider, capability) { continue; }
+        let healthy = conn.query_row(
+            "SELECT value FROM settings WHERE key=?1",
+            params![format!("ai_healthy_{}", provider.as_str())],
+            |row| row.get::<_, String>(0),
+        ).ok().as_deref() == Some("true");
+        if !healthy { continue; }
+        match ai_providers::load_key(provider) {
+            Ok(key) => return Ok((provider, key, ai_model(conn, provider))),
+            Err(managed_ai::ManagedAiError::NotConfigured) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(AppError::Invalid("Connect OpenAI, Anthropic, or Gemini in Settings before using AI".into()))
+}
+
+fn all_ai_capabilities() -> Vec<String> {
+    ["brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","source_qa","study_guide","flashcards","practice_questions","practice_test"]
+        .into_iter().map(str::to_owned).collect()
+}
+
+#[tauri::command]
+fn list_ai_providers(state: tauri::State<AppState>) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    let db = state.db.lock().unwrap();
+    Ok(ai_provider_order(&db).into_iter().map(|provider| {
+        let key = ai_providers::load_key(provider).ok();
+        let suffix = key.as_ref().map(|value| value.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>());
+        let healthy = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_healthy_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok().as_deref() == Some("true");
+        let last_checked_at = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok();
+        AiProviderStatus { provider:provider.as_str().into(), connected:key.is_some(), healthy:key.is_some() && healthy,
+            model:ai_model(&db, provider), masked_key:suffix.map(|value| format!("••••{value}")), capabilities:all_ai_capabilities(),
+            last_checked_at, disclosure_url:provider.disclosure_url().into() }
+    }).collect())
+}
+
+fn persist_ai_health(conn: &Connection, provider: ai_providers::ProviderId, healthy: bool) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    for (key, value) in [(format!("ai_healthy_{}", provider.as_str()), healthy.to_string()), (format!("ai_checked_{}", provider.as_str()), now)] {
+        conn.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn save_ai_provider_key(state: tauri::State<'_, AppState>, provider: String, key: String, model: Option<String>, age_confirmed: bool) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    if !age_confirmed { return Err(AppError::Invalid("Confirm that you are 18 or older before connecting an AI provider".into())); }
+    let provider: ai_providers::ProviderId = provider.parse()?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = Zeroizing::new(key);
+        ai_providers::test_connection(provider, &key)?;
+        ai_providers::save_key(provider, key)?;
+        let db = state.db.lock().unwrap();
+        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+            if model.len() > 200 { return Err(AppError::Invalid("model is too long".into())); }
+            db.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("ai_model_{}", provider.as_str()), model.trim()])?;
+        }
+        persist_ai_health(&db, provider, true)?;
+        drop(db);
+        list_ai_provider_statuses(&state)
+    }).await.map_err(|error| AppError::Background(error.to_string()))?
+}
+
+fn list_ai_provider_statuses(state: &AppState) -> Result<Vec<AiProviderStatus>> {
+    let db = state.db.lock().unwrap();
+    Ok(ai_provider_order(&db).into_iter().map(|provider| {
+        let key = ai_providers::load_key(provider).ok();
+        let suffix = key.as_ref().map(|value| value.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>());
+        let healthy = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_healthy_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok().as_deref() == Some("true");
+        AiProviderStatus { provider:provider.as_str().into(), connected:key.is_some(), healthy:key.is_some() && healthy, model:ai_model(&db,provider),
+            masked_key:suffix.map(|value| format!("••••{value}")), capabilities:all_ai_capabilities(),
+            last_checked_at:db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}",provider.as_str())], |row| row.get(0)).ok(), disclosure_url:provider.disclosure_url().into() }
+    }).collect())
+}
+
+#[tauri::command]
+async fn test_ai_provider(state: tauri::State<'_, AppState>, provider: String) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    let provider: ai_providers::ProviderId = provider.parse()?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = ai_providers::load_key(provider)?;
+        let result = ai_providers::test_connection(provider, &key);
+        let db = state.db.lock().unwrap(); persist_ai_health(&db, provider, result.is_ok())?; drop(db);
+        result?; list_ai_provider_statuses(&state)
+    }).await.map_err(|error| AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+fn remove_ai_provider(state: tauri::State<AppState>, provider: String) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    let provider: ai_providers::ProviderId = provider.parse()?;
+    ai_providers::remove_key(provider)?;
+    let db = state.db.lock().unwrap(); persist_ai_health(&db, provider, false)?; drop(db);
+    list_ai_provider_statuses(&state)
+}
+
+#[tauri::command]
+fn set_ai_provider_order(state: tauri::State<AppState>, order: Vec<String>) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    let parsed = order.iter().map(|value| value.parse::<ai_providers::ProviderId>()).collect::<std::result::Result<Vec<_>,_>>()?;
+    if parsed.len()!=3 || parsed.iter().collect::<std::collections::HashSet<_>>().len()!=3 { return Err(AppError::Invalid("provider order must contain each provider exactly once".into())); }
+    let db=state.db.lock().unwrap();
+    db.execute("INSERT INTO settings(key,value) VALUES('ai_provider_order',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![serde_json::to_string(&order).unwrap_or_default()])?;
+    drop(db); list_ai_provider_statuses(&state)
+}
+
+#[tauri::command]
+fn get_ai_usage(state: tauri::State<AppState>) -> Result<Vec<AiUsageSummary>> {
+    state.require_unlocked()?;
+    let db=state.db.lock().unwrap();
+    ai_usage_summaries(&db)
+}
+
+fn ai_usage_summaries(db: &Connection) -> Result<Vec<AiUsageSummary>> {
+    let mut query=db.prepare("SELECT provider,COALESCE(model,''),COUNT(*),SUM(CASE WHEN outcome='failed' THEN 1 ELSE 0 END),SUM(input_tokens),SUM(output_tokens),AVG(latency_ms) FROM ai_invocations GROUP BY provider,model ORDER BY provider,model")?;
+    let rows=query.query_map([],|row| Ok(AiUsageSummary{provider:row.get(0)?,model:row.get(1)?,requests:row.get(2)?,failures:row.get(3)?,input_tokens:row.get(4)?,output_tokens:row.get(5)?,average_latency_ms:row.get(6)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    Ok(rows)
+}
+
+fn study_workspace_in(conn: &Connection) -> Result<StudyWorkspace> {
+    let materials = {
+        let mut query = conn.prepare("SELECT d.id,d.file_name,d.mime,(SELECT COUNT(*) FROM document_segments s WHERE s.document_id=d.id) FROM documents d WHERE d.vault_path!='' OR d.content_shredded=1 ORDER BY datetime(d.imported_at) DESC,d.id")?;
+        let values = query.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let mut courses = conn.prepare("SELECT course_id FROM study_materials WHERE document_id=?1 ORDER BY course_id")?;
+            let course_ids = courses.query_map(params![id], |course| course.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(StudyMaterialSummary { id, file_name: row.get(1)?, mime: row.get(2)?, course_ids, segment_count: row.get(3)? })
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+    let artifacts = {
+        let mut query = conn.prepare("SELECT id,course_id,kind,title,content,citations,provider,model,updated_at FROM study_artifacts ORDER BY datetime(updated_at) DESC,id")?;
+        let values = query.query_map([], |row| {
+            let citations: String = row.get(5)?;
+            Ok(StudyArtifactSummary { id: row.get(0)?, course_id: row.get(1)?, kind: row.get(2)?, title: row.get(3)?, content: row.get(4)?, citations: serde_json::from_str(&citations).unwrap_or_default(), provider: row.get(6)?, model: row.get(7)?, updated_at: row.get(8)? })
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+    let reviews = {
+        let mut query = conn.prepare("SELECT id,artifact_id,confidence,misses,interval_days,next_review_at,last_reviewed_at FROM study_reviews ORDER BY datetime(next_review_at),id")?;
+        let values = query.query_map([], |row| Ok(StudyReviewSummary { id: row.get(0)?, artifact_id: row.get(1)?, confidence: row.get(2)?, misses: row.get(3)?, interval_days: row.get(4)?, next_review_at: row.get(5)?, last_reviewed_at: row.get(6)? }))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+    let grade_categories = {
+        let mut query = conn.prepare("SELECT id,course_id,name,weight FROM grade_categories ORDER BY course_id,name,id")?;
+        let values = query.query_map([], |row| Ok(GradeCategorySummary { id: row.get(0)?, course_id: row.get(1)?, name: row.get(2)?, weight: row.get(3)? }))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+    let grade_items = {
+        let mut query = conn.prepare("SELECT id,course_id,category_id,title,score,points_possible,due_at,status FROM grade_items ORDER BY course_id,COALESCE(datetime(due_at),datetime('9999-12-31')),title,id")?;
+        let values = query.query_map([], |row| Ok(GradeItemSummary { id: row.get(0)?, course_id: row.get(1)?, category_id: row.get(2)?, title: row.get(3)?, score: row.get(4)?, points_possible: row.get(5)?, due_at: row.get(6)?, status: row.get(7)? }))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+    let course_ids = {
+        let mut query = conn.prepare("SELECT id FROM courses ORDER BY id")?;
+        let values = query.query_map([], |row| row.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+    let mut course_grades=Vec::new();let mut grading_scales=Vec::new();let mut gpa_points=0.0;let mut gpa_credits=0.0;
+    for course_id in course_ids {
+        let categories=grade_categories.iter().filter(|value|value.course_id==course_id).collect::<Vec<_>>();
+        let items=grade_items.iter().filter(|value|value.course_id==course_id).collect::<Vec<_>>();
+        let current=grade_percent(&categories,&items,true);let without_missing=grade_percent(&categories,&items,false);
+        let scale=conn.query_row("SELECT scale,credit_hours FROM course_grading_scales WHERE course_id=?1",params![course_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,f64>(1)?))).optional()?;
+        let (bands,credits)=scale.as_ref().map(|(raw,credits)|(serde_json::from_str::<Vec<GradeBand>>(raw).unwrap_or_default(),*credits)).unwrap_or_default();
+        if scale.is_some(){grading_scales.push(CourseGradingScaleSummary{course_id:course_id.clone(),bands:bands.clone(),credit_hours:credits});}
+        let band=current.and_then(|value|bands.iter().filter(|band|value>=band.minimum_percent).max_by(|a,b|a.minimum_percent.total_cmp(&b.minimum_percent)));
+        if let Some(band)=band {gpa_points+=band.grade_points*credits;gpa_credits+=credits;}
+        course_grades.push(CourseGradeSummary{course_id,current_percent:current,missing_work_impact:without_missing.unwrap_or(0.0)-current.unwrap_or(0.0),projected_letter:band.map(|value|value.label.clone()),credit_hours:credits});
+    }
+    Ok(StudyWorkspace{materials,artifacts,reviews,grade_categories,grade_items,course_grades,grading_scales,gpa_projection:(gpa_credits>0.0).then_some(gpa_points/gpa_credits)})
+}
+
+fn grade_percent(categories:&[&GradeCategorySummary],items:&[&GradeItemSummary],include_missing:bool)->Option<f64>{
+    let included=items.iter().copied().filter(|item|item.status=="graded"||(include_missing&&item.status=="missing")).collect::<Vec<_>>();
+    if included.is_empty(){return None;}
+    if categories.is_empty(){let possible=included.iter().map(|item|item.points_possible).sum::<f64>();return (possible>0.0).then(||included.iter().map(|item|item.score.unwrap_or(0.0)).sum::<f64>()/possible*100.0);}
+    let mut weighted=0.0;let mut used_weight=0.0;
+    for category in categories {let category_items=included.iter().filter(|item|item.category_id.as_deref()==Some(category.id.as_str())).collect::<Vec<_>>();let possible=category_items.iter().map(|item|item.points_possible).sum::<f64>();if possible>0.0{weighted+=category_items.iter().map(|item|item.score.unwrap_or(0.0)).sum::<f64>()/possible*category.weight;used_weight+=category.weight;}}
+    (used_weight>0.0).then(||weighted/used_weight*100.0)
+}
+
+#[tauri::command]
+fn get_study_workspace(state:tauri::State<AppState>)->Result<StudyWorkspace>{state.require_unlocked()?;study_workspace_in(&state.db.lock().unwrap())}
+
+#[tauri::command]
+fn set_study_material_courses(state:tauri::State<AppState>,document_id:String,course_ids:Vec<String>)->Result<StudyWorkspace>{
+    state.require_unlocked()?;Uuid::parse_str(&document_id).map_err(|_|AppError::Invalid("document identifier is invalid".into()))?;
+    if course_ids.len()>20{return Err(AppError::Invalid("too many courses were selected".into()));}
+    let mut unique=course_ids;unique.sort();unique.dedup();let mut db=state.db.lock().unwrap();let tx=db.transaction()?;
+    if tx.query_row("SELECT COUNT(*) FROM documents WHERE id=?1",params![document_id],|row|row.get::<_,i64>(0))?!=1{return Err(AppError::Invalid("document not found".into()));}
+    tx.execute("DELETE FROM study_materials WHERE document_id=?1",params![document_id])?;
+    for course_id in unique {if tx.query_row("SELECT COUNT(*) FROM courses WHERE id=?1",params![course_id],|row|row.get::<_,i64>(0))?!=1{return Err(AppError::Invalid("selected course was not found".into()));}tx.execute("INSERT INTO study_materials(document_id,course_id,added_at) VALUES(?1,?2,?3)",params![document_id,course_id,Utc::now().to_rfc3339()])?;}
+    tx.commit()?;study_workspace_in(&db)
+}
+
+#[tauri::command]
+fn save_grade_category(state:tauri::State<AppState>,input:GradeCategoryInput)->Result<StudyWorkspace>{state.require_unlocked()?;if input.name.trim().is_empty()||input.name.len()>120||!(0.0..=100.0).contains(&input.weight){return Err(AppError::Invalid("grade category is invalid".into()));}let id=input.id.unwrap_or_else(||Uuid::new_v4().to_string());let db=state.db.lock().unwrap();db.execute("INSERT INTO grade_categories(id,course_id,name,weight) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET name=excluded.name,weight=excluded.weight",params![id,input.course_id,input.name.trim(),input.weight])?;study_workspace_in(&db)}
+
+#[tauri::command]
+fn save_grade_item(state:tauri::State<AppState>,input:GradeItemInput)->Result<StudyWorkspace>{state.require_unlocked()?;if input.title.trim().is_empty()||input.title.len()>200||!input.points_possible.is_finite()||input.points_possible<=0.0||input.score.is_some_and(|score|!score.is_finite()||score<0.0)||!matches!(input.status.as_str(),"graded"|"missing"|"planned"){return Err(AppError::Invalid("grade item is invalid".into()));}if let Some(due)=&input.due_at{parse_utc(due).ok_or_else(||AppError::Invalid("grade item due date is invalid".into()))?;}let id=input.id.unwrap_or_else(||Uuid::new_v4().to_string());let db=state.db.lock().unwrap();db.execute("INSERT INTO grade_items(id,course_id,category_id,title,score,points_possible,due_at,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET category_id=excluded.category_id,title=excluded.title,score=excluded.score,points_possible=excluded.points_possible,due_at=excluded.due_at,status=excluded.status",params![id,input.course_id,input.category_id,input.title.trim(),input.score,input.points_possible,input.due_at,input.status])?;study_workspace_in(&db)}
+
+#[tauri::command]
+fn calculate_grade_what_if(state:tauri::State<AppState>,input:GradeItemInput)->Result<GradeWhatIf>{state.require_unlocked()?;if input.course_id.is_empty()||!input.points_possible.is_finite()||input.points_possible<=0.0||input.score.is_some_and(|score|!score.is_finite()||score<0.0){return Err(AppError::Invalid("what-if score is invalid".into()));}let db=state.db.lock().unwrap();let workspace=study_workspace_in(&db)?;let mut items=workspace.grade_items.into_iter().filter(|item|item.course_id==input.course_id).collect::<Vec<_>>();items.push(GradeItemSummary{id:"what-if".into(),course_id:input.course_id.clone(),category_id:input.category_id,title:input.title,score:input.score,points_possible:input.points_possible,due_at:input.due_at,status:"graded".into()});let categories=workspace.grade_categories.iter().filter(|category|category.course_id==input.course_id).collect::<Vec<_>>();let item_refs=items.iter().collect::<Vec<_>>();let percent=grade_percent(&categories,&item_refs,true);let bands=db.query_row("SELECT scale FROM course_grading_scales WHERE course_id=?1",params![input.course_id],|row|row.get::<_,String>(0)).optional()?.and_then(|raw|serde_json::from_str::<Vec<GradeBand>>(&raw).ok()).unwrap_or_default();let projected_letter=percent.and_then(|value|bands.iter().filter(|band|value>=band.minimum_percent).max_by(|a,b|a.minimum_percent.total_cmp(&b.minimum_percent))).map(|band|band.label.clone());Ok(GradeWhatIf{percent,projected_letter})}
+
+#[tauri::command]
+fn save_grading_scale(state:tauri::State<AppState>,course_id:String,bands:Vec<GradeBand>,credit_hours:f64)->Result<StudyWorkspace>{state.require_unlocked()?;if bands.is_empty()||bands.len()>20||!credit_hours.is_finite()||!(0.0..=30.0).contains(&credit_hours)||bands.iter().any(|band|band.label.trim().is_empty()||band.label.len()>20||!band.minimum_percent.is_finite()||!(0.0..=100.0).contains(&band.minimum_percent)||!band.grade_points.is_finite()||!(0.0..=5.0).contains(&band.grade_points)){return Err(AppError::Invalid("grading scale is invalid".into()));}let db=state.db.lock().unwrap();db.execute("INSERT INTO course_grading_scales(course_id,scale,credit_hours) VALUES(?1,?2,?3) ON CONFLICT(course_id) DO UPDATE SET scale=excluded.scale,credit_hours=excluded.credit_hours",params![course_id,serde_json::to_string(&bands).map_err(|error|AppError::Background(error.to_string()))?,credit_hours])?;study_workspace_in(&db)}
+
+#[tauri::command]
+fn update_study_artifact(state:tauri::State<AppState>,artifact_id:String,title:String,content:String)->Result<StudyWorkspace>{state.require_unlocked()?;if title.trim().is_empty()||title.len()>200||content.trim().is_empty()||content.chars().count()>40_000{return Err(AppError::Invalid("study artifact is invalid".into()));}let db=state.db.lock().unwrap();let changed=db.execute("UPDATE study_artifacts SET title=?2,content=?3,updated_at=?4,version=version+1 WHERE id=?1",params![artifact_id,title.trim(),content,Utc::now().to_rfc3339()])?;if changed!=1{return Err(AppError::Invalid("study artifact not found".into()));}study_workspace_in(&db)}
+
 fn record_ai_invocation(
     conn: &Connection,
+    provider: &str,
     capability: managed_ai::AiCapability,
     model: Option<&str>,
     latency_ms: i64,
     input_tokens: u64,
     output_tokens: u64,
     outcome: &str,
+    error_category: Option<&str>,
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO ai_invocations(
-           id,capability,model,latency_ms,input_tokens,output_tokens,outcome,prompt_version,created_at
-         ) VALUES(?1,?2,?3,?4,?5,?6,?7,'managed-ai-v1',?8)",
+           id,provider,capability,model,latency_ms,input_tokens,output_tokens,outcome,error_category,prompt_version,created_at
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'byok-v1',?10)",
         params![
             Uuid::new_v4().to_string(),
+            provider,
             ai_capability_name(capability),
             model,
             latency_ms.max(0),
             input_tokens.min(i64::MAX as u64) as i64,
             output_tokens.min(i64::MAX as u64) as i64,
             outcome,
+            error_category,
             Utc::now().to_rfc3339(),
         ],
     )?;
     Ok(())
+}
+
+fn ai_error_category(error: &managed_ai::ManagedAiError) -> &'static str {
+    match error {
+        managed_ai::ManagedAiError::NotConfigured => "not_configured",
+        managed_ai::ManagedAiError::Credential => "credential",
+        managed_ai::ManagedAiError::Unauthorized => "unauthorized",
+        managed_ai::ManagedAiError::InvalidInput(_) => "invalid_input",
+        managed_ai::ManagedAiError::Network => "network",
+        managed_ai::ManagedAiError::Quota => "quota",
+        managed_ai::ManagedAiError::Timeout => "timeout",
+        managed_ai::ManagedAiError::Rejected(_) => "rejected",
+        managed_ai::ManagedAiError::InvalidResponse => "invalid_response",
+    }
 }
 
 #[tauri::command]
@@ -6462,15 +7123,19 @@ async fn request_managed_ai(
             let db = state.db.lock().unwrap();
             if profile::onboarding_state(&db)?.required {
                 return Err(AppError::Invalid(
-                    "finish local onboarding before using managed AI".into(),
+                    "finish local onboarding before using an AI provider".into(),
                 ));
             }
         }
-        let (account_id, access_token) = signed_in_account_and_token(&state)?;
-        let client = managed_ai::ManagedAiClient::compiled()?;
+        let (provider, api_key, model) = {
+            let db = state.db.lock().unwrap();
+            resolve_ai_provider(&db, input.capability)?
+        };
         let started = Instant::now();
-        let response = match client.request(
-            &access_token,
+        let response = match ai_providers::request(
+            provider,
+            &api_key,
+            &model,
             input.capability,
             &input.excerpt,
             &input.locale,
@@ -6481,21 +7146,19 @@ async fn request_managed_ai(
                 let db = state.db.lock().unwrap();
                 record_ai_invocation(
                     &db,
+                    provider.as_str(),
                     input.capability,
-                    None,
+                    Some(&model),
                     started.elapsed().as_millis().min(i64::MAX as u128) as i64,
                     0,
                     0,
                     "failed",
+                    Some(ai_error_category(&error)),
                 )?;
+                persist_ai_health(&db, provider, false)?;
                 return Err(AppError::ManagedAi(error));
             }
         };
-        if response.account_id != account_id {
-            return Err(AppError::ManagedAi(
-                managed_ai::ManagedAiError::InvalidResponse,
-            ));
-        }
         let latency_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
         let mut db = state.db.lock().unwrap();
         let tx = db.transaction()?;
@@ -6509,7 +7172,7 @@ async fn request_managed_ai(
                  ) VALUES(?1,?2,'application/x-student-center-ai','','','','',?3,?4,'complete',NULL)",
                 params![
                     document_id,
-                    format!("Managed AI · {}", ai_capability_name(input.capability)),
+                    format!("AI provider · {}", ai_capability_name(input.capability)),
                     hex::encode(Sha256::digest(invocation_id.as_bytes())),
                     Utc::now().to_rfc3339(),
                 ],
@@ -6528,7 +7191,7 @@ async fn request_managed_ai(
                 let mut warnings = candidate.warnings.clone();
                 if candidate.kind != kind {
                     warnings.push(format!(
-                        "Managed AI proposed this as an {}; Student Center will import it as a {kind}",
+                        "An AI provider proposed this as an {}; Student Center will import it as a {kind}",
                         candidate.kind
                     ));
                 }
@@ -6537,9 +7200,9 @@ async fn request_managed_ai(
                     "INSERT INTO import_candidates(
                        id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,
                        evidence,source_locator,source_type,source_uid,observed_at,confidence,warnings,status,
-                       weekdays,starts_at_local,ends_at_local,timezone
+                       weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality
                      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'managed_ai',?12,?13,?14,?15,'pending',
-                              ?16,?17,?18,?19)",
+                              ?16,?17,?18,?19,?20,?21,?22)",
                     params![
                         Uuid::new_v4().to_string(),
                         document_id,
@@ -6551,7 +7214,7 @@ async fn request_managed_ai(
                         candidate.ends_at,
                         candidate.duration_minutes,
                         candidate.evidence,
-                        format!("Managed AI · {} · evidence", ai_capability_name(input.capability)),
+                        format!("AI provider · {} · evidence", ai_capability_name(input.capability)),
                         format!("ai:{invocation_id}:{index}"),
                         Utc::now().to_rfc3339(),
                         candidate.confidence,
@@ -6560,16 +7223,20 @@ async fn request_managed_ai(
                         candidate.starts_at_local.clone().unwrap_or_default(),
                         candidate.ends_at_local.clone().unwrap_or_default(),
                         if is_class { timezone.as_str() } else { "" },
+                        candidate.section_number.clone().unwrap_or_default(),
+                        candidate.location.clone().unwrap_or_default(),
+                        candidate.modality.clone().unwrap_or_default(),
                     ],
                 )?;
             }
         }
         tx.execute(
             "INSERT INTO ai_invocations(
-               id,capability,model,latency_ms,input_tokens,output_tokens,outcome,prompt_version,created_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,'review_created','managed-ai-v1',?7)",
+               id,provider,capability,model,latency_ms,input_tokens,output_tokens,outcome,prompt_version,created_at
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,'review_created','byok-v1',?8)",
             params![
                 invocation_id,
+                provider.as_str(),
                 ai_capability_name(input.capability),
                 response.model,
                 latency_ms,
@@ -6587,11 +7254,12 @@ async fn request_managed_ai(
             &state.ocr,
             Some(if candidates_created > 0 {
                 format!(
-                    "Managed AI proposed {candidates_created} reviewable item{}; nothing was added to your plan.",
+                    "{} proposed {candidates_created} reviewable item{}; nothing was added to your plan.",
+                    provider.as_str(),
                     if candidates_created == 1 { "" } else { "s" }
                 )
             } else {
-                "Managed AI returned an explanation without changing local data.".into()
+                format!("{} returned an explanation without changing local data.", provider.as_str())
             }),
         )?;
         Ok(ManagedAiResult {
@@ -6599,10 +7267,70 @@ async fn request_managed_ai(
             explanation,
             candidates_created,
             model,
+            provider: provider.as_str().into(),
         })
     })
     .await
     .map_err(|error| AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+async fn request_ai_capability(
+    state: tauri::State<'_, AppState>,
+    input: ManagedAiInput,
+) -> Result<ManagedAiResult> {
+    state.require_unlocked()?;
+    request_managed_ai(state, input).await
+}
+
+#[tauri::command]
+async fn generate_grounded_study_artifact(
+    state: tauri::State<'_, AppState>,
+    input: GroundedStudyInput,
+) -> Result<GroundedStudyResult> {
+    state.require_unlocked()?;
+    if !input.consent { return Err(AppError::Invalid("explicit consent is required before selected materials leave this device".into())); }
+    if !matches!(input.capability,managed_ai::AiCapability::SourceQa|managed_ai::AiCapability::StudyGuide|managed_ai::AiCapability::Flashcards|managed_ai::AiCapability::PracticeQuestions|managed_ai::AiCapability::PracticeTest)
+        || input.course_ids.is_empty() || input.document_ids.is_empty() || input.course_ids.len()>20 || input.document_ids.len()>100 {
+        return Err(AppError::Invalid("select at least one course and material for this study request".into()));
+    }
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        state.require_unlocked()?;
+        let (provider,api_key,model,sources,course_id)={
+            let db=state.db.lock().unwrap();let mut course_ids=input.course_ids.clone();course_ids.sort();course_ids.dedup();let mut document_ids=input.document_ids.clone();document_ids.sort();document_ids.dedup();
+            for id in course_ids.iter().chain(document_ids.iter()){Uuid::parse_str(id).map_err(|_|AppError::Invalid("selected study identifier is invalid".into()))?;}
+            let mut sources=Vec::new();
+            for document_id in &document_ids {
+                let linked=course_ids.iter().any(|course_id|db.query_row("SELECT EXISTS(SELECT 1 FROM study_materials WHERE document_id=?1 AND course_id=?2)",params![document_id,course_id],|row|row.get::<_,i64>(0)).unwrap_or(0)!=0);
+                if !linked{return Err(AppError::Invalid("every selected material must be assigned to a selected course".into()));}
+                let mut query=db.prepare("SELECT id,locator,text FROM document_segments WHERE document_id=?1 ORDER BY position LIMIT 100")?;
+                let mut segments=query.query_map(params![document_id],|row|Ok(ai_providers::GroundedSource{id:row.get(0)?,locator:row.get(1)?,text:row.get(2)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
+                if segments.is_empty(){let mut evidence=db.prepare("SELECT id,source_locator,evidence FROM import_candidates WHERE document_id=?1 AND evidence!='' ORDER BY id LIMIT 100")?;segments=evidence.query_map(params![document_id],|row|Ok(ai_providers::GroundedSource{id:row.get(0)?,locator:row.get(1)?,text:row.get(2)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;}
+                sources.extend(segments);
+            }
+            if sources.is_empty(){return Err(AppError::Invalid("the selected materials contain no locally extracted text to ground an answer".into()));}
+            let (provider,key,model)=resolve_ai_provider(&db,input.capability)?;(provider,key,model,sources,course_ids[0].clone())
+        };
+        let started=Instant::now();
+        let response=match ai_providers::request_grounded(provider,&api_key,&model,input.capability,input.prompt.trim(),&sources){Ok(value)=>value,Err(error)=>{let db=state.db.lock().unwrap();record_ai_invocation(&db,provider.as_str(),input.capability,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,0,0,"failed",Some(ai_error_category(&error)))?;persist_ai_health(&db,provider,false)?;return Err(AppError::ManagedAi(error));}};
+        let artifact_id=Uuid::new_v4().to_string();let now=Utc::now();let title=if input.title.trim().is_empty(){match input.capability{managed_ai::AiCapability::SourceQa=>"Grounded answer",managed_ai::AiCapability::StudyGuide=>"Study guide",managed_ai::AiCapability::Flashcards=>"Flashcards",managed_ai::AiCapability::PracticeQuestions=>"Practice questions",managed_ai::AiCapability::PracticeTest=>"Practice test",_=>"Study artifact"}}else{input.title.trim()};
+        let mut db=state.db.lock().unwrap();let tx=db.transaction()?;
+        tx.execute("INSERT INTO study_artifacts(id,course_id,kind,title,content,citations,provider,model,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",params![artifact_id,course_id,input.capability.as_str(),title,response.content,serde_json::to_string(&response.citations).map_err(|error|AppError::Background(error.to_string()))?,provider.as_str(),response.model,now.to_rfc3339()])?;
+        tx.execute("INSERT INTO study_reviews(id,artifact_id,next_review_at) VALUES(?1,?2,?3)",params![Uuid::new_v4().to_string(),artifact_id,(now+chrono::Duration::days(1)).to_rfc3339()])?;
+        record_ai_invocation(&tx,provider.as_str(),input.capability,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,response.usage.input_tokens,response.usage.output_tokens,"artifact_created",None)?;
+        tx.commit()?;let workspace=study_workspace_in(&db)?;Ok(GroundedStudyResult{workspace,artifact_id,provider:provider.as_str().into(),model})
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+fn review_study_artifact(state:tauri::State<AppState>,artifact_id:String,confidence:i64)->Result<StudyWorkspace>{
+    state.require_unlocked()?;if !(1..=5).contains(&confidence){return Err(AppError::Invalid("confidence must be from 1 to 5".into()));}let mut db=state.db.lock().unwrap();let tx=db.transaction()?;
+    let (review_id,previous_interval,misses,title,course_id)=tx.query_row("SELECT r.id,r.interval_days,r.misses,a.title,a.course_id FROM study_reviews r JOIN study_artifacts a ON a.id=r.artifact_id WHERE a.id=?1",params![artifact_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,i64>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?))).optional()?.ok_or_else(||AppError::Invalid("study artifact not found".into()))?;
+    let interval=match confidence{1=>1,2=>previous_interval.max(1),3=>(previous_interval*2).max(3),4=>(previous_interval*3).max(7),_=>(previous_interval*4).max(14)}.min(90);let next=Utc::now()+chrono::Duration::days(interval);let misses=misses+i64::from(confidence<=2);
+    tx.execute("UPDATE study_reviews SET confidence=?2,misses=?3,interval_days=?4,next_review_at=?5,last_reviewed_at=?6 WHERE id=?1",params![review_id,confidence,misses,interval,next.to_rfc3339(),Utc::now().to_rfc3339()])?;
+    let task_id=format!("study-review-{review_id}");tx.execute("INSERT INTO tasks(id,title,minutes,due_at,course_id,priority,created_at,source_uid) VALUES(?1,?2,25,?3,?4,2,?5,?6) ON CONFLICT(id) DO UPDATE SET title=excluded.title,due_at=excluded.due_at,completed=0,version=version+1",params![task_id,format!("Review · {title}"),next.to_rfc3339(),course_id,Utc::now().to_rfc3339(),format!("study-review:{review_id}")])?;
+    tx.commit()?;regenerate_plan_for_trigger(&db,None,planner::PlannerTrigger::DeadlineChanged)?;study_workspace_in(&db)
 }
 
 #[tauri::command]
@@ -6745,11 +7473,19 @@ fn ingest_document(
     ],
     )?;
     if let Ok(extraction) = extraction {
+        for (position, segment) in extraction.segments.iter().take(250).enumerate() {
+            let text = segment.text.chars().take(50_000).collect::<String>();
+            if text.trim().is_empty() { continue; }
+            db.execute(
+                "INSERT INTO document_segments(id,document_id,locator,text,confidence,position) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![Uuid::new_v4().to_string(),id,segment.locator,text,segment.confidence,position as i64],
+            )?;
+        }
         for candidate in extraction.candidates {
             let candidate_id = Uuid::new_v4().to_string();
             db.execute(
-        "INSERT INTO import_candidates(id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_uid,confidence,warnings,weekdays,starts_at_local,ends_at_local,timezone)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+        "INSERT INTO import_candidates(id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_uid,confidence,warnings,weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
         params![
           candidate_id,
           id,
@@ -6769,6 +7505,9 @@ fn ingest_document(
           candidate.starts_at_local,
           candidate.ends_at_local,
           candidate.timezone
+          ,candidate.section_number
+          ,candidate.location
+          ,candidate.modality
         ],
       )?;
             candidate_conflict(&db, &candidate_id, &candidate)?;
@@ -6835,75 +7574,49 @@ fn list_documents(
     Ok(documents)
 }
 
-/// Delete the encrypted image behind any screenshot whose candidates are all
-/// settled, keeping the row so its evidence still reads.
-///
-/// A screenshot is a picture of a student's own screen, and once every class it
-/// proposed has been approved or dismissed there is nothing left to look at.
-/// Keeping it would grow the vault forever to preserve an image nobody opens;
-/// deleting the extracted text with it would break the evidence quotes the
-/// review queue is built on. So the blob goes and the text stays.
-///
-/// Only images. A syllabus PDF is a document a student will want to open again,
-/// and a settled one is not evidence that it has stopped being useful.
-fn shred_settled_screenshots(db: &Connection, vault: &Path, root: &Path) -> Result<()> {
-    if screenshot_retention(db) != "shred_when_settled" {
-        return Ok(());
-    }
-    let mut statement = db.prepare(
-        "SELECT d.id, d.vault_path FROM documents d
-         WHERE d.vault_path != '' AND d.content_shredded = 0
-           AND d.mime LIKE 'image/%'
-           AND EXISTS(SELECT 1 FROM import_candidates c WHERE c.document_id = d.id)
-           AND NOT EXISTS(
-             SELECT 1 FROM import_candidates c
-             WHERE c.document_id = d.id AND c.status = 'pending'
-           )",
-    )?;
-    let settled = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    drop(statement);
-
-    for (id, vault_path) in settled {
-        let path = PathBuf::from(&vault_path);
-        // Never follow a path out of the vault, whatever the row says. The value
-        // is written by this app, but a delete driven by a database string is
-        // worth constraining regardless.
-        if !path.starts_with(vault) && !path.starts_with(root) {
-            continue;
-        }
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            // Already gone is the desired end state, not a failure.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => continue,
-        }
-        db.execute(
-            "UPDATE documents SET vault_path='', wrapped_key='', key_nonce='', content_nonce='',
-                                  content_shredded=1 WHERE id=?1",
-            params![id],
-        )?;
-    }
+/// Apply the student's explicit per-source retention decision. Nothing calls
+/// this as an automatic cleanup sweep: old global screenshot preferences must
+/// never bypass the choice shown after each completed import.
+fn settle_schedule_source_in(db:&Connection,vault:&Path,root:&Path,document_id:&str,decision:&str)->Result<()> {
+    if !matches!(decision,"keep_encrypted"|"delete_now"){return Err(AppError::Invalid("source retention decision is invalid".into()));}
+    let (path,pending)=db.query_row("SELECT vault_path,(SELECT COUNT(*) FROM import_candidates WHERE document_id=d.id AND status='pending') FROM documents d WHERE id=?1",params![document_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))).optional()?.ok_or_else(||AppError::Invalid("document not found".into()))?;
+    if decision=="delete_now" {
+        if pending>0{return Err(AppError::Invalid("finish reviewing this schedule before deleting its source".into()));}
+        if !path.is_empty(){let source=PathBuf::from(&path);if !source.starts_with(vault)&&!source.starts_with(root){return Err(AppError::Invalid("stored source path is invalid".into()));}match fs::remove_file(&source){Ok(())=>{},Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{},Err(error)=>return Err(error.into())}}
+        db.execute("UPDATE documents SET vault_path='',wrapped_key='',key_nonce='',content_nonce='',content_shredded=1,source_retention='delete_now' WHERE id=?1",params![document_id])?;
+    } else {db.execute("UPDATE documents SET source_retention='keep_encrypted' WHERE id=?1",params![document_id])?;}
     Ok(())
 }
 
-/// How long an imported screenshot is kept. `shred_when_settled` is the default;
-/// `keep` treats it like any other document.
-fn screenshot_retention(db: &Connection) -> String {
-    db.query_row(
-        "SELECT value FROM settings WHERE key='screenshot_retention'",
-        [],
-        |row| row.get::<_, String>(0),
-    )
-    .unwrap_or_else(|_| "shred_when_settled".into())
+#[tauri::command]
+fn settle_schedule_source(state:tauri::State<AppState>,document_id:String,decision:String)->Result<Dashboard>{
+    state.require_unlocked()?;Uuid::parse_str(&document_id).map_err(|_|AppError::Invalid("document identifier is invalid".into()))?;
+    let db=state.db.lock().unwrap();
+    settle_schedule_source_in(&db,&state.vault,&state.root,&document_id,&decision)?;
+    dashboard_with_notice(&db,&state.ocr,Some(if decision=="delete_now"{"Schedule source deleted; approved records and evidence were kept."}else{"Schedule source will remain encrypted in your vault."}.into()))
+}
+
+#[tauri::command]
+async fn launch_schedule_capture(state:tauri::State<'_,AppState>)->Result<String>{
+    state.require_unlocked()?;
+    tauri::async_runtime::spawn_blocking(move||{
+        #[cfg(target_os="macos")]
+        {let status=std::process::Command::new("/usr/sbin/screencapture").args(["-i","-c"]).status()?;if !status.success(){return Err(AppError::Invalid("Screen capture was cancelled or unavailable. Use Shift-Command-4, then paste here.".into()));}return Ok("Capture copied. Press Command-V in Coqui to import it.".into());}
+        #[cfg(target_os="windows")]
+        {let status=std::process::Command::new("explorer.exe").arg("ms-screenclip:").status()?;if !status.success(){return Err(AppError::Invalid("Snipping Tool could not open. Press Windows-Shift-S, then paste here.".into()));}return Ok("Choose an area, then press Ctrl-V in Coqui to import it.".into());}
+        #[cfg(not(any(target_os="macos",target_os="windows")))]
+        {Err(AppError::Invalid("Use your system screenshot shortcut, then paste the image into Coqui.".into()))}
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
 }
 
 /// Read a stored image back out of the vault.
-fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) -> Result<Vec<u8>> {
-    let (vault_path, wrapped_key, key_nonce, content_nonce, mime): (
+fn decrypt_original_document(
+    state: &AppState,
+    db: &Connection,
+    document_id: &str,
+) -> Result<(Vec<u8>, String, String)> {
+    let (vault_path, wrapped_key, key_nonce, content_nonce, mime, file_name): (
+        String,
         String,
         String,
         String,
@@ -6911,7 +7624,7 @@ fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) 
         String,
     ) = db
         .query_row(
-            "SELECT vault_path,wrapped_key,key_nonce,content_nonce,mime FROM documents WHERE id=?1",
+            "SELECT vault_path,wrapped_key,key_nonce,content_nonce,mime,file_name FROM documents WHERE id=?1",
             params![document_id],
             |row| {
                 Ok((
@@ -6920,6 +7633,7 @@ fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) 
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -6930,11 +7644,6 @@ fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) 
             "the original image is no longer stored; nothing was sent".into(),
         ));
     }
-    if !mime.starts_with("image/") {
-        return Err(AppError::Invalid(
-            "only an image can be read as a schedule".into(),
-        ));
-    }
     let document_key = decrypt(
         &state.master_key,
         &decode_nonce(&key_nonce)?,
@@ -6942,7 +7651,18 @@ fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) 
     )?;
     let document_key: [u8; 32] = document_key.try_into().map_err(|_| AppError::Crypto)?;
     let encrypted = fs::read(&vault_path)?;
-    decrypt(&document_key, &decode_nonce(&content_nonce)?, &encrypted)
+    let bytes = decrypt(&document_key, &decode_nonce(&content_nonce)?, &encrypted)?;
+    Ok((bytes, mime, file_name))
+}
+
+fn decrypt_document_bytes(state: &AppState, db: &Connection, document_id: &str) -> Result<Vec<u8>> {
+    let (bytes, mime, _) = decrypt_original_document(state, db, document_id)?;
+    if !mime.starts_with("image/") {
+        return Err(AppError::Invalid(
+            "only an image can be read as a schedule".into(),
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Ask the managed model to structure a schedule the local reader could not.
@@ -6978,7 +7698,7 @@ async fn read_schedule_with_ai(
             // there is a profile to review it against makes no sense.
             if profile::onboarding_state(&db)?.required {
                 return Err(AppError::Invalid(
-                    "finish local onboarding before using managed AI".into(),
+                    "finish local onboarding before using an AI provider".into(),
                 ));
             }
         }
@@ -7005,11 +7725,15 @@ async fn read_schedule_with_ai(
             ));
         }
         let image = managed_ai::AiImage::encode(&bytes)?;
-        let (account_id, access_token) = signed_in_account_and_token(&state)?;
-        let client = managed_ai::ManagedAiClient::compiled()?;
-        let response = match client.request(
-            &access_token,
-            managed_ai::AiCapability::DocumentExtraction,
+        let (provider, api_key, model) = {
+            let db = state.db.lock().unwrap();
+            resolve_ai_provider(&db, managed_ai::AiCapability::ScheduleVision)?
+        };
+        let response = match ai_providers::request(
+            provider,
+            &api_key,
+            &model,
+            managed_ai::AiCapability::ScheduleVision,
             &excerpt,
             "en-US",
             Some(&image),
@@ -7021,22 +7745,19 @@ async fn read_schedule_with_ai(
                 let db = state.db.lock().unwrap();
                 record_ai_invocation(
                     &db,
-                    managed_ai::AiCapability::DocumentExtraction,
-                    None,
+                    provider.as_str(),
+                    managed_ai::AiCapability::ScheduleVision,
+                    Some(&model),
                     started.elapsed().as_millis().min(i64::MAX as u128) as i64,
                     0,
                     0,
                     "failed",
+                    Some(ai_error_category(&error)),
                 )?;
+                persist_ai_health(&db, provider, false)?;
                 return Err(AppError::ManagedAi(error));
             }
         };
-        if response.account_id != account_id {
-            return Err(AppError::ManagedAi(
-                managed_ai::ManagedAiError::InvalidResponse,
-            ));
-        }
-
         let latency_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
         let mut db = state.db.lock().unwrap();
         let tx = db.transaction()?;
@@ -7058,17 +7779,21 @@ async fn read_schedule_with_ai(
             let kind = local_candidate_kind(&candidate.kind);
             tx.execute(
                 "INSERT INTO import_candidates(
-                   id,document_id,kind,title,course,evidence,source_locator,source_type,source_uid,
-                   observed_at,confidence,warnings,status,weekdays,starts_at_local,ends_at_local,timezone
-                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,'managed_ai',?8,?9,?10,?11,'pending',?12,?13,?14,?15)",
+                   id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_type,source_uid,
+                   observed_at,confidence,warnings,status,weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'managed_ai',?12,?13,?14,?15,'pending',?16,?17,?18,?19,?20,?21,?22)",
                 params![
                     Uuid::new_v4().to_string(),
                     document_id,
                     kind,
                     candidate.title,
                     candidate.course.clone().unwrap_or_default(),
+                    candidate.due_at,
+                    candidate.starts_at,
+                    candidate.ends_at,
+                    candidate.duration_minutes,
                     candidate.evidence,
-                    "Managed AI · schedule",
+                    "AI provider · schedule",
                     format!("ai-schedule:{document_id}:{index}"),
                     Utc::now().to_rfc3339(),
                     candidate.confidence,
@@ -7077,24 +7802,30 @@ async fn read_schedule_with_ai(
                     candidate.starts_at_local.clone().unwrap_or_default(),
                     candidate.ends_at_local.clone().unwrap_or_default(),
                     if kind == "class_meeting" { timezone.as_str() } else { "" },
+                    candidate.section_number.clone().unwrap_or_default(),
+                    candidate.location.clone().unwrap_or_default(),
+                    candidate.modality.clone().unwrap_or_default(),
                 ],
             )?;
         }
         record_ai_invocation(
             &tx,
-            managed_ai::AiCapability::DocumentExtraction,
+            provider.as_str(),
+            managed_ai::AiCapability::ScheduleVision,
             Some(&response.model),
             latency_ms,
             response.usage.input_tokens,
             response.usage.output_tokens,
             "review_created",
+            None,
         )?;
         tx.commit()?;
         let dashboard = dashboard_with_notice(
             &db,
             &state.ocr,
             Some(format!(
-                "Managed AI proposed {candidates_created} class{} for review; nothing was added to your plan.",
+                "{} proposed {candidates_created} class{} for review; nothing was added to your plan.",
+                provider.as_str(),
                 if candidates_created == 1 { "" } else { "es" }
             )),
         )?;
@@ -7103,10 +7834,21 @@ async fn read_schedule_with_ai(
             explanation: response.explanation,
             candidates_created,
             model: response.model,
+            provider: provider.as_str().into(),
         })
     })
     .await
     .map_err(|error| AppError::Invalid(error.to_string()))?
+}
+
+#[tauri::command]
+async fn analyze_schedule_source(
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    consent: bool,
+) -> Result<ManagedAiResult> {
+    state.require_unlocked()?;
+    read_schedule_with_ai(state, document_id, consent).await
 }
 
 /// Course codes already on this profile.
@@ -7171,6 +7913,163 @@ fn get_document_evidence(
     document_evidence_in(&db, &document_id)
 }
 
+#[tauri::command]
+fn get_schedule_source_preview(
+    state: tauri::State<AppState>,
+    document_id: String,
+) -> Result<ScheduleSourcePreview> {
+    state.require_unlocked()?;
+    Uuid::parse_str(&document_id)
+        .map_err(|_| AppError::Invalid("document identifier is invalid".into()))?;
+    let db = state.db.lock().unwrap();
+    let (bytes, mime, file_name) = decrypt_original_document(&state, &db, &document_id)?;
+    if !mime.starts_with("image/") && mime != "application/pdf" {
+        return Err(AppError::Invalid("this schedule source has no visual preview".into()));
+    }
+    if bytes.len() > 12 * 1024 * 1024 {
+        return Err(AppError::Invalid(
+            "this source is too large for the review preview; its extracted evidence remains available".into(),
+        ));
+    }
+    Ok(ScheduleSourcePreview {
+        file_name,
+        data_url: format!("data:{mime};base64,{}", B64.encode(bytes)),
+        mime,
+    })
+}
+
+#[tauri::command]
+fn update_import_candidate(
+    state: tauri::State<AppState>,
+    candidate_id: String,
+    mut input: CandidateEditInput,
+) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    Uuid::parse_str(&candidate_id)
+        .map_err(|_| AppError::Invalid("candidate identifier is invalid".into()))?;
+    input.title = input.title.trim().to_string();
+    input.course = input.course.trim().to_string();
+    input.starts_at_local = input.starts_at_local.trim().to_string();
+    input.ends_at_local = input.ends_at_local.trim().to_string();
+    input.timezone = input.timezone.trim().to_string();
+    input.section_number = input.section_number.trim().to_string();
+    input.location = input.location.trim().to_string();
+    input.modality = input.modality.trim().to_string();
+    input.term_id = input.term_id.trim().to_string();
+    input.due_at = input.due_at.filter(|value| !value.trim().is_empty());
+    input.starts_at = input.starts_at.filter(|value| !value.trim().is_empty());
+    input.ends_at = input.ends_at.filter(|value| !value.trim().is_empty());
+    input.weekdays.sort_unstable();
+    input.weekdays.dedup();
+    if input.title.is_empty()
+        || input.title.len() > 200
+        || input.course.len() > 200
+        || input.section_number.len() > 80
+        || input.location.len() > 200
+        || input.modality.len() > 80
+        || (!input.term_id.is_empty() && Uuid::parse_str(&input.term_id).is_err())
+        || input.duration_minutes.is_some_and(|value| !(5..=480).contains(&value))
+        || input.due_at.as_deref().is_some_and(|value| parse_rfc3339(value).is_none())
+        || input.starts_at.as_deref().is_some_and(|value| parse_rfc3339(value).is_none())
+        || input.ends_at.as_deref().is_some_and(|value| parse_rfc3339(value).is_none())
+    {
+        return Err(AppError::Invalid("candidate edits are invalid".into()));
+    }
+    let db = state.db.lock().unwrap();
+    let (kind, current, edited_json, last_json): (String, CandidateEditInput, String, String) = db
+        .query_row(
+            "SELECT kind,title,course,due_at,starts_at,ends_at,duration_minutes,weekdays,
+                    starts_at_local,ends_at_local,timezone,section_number,location,modality,term_id,
+                    student_edited_fields,last_observed_payload
+             FROM import_candidates WHERE id=?1 AND status='pending'",
+            params![candidate_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    CandidateEditInput {
+                        title: row.get(1)?,
+                        course: row.get(2)?,
+                        due_at: row.get(3)?,
+                        starts_at: row.get(4)?,
+                        ends_at: row.get(5)?,
+                        duration_minutes: row.get(6)?,
+                        weekdays: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
+                        starts_at_local: row.get(8)?,
+                        ends_at_local: row.get(9)?,
+                        timezone: row.get(10)?,
+                        section_number: row.get(11)?,
+                        location: row.get(12)?,
+                        modality: row.get(13)?,
+                        term_id: row.get(14)?,
+                    },
+                    row.get(15)?,
+                    row.get(16)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Invalid("pending candidate not found".into()))?;
+    if kind == "class_meeting" {
+        let starts = parse_clock(&input.starts_at_local);
+        let ends = parse_clock(&input.ends_at_local);
+        if input.course.is_empty()
+            || input.weekdays.is_empty()
+            || input.weekdays.len() > 7
+            || input.weekdays.iter().any(|day| !(0..=6).contains(day))
+            || starts.is_none()
+            || ends.is_none()
+            || starts >= ends
+            || input.timezone.parse::<Tz>().is_err()
+            || (!input.term_id.is_empty() && db.query_row("SELECT COUNT(*) FROM academic_terms WHERE id=?1",params![input.term_id],|row|row.get::<_,i64>(0))? != 1)
+        {
+            return Err(AppError::Invalid("weekly class edits are incomplete or invalid".into()));
+        }
+    } else if kind == "commitment" {
+        if input.starts_at.is_none()
+            || input.ends_at.is_none()
+            || input.starts_at.as_deref().and_then(parse_rfc3339)
+                >= input.ends_at.as_deref().and_then(parse_rfc3339)
+        {
+            return Err(AppError::Invalid("commitment edits require a valid time range".into()));
+        }
+    }
+    let field_values = |value: &CandidateEditInput| {
+        serde_json::to_value(value).unwrap_or_else(|_| serde_json::json!({}))
+    };
+    let current_value = field_values(&current);
+    let next_value = field_values(&input);
+    let mut edited = serde_json::from_str::<Vec<String>>(&edited_json).unwrap_or_default();
+    for field in [
+        "title", "course", "dueAt", "startsAt", "endsAt", "durationMinutes",
+        "weekdays", "startsAtLocal", "endsAtLocal", "timezone", "sectionNumber",
+        "location", "modality", "termId",
+    ] {
+        if current_value.get(field) != next_value.get(field) && !edited.iter().any(|item| item == field) {
+            edited.push(field.to_string());
+        }
+    }
+    edited.sort();
+    let original = if last_json == "{}" {
+        current_value
+    } else {
+        serde_json::from_str(&last_json).unwrap_or(current_value)
+    };
+    db.execute(
+        "UPDATE import_candidates SET title=?2,course=?3,due_at=?4,starts_at=?5,ends_at=?6,
+                duration_minutes=?7,weekdays=?8,starts_at_local=?9,ends_at_local=?10,
+                timezone=?11,section_number=?12,location=?13,modality=?14,term_id=?15,
+                student_edited_fields=?16,last_observed_payload=?17 WHERE id=?1 AND status='pending'",
+        params![
+            candidate_id,input.title,input.course,input.due_at,input.starts_at,input.ends_at,
+            input.duration_minutes,serde_json::to_string(&input.weekdays).unwrap_or_else(|_|"[]".into()),
+            input.starts_at_local,input.ends_at_local,input.timezone,input.section_number,input.location,
+            input.modality,input.term_id,serde_json::to_string(&edited).unwrap_or_else(|_|"[]".into()),
+            serde_json::to_string(&original).unwrap_or_else(|_|"{}".into()),
+        ],
+    )?;
+    dashboard_with_notice(&db, &state.ocr, Some("Candidate edits saved for review; your plan has not changed.".into()))
+}
+
 /// The query behind `get_document_evidence`, split out so it can be tested
 /// without a Tauri `State`. The column list and the row indices below must stay
 /// in step: reading past the end of the `SELECT` is a runtime error that only
@@ -7189,36 +8088,28 @@ fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candid
         return Err(AppError::Invalid("document not found".into()));
     }
     let mut statement = db.prepare(
-        "SELECT id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,
+        "SELECT id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,
                 source_locator,source_type,source_url,confidence,warnings,status,
-                weekdays,starts_at_local,ends_at_local,timezone
-         FROM import_candidates WHERE document_id=?1
+                weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality,student_edited_fields,term_id,
+                CASE WHEN ic.source_uid!='' AND (
+                  (ic.kind='task' AND EXISTS(SELECT 1 FROM tasks t WHERE t.source_uid=ic.source_uid)) OR
+                  (ic.kind='commitment' AND EXISTS(SELECT 1 FROM commitments c WHERE c.source_uid=ic.source_uid)) OR
+                  (ic.kind='course' AND EXISTS(SELECT 1 FROM courses c WHERE c.source_uid=ic.source_uid)) OR
+                  (ic.kind='class_meeting' AND EXISTS(SELECT 1 FROM class_meeting_series m WHERE m.source_uid=ic.source_uid))
+                ) THEN 'update' ELSE 'add' END
+         FROM import_candidates ic WHERE document_id=?1
          ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
                   confidence DESC,id",
     )?;
     let candidates = statement
         .query_map(params![document_id], |row| {
-            let warnings: String = row.get(13)?;
+            let warnings: String = row.get(14)?;
             Ok(Candidate {
                 id: row.get(0)?,
-                kind: row.get(1)?,
-                title: row.get(2)?,
-                course: row.get(3)?,
-                due_at: row.get(4)?,
-                starts_at: row.get(5)?,
-                ends_at: row.get(6)?,
-                duration_minutes: row.get(7)?,
-                evidence: row.get(8)?,
-                source_locator: row.get(9)?,
-                source_type: row.get(10)?,
-                source_url: row.get(11)?,
-                confidence: row.get(12)?,
+                document_id: row.get(1)?, kind: row.get(2)?, title: row.get(3)?, course: row.get(4)?, due_at: row.get(5)?, starts_at: row.get(6)?, ends_at: row.get(7)?, duration_minutes: row.get(8)?, evidence: row.get(9)?, source_locator: row.get(10)?, source_type: row.get(11)?, source_url: row.get(12)?, confidence: row.get(13)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
-                status: row.get(14)?,
-                weekdays: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
-                starts_at_local: row.get(16)?,
-                ends_at_local: row.get(17)?,
-                timezone: row.get(18)?,
+                status: row.get(15)?, weekdays: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(), starts_at_local: row.get(17)?, ends_at_local: row.get(18)?, timezone: row.get(19)?,
+                section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -7242,13 +8133,17 @@ struct PendingCandidate {
     starts_at_local: String,
     ends_at_local: String,
     timezone: String,
+    section_number: String,
+    location: String,
+    modality: String,
+    term_id: String,
 }
 
 fn pending_candidate(conn: &Connection, id: &str) -> Result<Option<PendingCandidate>> {
     Ok(conn
         .query_row(
             "SELECT id,kind,title,due_at,starts_at,ends_at,duration_minutes,course,source_uid,
-                    weekdays,starts_at_local,ends_at_local,timezone
+                    weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality,term_id
              FROM import_candidates WHERE id=?1 AND status='pending'",
             params![id],
             |row| {
@@ -7267,6 +8162,10 @@ fn pending_candidate(conn: &Connection, id: &str) -> Result<Option<PendingCandid
                     starts_at_local: row.get(10)?,
                     ends_at_local: row.get(11)?,
                     timezone: row.get(12)?,
+                    section_number: row.get(13)?,
+                    location: row.get(14)?,
+                    modality: row.get(15)?,
+                    term_id: row.get(16)?,
                 })
             },
         )
@@ -7309,8 +8208,35 @@ fn link_candidate_provenance(
     entity_id: &str,
     candidate_id: &str,
 ) -> Result<()> {
-    let (source_object_id, evidence, title, due_at, starts_at, ends_at) = conn.query_row(
-        "SELECT source_object_id,evidence,title,due_at,starts_at,ends_at
+    let (
+        source_object_id,
+        document_id,
+        source_kind,
+        external_stable_id,
+        evidence,
+        confidence,
+        import_time,
+        edited_json,
+        last_json,
+        title,
+        course,
+        due_at,
+        starts_at,
+        ends_at,
+        duration_minutes,
+        weekdays,
+        starts_at_local,
+        ends_at_local,
+        timezone,
+        section_number,
+        location,
+        modality,
+        term_id,
+    ) = conn.query_row(
+        "SELECT source_object_id,document_id,source_type,source_uid,evidence,confidence,
+                COALESCE(observed_at,''),student_edited_fields,last_observed_payload,
+                title,course,due_at,starts_at,ends_at,duration_minutes,weekdays,
+                starts_at_local,ends_at_local,timezone,section_number,location,modality,term_id
          FROM import_candidates WHERE id=?1",
         params![candidate_id],
         |row| {
@@ -7318,22 +8244,70 @@ fn link_candidate_provenance(
                 row.get::<_, Option<String>>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, f64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, Option<i64>>(14)?,
+                row.get::<_, String>(15)?,
+                row.get::<_, String>(16)?,
+                row.get::<_, String>(17)?,
+                row.get::<_, String>(18)?,
+                row.get::<_, String>(19)?,
+                row.get::<_, String>(20)?,
+                row.get::<_, String>(21)?,
+                row.get::<_, String>(22)?,
             ))
         },
     )?;
+    let edited_fields = serde_json::from_str::<Vec<String>>(&edited_json).unwrap_or_default();
+    let last_observed = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&last_json).unwrap_or_default();
     let fields = [
         ("title", Some(title)),
+        ("course", (!course.is_empty()).then_some(course)),
         ("due_at", due_at),
         ("starts_at", starts_at),
         ("ends_at", ends_at),
+        ("duration_minutes", duration_minutes.map(|value| value.to_string())),
+        ("weekdays", (weekdays != "[]").then_some(weekdays)),
+        ("starts_at_local", (!starts_at_local.is_empty()).then_some(starts_at_local)),
+        ("ends_at_local", (!ends_at_local.is_empty()).then_some(ends_at_local)),
+        ("timezone", (!timezone.is_empty()).then_some(timezone)),
+        ("section_number", (!section_number.is_empty()).then_some(section_number)),
+        ("location", (!location.is_empty()).then_some(location)),
+        ("modality", (!modality.is_empty()).then_some(modality)),
+        ("term_id", (!term_id.is_empty()).then_some(term_id)),
     ];
     for (field_name, source_value) in fields {
         let Some(source_value) = source_value else {
             continue;
         };
+        let edit_key = match field_name {
+            "due_at" => "dueAt",
+            "starts_at" => "startsAt",
+            "ends_at" => "endsAt",
+            "duration_minutes" => "durationMinutes",
+            "starts_at_local" => "startsAtLocal",
+            "ends_at_local" => "endsAtLocal",
+            "section_number" => "sectionNumber",
+            "term_id" => "termId",
+            value => value,
+        };
+        let last_observed_value = last_observed
+            .get(edit_key)
+            .map(|value| match value {
+                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::Null => String::new(),
+                value => value.to_string(),
+            })
+            .unwrap_or_else(|| source_value.clone());
         conn.execute(
             "UPDATE provenance_links SET active=0
              WHERE entity_type=?1 AND entity_id=?2 AND field_name=?3 AND active=1",
@@ -7342,8 +8316,9 @@ fn link_candidate_provenance(
         conn.execute(
             "INSERT INTO provenance_links(
                id,entity_type,entity_id,candidate_id,source_object_id,field_name,
-               source_value,evidence,created_at,active
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1)",
+               source_value,evidence,created_at,active,source_kind,sanitized_source_identifier,
+               external_stable_id,confidence,import_time,last_observed_source_value,student_edited
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 Uuid::new_v4().to_string(),
                 entity_type,
@@ -7354,6 +8329,13 @@ fn link_candidate_provenance(
                 source_value,
                 evidence,
                 Utc::now().to_rfc3339(),
+                source_kind,
+                document_id,
+                external_stable_id,
+                confidence,
+                if import_time.is_empty() { None } else { Some(import_time.as_str()) },
+                last_observed_value,
+                i64::from(edited_fields.iter().any(|field| field == edit_key)),
             ],
         )?;
     }
@@ -7551,8 +8533,8 @@ fn apply_candidate(
                 .and_then(parse_rfc3339)
                 .map(|value| value.date_naive().to_string())
                 .unwrap_or_default();
-            let term_id = conn
-                .query_row(
+            let term_id = if candidate.term_id.is_empty() {
+                conn.query_row(
                     "SELECT id FROM academic_terms
                      WHERE ?1!='' AND starts_on<=?1 AND ends_on>=?1
                      ORDER BY starts_on LIMIT 1",
@@ -7567,11 +8549,13 @@ fn apply_candidate(
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?)
-                .ok_or_else(|| {
-                    AppError::Invalid(
-                        "add an academic term before importing a class schedule".into(),
-                    )
-                })?;
+            } else {
+                conn.query_row(
+                    "SELECT id FROM academic_terms WHERE id=?1",
+                    params![candidate.term_id],
+                    |row| row.get::<_, String>(0),
+                ).optional()?
+            }.ok_or_else(|| AppError::Invalid("select a valid academic term before importing a class schedule".into()))?;
 
             let existing = match required_entity_id {
                 Some(id) => Some(id.to_string()),
@@ -7587,7 +8571,7 @@ fn apply_candidate(
             if let Some(id) = existing {
                 let changed = conn.execute(
                     "UPDATE class_meeting_series SET course_id=?2,term_id=?3,timezone=?4,weekdays=?5,
-                     starts_at_local=?6,ends_at_local=?7,source_uid=?8,source_candidate_id=?9,
+                     starts_at_local=?6,ends_at_local=?7,component=?8,location=?9,modality=?10,source_uid=?11,source_candidate_id=?12,
                      version=version+1 WHERE id=?1",
                     params![
                         id,
@@ -7597,6 +8581,9 @@ fn apply_candidate(
                         weekdays,
                         candidate.starts_at_local,
                         candidate.ends_at_local,
+                        if candidate.section_number.trim().is_empty() { "lecture" } else { candidate.section_number.trim() },
+                        candidate.location.trim(),
+                        candidate.modality.trim(),
                         source_uid,
                         candidate.id
                     ],
@@ -7611,8 +8598,8 @@ fn apply_candidate(
                 let id = Uuid::new_v4().to_string();
                 conn.execute(
                     "INSERT INTO class_meeting_series(id,course_id,term_id,timezone,weekdays,
-                     starts_at_local,ends_at_local,component,location,source_uid,source_candidate_id)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7,'lecture','',?8,?9)",
+                     starts_at_local,ends_at_local,component,location,modality,source_uid,source_candidate_id)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                     params![
                         id,
                         course_id,
@@ -7621,6 +8608,9 @@ fn apply_candidate(
                         weekdays,
                         candidate.starts_at_local,
                         candidate.ends_at_local,
+                        if candidate.section_number.trim().is_empty() { "lecture" } else { candidate.section_number.trim() },
+                        candidate.location.trim(),
+                        candidate.modality.trim(),
                         source_uid,
                         candidate.id
                     ],
@@ -7673,9 +8663,14 @@ fn approve_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result
         }
     }
     transaction.commit()?;
-    shred_settled_screenshots(&db, &state.vault, &state.root)?;
     regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
     dashboard(&db, &state.ocr)
+}
+
+#[tauri::command]
+fn apply_schedule_import(state: tauri::State<AppState>, ids: Vec<String>) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    approve_candidates(state, ids)
 }
 
 #[tauri::command]
@@ -7698,7 +8693,6 @@ fn reject_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result<
         }
     }
     transaction.commit()?;
-    shred_settled_screenshots(&db, &state.vault, &state.root)?;
     dashboard(&db, &state.ocr)
 }
 
@@ -8092,6 +9086,13 @@ fn install_staged_profile(state: &AppState, staged: backup::StagedArchive) -> Re
     journal_file.sync_all()?;
     drop(journal_file);
 
+    // A restored database may reuse connection identifiers from this profile.
+    // Remember both sides of the swap so an old keychain item can never make a
+    // restored secret connection silently usable.
+    let previous_credentials = {
+        let current = state.db.lock().unwrap();
+        integration_credential_targets(&current)?
+    };
     let placeholder = Connection::open_in_memory()?;
     let mut guard = state.db.lock().unwrap();
     let previous = std::mem::replace(&mut *guard, placeholder);
@@ -8114,6 +9115,14 @@ fn install_staged_profile(state: &AppState, staged: backup::StagedArchive) -> Re
                 "installed profile failed its final database check".into(),
             ));
         }
+        let mut credential_targets = integration_credential_targets(&replacement)?;
+        credential_targets.extend(previous_credentials.iter().cloned());
+        credential_targets.sort();
+        credential_targets.dedup();
+        remove_integration_credentials(&credential_targets)?;
+        for provider in ai_providers::ProviderId::ALL {
+            ai_providers::remove_key(provider)?;
+        }
         fs::remove_file(&journal_path)?;
         Ok(replacement)
     })();
@@ -8128,7 +9137,7 @@ fn install_staged_profile(state: &AppState, staged: backup::StagedArchive) -> Re
                 &guard,
                 &state.ocr,
                 Some(format!(
-                    "Encrypted backup restored for {}. Canvas credentials must be entered again.",
+                    "Encrypted backup restored for {}. Integration and AI credentials must be entered again.",
                     staged.manifest.student_name
                 )),
             )
@@ -8261,6 +9270,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            #[cfg(feature = "wdio")]
+            let root = match std::env::var_os("STUDENT_CENTER_E2E_DATA_DIR") {
+                Some(path) => isolated_wdio_data_root(PathBuf::from(path))?,
+                None => app.path().app_data_dir()?,
+            };
+            #[cfg(not(feature = "wdio"))]
             let root = app.path().app_data_dir()?;
             fs::create_dir_all(&root)?;
             recover_interrupted_restore(&root)?;
@@ -8328,6 +9343,8 @@ fn main() {
             get_dashboard,
             get_calendar_agenda,
             set_plan_block_lock,
+            move_plan_block,
+            undo_calendar_change,
             get_onboarding_state,
             get_timezone_suggestion,
             search_institutions,
@@ -8401,18 +9418,44 @@ fn main() {
             start_plan_block,
             snooze_reminder,
             dismiss_reminder,
+            list_ai_providers,
+            save_ai_provider_key,
+            test_ai_provider,
+            remove_ai_provider,
+            set_ai_provider_order,
+            get_ai_usage,
             request_managed_ai,
+            request_ai_capability,
+            get_study_workspace,
+            set_study_material_courses,
+            generate_grounded_study_artifact,
+            update_study_artifact,
+            review_study_artifact,
+            save_grade_category,
+            save_grade_item,
+            calculate_grade_what_if,
+            save_grading_scale,
             import_document,
             import_document_bytes,
+            launch_schedule_capture,
+            settle_schedule_source,
             read_schedule_with_ai,
+            analyze_schedule_source,
             list_documents,
             get_document_evidence,
+            get_schedule_source_preview,
+            update_import_candidate,
             approve_candidates,
+            apply_schedule_import,
             reject_candidates,
             resolve_source_conflict,
             connect_canvas,
             sync_canvas,
             disconnect_canvas,
+            connect_canvas_calendar,
+            refresh_canvas_calendar,
+            set_canvas_calendar_refresh,
+            disconnect_canvas_calendar,
             export_backup,
             preview_backup,
             restore_backup
@@ -8430,6 +9473,124 @@ mod tests {
     /// verification happens at the transport boundary, before apply_canonical_mutation is reached,
     /// and is covered by the sync_transport tests.
     const TEST_SIGNATURE: &str = "G0000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn webdriver_profile_root_is_confined_to_a_dedicated_temporary_directory() {
+        let temporary = tempfile::tempdir().unwrap();
+        let profile = temporary.path().join("isolated-profile");
+        assert_eq!(
+            isolated_wdio_data_root(profile.clone()).unwrap(),
+            profile.canonicalize().unwrap(),
+        );
+        assert!(isolated_wdio_data_root(std::env::temp_dir()).is_err());
+        assert!(isolated_wdio_data_root(std::env::current_dir().unwrap()).is_err());
+    }
+
+    #[test]
+    fn ai_capability_routing_declares_sensitive_feature_requirements() {
+        let vision = ai_capability_requirements(managed_ai::AiCapability::ScheduleVision);
+        assert!(vision.text && vision.images && vision.structured_output);
+        assert!(!vision.streaming);
+        let grounded = ai_capability_requirements(managed_ai::AiCapability::SourceQa);
+        assert!(!grounded.images);
+        assert!(grounded.minimum_context_tokens >= 64_000);
+        for provider in ai_providers::ProviderId::ALL {
+            assert!(provider_supports(provider, managed_ai::AiCapability::ScheduleVision));
+            assert!(provider_supports(provider, managed_ai::AiCapability::PracticeQuestions));
+        }
+        let text_only = AiProviderFeatures {
+            text: true,
+            images: false,
+            structured_output: true,
+            streaming: true,
+            context_tokens: 128_000,
+        };
+        assert!(!provider_meets_requirements(text_only, vision));
+        assert!(provider_meets_requirements(
+            text_only,
+            ai_capability_requirements(managed_ai::AiCapability::BrainDump),
+        ));
+    }
+
+    #[test]
+    fn ai_provider_order_models_and_usage_are_local_and_deterministic() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("ai-routing.db"), &random_key()).unwrap();
+        assert_eq!(ai_provider_order(&conn), ai_providers::ProviderId::ALL);
+
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('ai_provider_order',?1)",
+            params![r#"["gemini","anthropic","openai"]"#],
+        ).unwrap();
+        assert_eq!(
+            ai_provider_order(&conn),
+            vec![
+                ai_providers::ProviderId::Gemini,
+                ai_providers::ProviderId::Anthropic,
+                ai_providers::ProviderId::Openai,
+            ],
+        );
+        assert_eq!(
+            ai_model(&conn, ai_providers::ProviderId::Openai),
+            ai_providers::ProviderId::Openai.default_model(),
+        );
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('ai_model_openai','student-selected-model')",
+            [],
+        ).unwrap();
+        assert_eq!(ai_model(&conn, ai_providers::ProviderId::Openai), "student-selected-model");
+
+        record_ai_invocation(
+            &conn,
+            "openai",
+            managed_ai::AiCapability::BrainDump,
+            Some("student-selected-model"),
+            10,
+            100,
+            40,
+            "review_created",
+            None,
+        ).unwrap();
+        record_ai_invocation(
+            &conn,
+            "openai",
+            managed_ai::AiCapability::BrainDump,
+            Some("student-selected-model"),
+            30,
+            0,
+            0,
+            "failed",
+            Some("quota"),
+        ).unwrap();
+        let usage = ai_usage_summaries(&conn).unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].provider, "openai");
+        assert_eq!(usage[0].model, "student-selected-model");
+        assert_eq!(usage[0].requests, 2);
+        assert_eq!(usage[0].failures, 1);
+        assert_eq!(usage[0].input_tokens, 100);
+        assert_eq!(usage[0].output_tokens, 40);
+        assert_eq!(usage[0].average_latency_ms, 20.0);
+    }
+
+    #[test]
+    fn canvas_calendar_startup_refresh_honors_toggle_and_twenty_four_hour_interval() {
+        let directory = tempfile::tempdir().unwrap();
+        let key = random_key();
+        let conn = open_database(&directory.path().join("canvas-refresh.db"), &key).unwrap();
+        let now = Utc::now();
+        for (id, enabled, attempted) in [
+            ("due", 1, now - Duration::hours(25)),
+            ("too-recent", 1, now - Duration::hours(23)),
+            ("disabled", 0, now - Duration::hours(48)),
+        ] {
+            conn.execute(
+                "INSERT INTO integration_connections(id,provider,base_url,account_name,status,created_at,refresh_on_startup,last_attempted_at) VALUES(?1,'canvas_calendar',?2,'Canvas calendar','connected',?3,?4,?5)",
+                params![id, format!("https://{id}.canvas.example.edu"), now.to_rfc3339(), enabled, attempted.to_rfc3339()],
+            ).unwrap();
+        }
+        assert_eq!(due_canvas_calendar_reconciliations(&conn, now).unwrap(), vec!["due"]);
+    }
 
     #[test]
     fn vault_ciphertext_never_contains_plaintext() {
@@ -8475,6 +9636,8 @@ mod tests {
             "get_dashboard",
             "get_calendar_agenda",
             "set_plan_block_lock",
+            "move_plan_block",
+            "undo_calendar_change",
             "get_onboarding_state",
             "save_onboarding_draft",
             "complete_onboarding",
@@ -8530,13 +9693,37 @@ mod tests {
             "start_plan_block",
             "snooze_reminder",
             "dismiss_reminder",
+            "list_ai_providers",
+            "save_ai_provider_key",
+            "test_ai_provider",
+            "remove_ai_provider",
+            "set_ai_provider_order",
+            "get_ai_usage",
             "request_managed_ai",
+            "request_ai_capability",
+            "get_study_workspace",
+            "set_study_material_courses",
+            "generate_grounded_study_artifact",
+            "update_study_artifact",
+            "review_study_artifact",
+            "save_grade_category",
+            "save_grade_item",
+            "calculate_grade_what_if",
+            "save_grading_scale",
+            "launch_schedule_capture",
+            "settle_schedule_source",
             "connect_canvas",
             "sync_canvas",
             "disconnect_canvas",
+            "connect_canvas_calendar",
+            "refresh_canvas_calendar",
+            "set_canvas_calendar_refresh",
+            "disconnect_canvas_calendar",
             "import_document",
             "list_documents",
             "get_document_evidence",
+            "get_schedule_source_preview",
+            "update_import_candidate",
             "approve_candidates",
             "reject_candidates",
             "resolve_source_conflict",
@@ -8912,7 +10099,8 @@ mod tests {
         let conn = open_database(&path, &key).unwrap();
         conn.execute(
             "INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at)
-             VALUES('term-fall','Fall 2026','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z')",
+             VALUES('term-fall','Fall 2026','2026-08-20','2026-12-12',1,'2026-08-01T00:00:00Z'),
+                   ('term-selected','Selected range','2026-08-15','2026-12-20',0,'2026-08-01T00:00:00Z')",
             [],
         )
         .unwrap();
@@ -8928,6 +10116,8 @@ mod tests {
             starts_at_local: "09:00".into(),
             ends_at_local: "09:50".into(),
             timezone: "America/Phoenix".into(),
+            term_id: "term-selected".into(),
+            modality: "hybrid".into(),
             ..Default::default()
         };
         conn.execute(
@@ -8944,7 +10134,8 @@ mod tests {
         .unwrap();
 
         let entity_id = apply_candidate(&conn, &candidate, None).unwrap();
-        let (course_id, term_id, weekdays, starts, ends, timezone): (
+        let (course_id, term_id, weekdays, starts, ends, timezone, modality): (
+            String,
             String,
             String,
             String,
@@ -8953,7 +10144,7 @@ mod tests {
             String,
         ) = conn
             .query_row(
-                "SELECT course_id,term_id,weekdays,starts_at_local,ends_at_local,timezone
+                "SELECT course_id,term_id,weekdays,starts_at_local,ends_at_local,timezone,modality
                  FROM class_meeting_series WHERE id=?1",
                 params![entity_id],
                 |row| {
@@ -8964,6 +10155,7 @@ mod tests {
                         row.get(3)?,
                         row.get(4)?,
                         row.get(5)?,
+                        row.get(6)?,
                     ))
                 },
             )
@@ -8972,8 +10164,9 @@ mod tests {
         assert_eq!(starts, "09:00");
         assert_eq!(ends, "09:50");
         assert_eq!(timezone, "America/Phoenix");
-        // The term containing the first meeting, not merely the active one.
-        assert_eq!(term_id, "term-fall");
+        assert_eq!(modality, "hybrid");
+        // The student's reviewed target term wins over automatic date matching.
+        assert_eq!(term_id, "term-selected");
 
         let course_title: String = conn
             .query_row(
@@ -8991,6 +10184,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(series, 1);
+        assert_eq!(conn.query_row("SELECT term_id FROM class_meeting_series",[],|row|row.get::<_,String>(0)).unwrap(),"term-selected");
 
         // Importing the same schedule again produces a fresh candidate carrying
         // the same source_uid. It must update the class rather than add a second
@@ -9084,8 +10278,8 @@ mod tests {
             // Approval records provenance against the candidate row, so it has
             // to exist before apply_candidate is asked to file anything.
             conn.execute(
-                "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence)
-                 VALUES(?1,'doc',?2,'Statistics 201','Statistics 201','e','l',?3,1.0)",
+                "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_type,source_uid,observed_at,confidence,student_edited_fields,last_observed_payload)
+                 VALUES(?1,'doc',?2,'Statistics 201','Statistics 201','e','l','managed_ai',?3,'2026-08-25T12:00:00Z',1.0,'[\"title\"]','{\"title\":\"Original Statistics\"}')",
                 params![format!("cand-{kind}"), kind, format!("ai:{kind}")],
             )
             .unwrap();
@@ -9108,20 +10302,33 @@ mod tests {
                 "{kind} is produced but cannot be applied"
             );
         }
+        let provenance: (String, String, String, f64, String, i64) = conn
+            .query_row(
+                "SELECT source_kind,sanitized_source_identifier,external_stable_id,confidence,
+                        last_observed_source_value,student_edited
+                 FROM provenance_links WHERE candidate_id='cand-task' AND field_name='title'",
+                [],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(provenance.0, "managed_ai");
+        assert_eq!(provenance.1, "doc");
+        assert_eq!(provenance.2, "ai:task");
+        assert_eq!(provenance.3, 1.0);
+        assert_eq!(provenance.4, "Original Statistics");
+        assert_eq!(provenance.5, 1);
     }
 
-    // A screenshot is a picture of the student's own screen. Once every class it
-    // proposed is approved or dismissed there is nothing left to look at, so the
-    // image goes -- but the extracted text stays, because the review queue's
-    // evidence quotes are built on it.
+    // A settled source is retained until the student explicitly chooses. Delete
+    // removes the encrypted original while the evidence row survives.
     #[test]
-    fn a_settled_screenshot_loses_its_image_but_keeps_its_evidence() {
+    fn a_settled_screenshot_waits_for_a_retention_choice_then_keeps_its_evidence() {
         let directory = tempfile::tempdir().unwrap();
         let vault = directory.path().join("vault");
         fs::create_dir_all(&vault).unwrap();
         let conn = open_database(&directory.path().join("shred.db"), &random_key()).unwrap();
 
-        let mut make = |id: &str, mime: &str, status: &str| {
+        let make = |id: &str, mime: &str, status: &str| {
             let blob = vault.join(format!("{id}.vault"));
             fs::write(&blob, b"ciphertext").unwrap();
             conn.execute(
@@ -9142,7 +10349,14 @@ mod tests {
         let pending = make("22222222-2222-4222-8222-222222222222", "image/png", "pending");
         let syllabus = make("33333333-3333-4333-8333-333333333333", "application/pdf", "approved");
 
-        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+        settle_schedule_source_in(&conn,&vault,directory.path(),"11111111-1111-4111-8111-111111111111","keep_encrypted").unwrap();
+        assert!(settled.exists(), "explicit keep retains the source");
+        conn.execute("INSERT INTO settings(key,value) VALUES('screenshot_retention','shred_when_settled')",[]).unwrap();
+        settle_schedule_source_in(&conn,&vault,directory.path(),"11111111-1111-4111-8111-111111111111","keep_encrypted").unwrap();
+        assert!(settled.exists(), "a legacy global preference cannot override per-source keep");
+        assert!(settle_schedule_source_in(&conn,&vault,directory.path(),"22222222-2222-4222-8222-222222222222","delete_now").is_err(),"pending review blocks deletion");
+        settle_schedule_source_in(&conn,&vault,directory.path(),"11111111-1111-4111-8111-111111111111","delete_now").unwrap();
+        settle_schedule_source_in(&conn,&vault,directory.path(),"33333333-3333-4333-8333-333333333333","keep_encrypted").unwrap();
 
         assert!(!settled.exists(), "a settled screenshot's image is deleted");
         assert!(pending.exists(), "a screenshot still under review is kept");
@@ -9171,8 +10385,8 @@ mod tests {
         assert_eq!(wrapped, "");
         assert_eq!(shredded, 1);
 
-        // Running the sweep again is a no-op rather than an error.
-        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+        // Reapplying the explicit delete is idempotent.
+        settle_schedule_source_in(&conn,&vault,directory.path(),"11111111-1111-4111-8111-111111111111","delete_now").unwrap();
     }
 
     // Approving every class from a screenshot shreds the image. Re-pasting that
@@ -9443,13 +10657,11 @@ mod tests {
     }
 
     #[test]
-    fn keeping_screenshots_is_one_preference_away() {
+    fn keeping_screenshots_is_an_explicit_choice() {
         let directory = tempfile::tempdir().unwrap();
         let vault = directory.path().join("vault");
         fs::create_dir_all(&vault).unwrap();
         let conn = open_database(&directory.path().join("keep.db"), &random_key()).unwrap();
-        assert_eq!(screenshot_retention(&conn), "shred_when_settled");
-
         let id = "44444444-4444-4444-8444-444444444444";
         let blob = vault.join(format!("{id}.vault"));
         fs::write(&blob, b"ciphertext").unwrap();
@@ -9459,20 +10671,14 @@ mod tests {
             params![id, blob.to_string_lossy()],
         )
         .unwrap();
+        assert_eq!(conn.query_row("SELECT source_retention FROM documents WHERE id=?1",params![id],|row|row.get::<_,String>(0)).unwrap(),"ask");
         conn.execute(
             "INSERT INTO import_candidates(id,document_id,kind,title,course,evidence,source_locator,source_uid,confidence,status)
              VALUES('c1',?1,'class_meeting','S','S','e','screenshot','u',0.9,'approved')",
             params![id],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO settings(key,value) VALUES('screenshot_retention','keep')
-             ON CONFLICT(key) DO UPDATE SET value='keep'",
-            [],
-        )
-        .unwrap();
-
-        shred_settled_screenshots(&conn, &vault, directory.path()).unwrap();
+        settle_schedule_source_in(&conn,&vault,directory.path(),id,"keep_encrypted").unwrap();
         assert!(blob.exists(), "the preference is honoured");
     }
 
@@ -9490,12 +10696,24 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
         // 12 adds the weekly pattern a class_meeting candidate carries, which
         // the single-instant datetime columns cannot express.
         let candidate_columns = table_columns(&conn, "import_candidates").unwrap();
-        for column in ["weekdays", "starts_at_local", "ends_at_local", "timezone"] {
+        for column in [
+            "weekdays", "starts_at_local", "ends_at_local", "timezone",
+            "section_number", "location", "modality", "student_edited_fields",
+            "last_observed_payload", "term_id",
+        ] {
             assert!(candidate_columns.contains(column), "missing {column}");
+        }
+        assert!(table_columns(&conn,"class_meeting_series").unwrap().contains("modality"));
+        let provenance_columns = table_columns(&conn, "provenance_links").unwrap();
+        for column in [
+            "source_kind", "sanitized_source_identifier", "external_stable_id",
+            "confidence", "import_time", "last_observed_source_value", "student_edited",
+        ] {
+            assert!(provenance_columns.contains(column), "missing {column}");
         }
         // 13 lets a screenshot's image be deleted once its candidates are
         // settled while the row survives, so the evidence quotes still read.
@@ -9524,6 +10742,9 @@ mod tests {
             .unwrap(),
             1
         );
+        for table in ["document_segments","study_materials","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales"] {
+            assert_eq!(conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",params![table],|row|row.get::<_,i64>(0)).unwrap(),1,"missing {table}");
+        }
         drop(conn);
         let reopened = open_database(&path, &key).unwrap();
         assert_eq!(
@@ -9533,6 +10754,48 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn retention_migration_preserves_old_sources_and_prompts_for_new_ones() {
+        let directory=tempfile::tempdir().unwrap();
+        let path=directory.path().join("retention-migration.db");
+        let key=random_key();
+        {
+            let conn=open_keyed_database(&path,&key).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE documents(
+                   id TEXT PRIMARY KEY,file_name TEXT NOT NULL,mime TEXT NOT NULL,vault_path TEXT NOT NULL,
+                   wrapped_key TEXT NOT NULL,key_nonce TEXT NOT NULL,content_nonce TEXT NOT NULL,
+                   sha256 TEXT NOT NULL,imported_at TEXT NOT NULL,extraction_status TEXT NOT NULL DEFAULT 'complete',
+                   extraction_error TEXT
+                 );
+                 INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+                 VALUES('existing','old.png','image/png','vault/old','k','n','c','hash','2026-08-01T00:00:00Z');
+                 PRAGMA user_version=14;",
+            ).unwrap();
+        }
+        let conn=open_database(&path,&key).unwrap();
+        assert_eq!(conn.query_row("SELECT source_retention FROM documents WHERE id='existing'",[],|row|row.get::<_,String>(0)).unwrap(),"keep_encrypted");
+        conn.execute(
+            "INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at)
+             VALUES('new','new.png','image/png','vault/new','k','n','c','new-hash','2026-08-26T00:00:00Z')",
+            [],
+        ).unwrap();
+        assert_eq!(conn.query_row("SELECT source_retention FROM documents WHERE id='new'",[],|row|row.get::<_,String>(0)).unwrap(),"ask");
+    }
+
+    #[test]
+    fn weighted_grades_include_missing_work_and_keep_planned_what_if_separate() {
+        let categories=vec![GradeCategorySummary{id:"exams".into(),course_id:"course".into(),name:"Exams".into(),weight:60.0},GradeCategorySummary{id:"work".into(),course_id:"course".into(),name:"Work".into(),weight:40.0}];
+        let items=vec![
+            GradeItemSummary{id:"midterm".into(),course_id:"course".into(),category_id:Some("exams".into()),title:"Midterm".into(),score:Some(80.0),points_possible:100.0,due_at:None,status:"graded".into()},
+            GradeItemSummary{id:"missing".into(),course_id:"course".into(),category_id:Some("work".into()),title:"Worksheet".into(),score:None,points_possible:20.0,due_at:None,status:"missing".into()},
+            GradeItemSummary{id:"what-if".into(),course_id:"course".into(),category_id:Some("exams".into()),title:"Final".into(),score:Some(100.0),points_possible:100.0,due_at:None,status:"planned".into()},
+        ];
+        let category_refs=categories.iter().collect::<Vec<_>>();let item_refs=items.iter().collect::<Vec<_>>();
+        assert_eq!(grade_percent(&category_refs,&item_refs,true),Some(48.0));
+        assert_eq!(grade_percent(&category_refs,&item_refs,false),Some(80.0));
     }
 
     #[test]
@@ -9756,7 +11019,7 @@ mod tests {
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
-            2
+            4
         );
         assert_eq!(
             conn.query_row(
@@ -10074,6 +11337,9 @@ mod tests {
 
     #[test]
     fn encrypted_backup_round_trip_rekeys_and_replaces_the_profile() {
+        // Restore must exercise credential invalidation without opening or
+        // mutating the developer machine's real operating-system keychain.
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
         let base = tempfile::tempdir().unwrap();
         let source_root = base.path().join("source");
         let source_vault = source_root.join("vault");
@@ -10084,6 +11350,13 @@ mod tests {
         source_db
             .execute(
                 "INSERT INTO tasks(id,title,minutes,priority,created_at) VALUES('portable-task','Private capstone plan',75,3,?1)",
+                params![Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+        source_db
+            .execute(
+                "INSERT INTO integration_connections(id,provider,base_url,account_name,status,created_at,credential_ref)
+                 VALUES('portable-canvas-feed','canvas_calendar','https://canvas.example.edu','Canvas calendar','connected',?1,'canvas-calendar-feed:portable-canvas-feed')",
                 params![Utc::now().to_rfc3339()],
             )
             .unwrap();
@@ -10185,6 +11458,16 @@ mod tests {
                 )
                 .unwrap(),
             0
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT status FROM integration_connections WHERE id='portable-canvas-feed'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "needs_reauthentication"
         );
         let (vault_path, wrapped, key_nonce, content_nonce): (String, String, String, String) =
             restored
@@ -10837,6 +12120,7 @@ mod tests {
                 ends_at_local: "10:15".into(),
                 component: "lecture".into(),
                 location: "COOR 170".into(),
+                modality: "in_person".into(),
                 instructor_id: Some(instructor_id.clone()),
                 expected_version: None,
             },

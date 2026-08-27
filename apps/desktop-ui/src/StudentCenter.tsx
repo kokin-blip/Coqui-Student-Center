@@ -12,7 +12,6 @@ import {
   FileLock2,
   FileUp,
   HardDrive,
-  Home,
   LayoutGrid,
   Link2,
   ListChecks,
@@ -36,7 +35,18 @@ import {
   Zap,
 } from "lucide-react";
 import { AppearanceSettings } from "./components/AppearanceSettings";
+import {
+  DesktopNavigation,
+  MobileNavigation,
+  StudentDestination,
+} from "./components/AppNavigation";
 import { AppLogo } from "./components/AppLogo";
+import { StudyView as ModularStudyView } from "./components/StudyView";
+import { ScheduleImportReview } from "./components/ScheduleImportReview";
+import { AcademicSettingsView } from "./components/AcademicSettingsView";
+import { CalendarView } from "./components/CalendarView";
+import { CoursesView } from "./components/CoursesView";
+import { WorkView } from "./components/WorkView";
 import { OnboardingExperience } from "./components/OnboardingExperience";
 import {
   isSetupChecklistDismissed,
@@ -48,57 +58,32 @@ import {
   AppearancePreference,
   initialAccent,
   initialAppearance,
-  ThemeControls,
   watchSystemAppearance,
 } from "./components/ThemeControls";
 import {
   AccountStatus,
-  AcademicCalendarEventInput,
   addTask,
   approveCandidates,
   BackupPreview,
-  CalendarAgenda,
   cancelGoogleSignIn,
   changePin,
   checkForUpdates,
-  CommitmentEditorInput,
-  CommitmentRecord,
   connectCanvas,
-  CourseInput,
+  connectCanvasCalendar,
   CourseRecord,
-  createCommitment,
-  createAcademicEvent,
-  createAcademicTerm,
-  createClassMeeting,
-  createCourse,
-  createInstructor,
-  createLocalTask,
-  AcademicCalendarEventRecord,
-  AcademicTermInput,
-  AcademicTermRecord,
-  ClassMeetingSeriesRecord,
-  InstructorRecord,
   CalendarDiff,
   Dashboard,
   TermChange,
-  deleteAcademicEvent,
-  deleteAcademicTerm,
-  deleteClassMeeting,
-  deleteCommitment,
-  deleteCourse,
-  deleteInstructor,
   deleteLocalProfile,
-  deleteLocalTask,
   DocumentSummary,
   disablePin,
   dismissReminder,
   disconnectCanvas,
+  disconnectCanvasCalendar,
   enablePin,
   exportEncryptedBackup,
   getAccountStatus,
-  getCalendarAgenda,
   getDocumentEvidence,
-  getDashboard,
   getLocalWorkspace,
   getUpdateStatus,
   initialize,
@@ -116,9 +101,10 @@ import {
   listenForNavigation,
   lockApp,
   listDocuments,
+  listAiProviders,
+  launchScheduleCapture,
   NavigationTarget,
   OnboardingState,
-  PreferenceInput,
   previewEncryptedBackup,
   refreshAccountSession,
   rejectCandidates,
@@ -130,29 +116,25 @@ import {
   SecurityStatus,
   selectAndImport,
   selectBackupFile,
-  setPlanBlockLock,
   signOutAccount,
   snoozeReminder,
   startGoogleSignIn,
   startPlanBlock,
   syncCanvas,
+  refreshCanvasCalendar,
+  setCanvasCalendarRefresh,
+  saveAiProviderKey,
+  testAiProvider,
+  removeAiProvider,
+  setAiProviderOrder,
+  getAiUsage,
+  settleScheduleSource,
   takePendingNavigation,
-  TaskInput,
-  TaskRecord,
   toggleTask,
   unlockWithPin,
-  updateCommitment,
-  updateAcademicEvent,
-  updateAcademicTerm,
-  updateClassMeeting,
-  updateCourse,
-  updateInstructor,
   updateAccent,
   updateAppearance,
-  updateLocalTask,
   updateNotificationSettings,
-  updatePlanningPreferences,
-  updateStudentProfile,
   UpdateStatus,
   verifyEmailCode,
   WorkspaceSnapshot,
@@ -160,8 +142,9 @@ import {
   listLegacyQuarantine,
   restoreLegacyQuarantine,
   purgeLegacyQuarantine,
-  searchCourseSuggestions,
-  CourseSuggestion,
+  AiProviderId,
+  AiProviderStatus,
+  AiUsageSummary,
 } from "./native";
 import {
   beginSyncProtection,
@@ -185,18 +168,17 @@ import {
   SyncProtectionStatus,
 } from "./native";
 
-// Weekday index 0 is Sunday, matching how meetings are stored.
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
 type Modal =
   | "settings"
   | "search"
   | "import"
   | "review"
+  | "retention"
   | "conflicts"
   | "replan"
   | "task"
   | "assistant"
+  | "ai"
   | "canvas"
   | "backups"
   | "security"
@@ -233,29 +215,13 @@ const formatBytes = (bytes: number) =>
   bytes < 1024 * 1024
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
     : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-const zonedDateKey = (value: string | Date, timezone: string) => {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(typeof value === "string" ? new Date(value) : value);
-  const part = (type: "year" | "month" | "day") =>
-    parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
-};
-
 type BootPhase = "loading" | "ready" | "error";
 const BOOT_WATCHDOG_MS = 15000;
 const BOOT_RECOVERY_DELAY_MS = 1200;
 const BOOT_MAX_ATTEMPTS = 3;
 
 export function StudentCenter() {
-  const [view, setView] = useState<
-    "today" | "timetable" | "assignments" | "courses"
-  >(
-    "today",
-  );
+  const [view, setView] = useState<StudentDestination | "academic-settings">("today");
   const [appearance, setAppearance] = useState<AppearancePreference>(initialAppearance);
   const [accent, setAccent] = useState<AccentPreference>(initialAccent);
   const appearanceRef = useRef(appearance);
@@ -269,6 +235,7 @@ export function StudentCenter() {
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const importPasteTarget = useRef<HTMLButtonElement>(null);
   const [replanReason, setReplanReason] = useState("I woke up late");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskMinutes, setTaskMinutes] = useState(30);
@@ -288,6 +255,15 @@ export function StudentCenter() {
   const [searchIndex, setSearchIndex] = useState<WorkspaceSnapshot | null>(null);
   const [canvasUrl, setCanvasUrl] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
+  const [canvasMode, setCanvasMode] = useState<"calendar" | "full">("calendar");
+  const [canvasRefreshOnStartup, setCanvasRefreshOnStartup] = useState(true);
+  const [aiProviders, setAiProviders] = useState<AiProviderStatus[]>([]);
+  const [aiUsage, setAiUsage] = useState<AiUsageSummary[]>([]);
+  const [aiProvider, setAiProvider] = useState<AiProviderId>("openai");
+  const [aiKey, setAiKey] = useState("");
+  const [aiModel, setAiModel] = useState("");
+  const [aiAgeConfirmed, setAiAgeConfirmed] = useState(false);
+  const [retentionDocumentIds, setRetentionDocumentIds] = useState<string[]>([]);
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [backupView, setBackupView] = useState<"home" | "export" | "restore">(
     "home",
@@ -326,7 +302,7 @@ export function StudentCenter() {
     items: Dashboard["candidates"];
   } | null>(null);
   const [assistantCapability, setAssistantCapability] = useState<
-    "brain_dump" | "document_extraction" | "task_decomposition" | "explanation"
+    "brain_dump" | "document_extraction" | "task_decomposition" | "planner_explanation"
   >("brain_dump");
   const [assistantExcerpt, setAssistantExcerpt] = useState("");
   const [assistantConsent, setAssistantConsent] = useState(false);
@@ -340,6 +316,12 @@ export function StudentCenter() {
   const [bootError, setBootError] = useState("");
   const [bootAttempt, setBootAttempt] = useState(0);
   const retryBoot = useCallback(() => setBootAttempt((attempt) => attempt + 1), []);
+  useEffect(() => {
+    const main = document.querySelector<HTMLElement>(".main");
+    if (!main) return;
+    if (typeof main.scrollTo === "function") main.scrollTo({ top: 0 });
+    else main.scrollTop = 0;
+  }, [view]);
 
   useEffect(() => {
     let active = true;
@@ -541,13 +523,27 @@ export function StudentCenter() {
       ),
     [data?.conflicts],
   );
-  const reviewablePending = pending.filter(
-    (candidate) => !conflictCandidateIds.has(candidate.id),
-  );
+  const activeImportTerm = todayWorkspace?.terms.find((term) => term.active);
+  const reviewablePending = pending.filter((candidate) => {
+    if (conflictCandidateIds.has(candidate.id) || !candidate.title.trim()) return false;
+    if (candidate.kind !== "class_meeting") return true;
+    const term = todayWorkspace?.terms.find((item) => item.id === candidate.termId) ?? activeImportTerm;
+    return Boolean(candidate.course.trim() && candidate.weekdays?.length && candidate.startsAtLocal && candidate.endsAtLocal && term);
+  });
   useEffect(() => {
     if (modal === "review")
       setSelectedCandidates(reviewablePending.map((candidate) => candidate.id));
-  }, [modal, data?.candidates.length, data?.conflicts.length]);
+  }, [modal, data?.candidates.length, data?.conflicts.length, todayWorkspace?.terms.map((term)=>`${term.id}:${term.active}`).join("|")]);
+  useEffect(() => {
+    if (modal !== "review") return;
+    getLocalWorkspace().then(setTodayWorkspace).catch((next)=>setError(String(next)));
+  }, [modal]);
+  useEffect(() => {
+    if (modal !== "review" || pending.length || !data?.unsettledScheduleSources.length)
+      return;
+    setRetentionDocumentIds(data.unsettledScheduleSources);
+    setModal("retention");
+  }, [modal, pending.length, data?.unsettledScheduleSources.join("|")]);
   const remaining = useMemo(
     () =>
       data?.blocks
@@ -563,6 +559,11 @@ export function StudentCenter() {
     () => data?.blocks.filter((block) => block.kind === "class").length ?? 0,
     [data],
   );
+  const reflection = useMemo(() => {
+    const started = data?.blocks.filter((block) => block.startedAt) ?? [];
+    const variance = started.map((block) => Math.round((new Date(block.startedAt!).getTime() - new Date(block.startsAt).getTime()) / 60000));
+    return { completed: data?.blocks.filter((block) => block.completed).length ?? 0, started: started.length, averageVariance: variance.length ? Math.round(variance.reduce((sum,value)=>sum+value,0)/variance.length) : 0 };
+  }, [data]);
   const reminderBlocks = useMemo(
     () =>
       data?.blocks
@@ -580,8 +581,10 @@ export function StudentCenter() {
       const next = await action();
       if (next) setData(next);
       setToast(next?.importNotice ?? success);
+      return next;
     } catch (e) {
       setError(String(e));
+      return null;
     } finally {
       setBusy(false);
     }
@@ -601,6 +604,24 @@ export function StudentCenter() {
     switchBackupView("home");
     setError("");
     setModal("backups");
+  };
+  const openAiSettings = async () => {
+    setModal("ai");
+    setAiKey("");
+    setAiAgeConfirmed(false);
+    setError("");
+    setBusy(true);
+    try {
+      const [providers, usage] = await Promise.all([listAiProviders(), getAiUsage()]);
+      setAiProviders(providers);
+      setAiUsage(usage);
+      const selected = providers.find((item) => item.provider === aiProvider);
+      setAiModel(selected?.model ?? "");
+    } catch (next) {
+      setError(String(next));
+    } finally {
+      setBusy(false);
+    }
   };
   const openDataRecovery = async () => {
     setModal("recovery");
@@ -1029,7 +1050,12 @@ export function StudentCenter() {
           // A null dashboard used to strand the app on the loading screen with
           // no way back. Onboarding is finished now, so re-running the bootstrap
           // is guaranteed to return one.
-          if (result.dashboard) setData(result.dashboard);
+          if (result.dashboard) {
+            setData(result.dashboard);
+            if (result.dashboard.candidates.some((candidate) => candidate.status === "pending")) {
+              setModal("review");
+            }
+          }
           else retryBoot();
         }}
       />
@@ -1082,162 +1108,29 @@ export function StudentCenter() {
           signOut={disconnectAccount}
         />
       )}
-      <aside className="sidebar">
-        <div className="brand">
-          <AppLogo wordmark />
-        </div>
-        <p className="nav-label">Plan</p>
-        <nav aria-label="Primary navigation">
-          <button
-            className={`nav-item ${view === "today" ? "active" : ""}`}
-            aria-label="Today"
-            onClick={() => setView("today")}
-          >
-            <Home />
-            <span>Today</span>
-          </button>
-          <button
-            className={`nav-item ${view === "timetable" ? "active" : ""}`}
-            aria-label="Timetable"
-            onClick={() => setView("timetable")}
-          >
-            <CalendarDays />
-            <span>Timetable</span>
-          </button>
-          <button
-            className={`nav-item ${view === "assignments" ? "active" : ""}`}
-            aria-label="Assignments"
-            onClick={() => setView("assignments")}
-          >
-            <ListChecks />
-            <span>Assignments</span>
-          </button>
-          <button
-            className={`nav-item ${view === "courses" ? "active" : ""}`}
-            aria-label="Courses"
-            onClick={() => setView("courses")}
-          >
-            <BookOpen />
-            <span>Courses</span>
-          </button>
-        </nav>
-        <p className="nav-label">Tools</p>
-        <nav aria-label="Tools">
-          <button
-            className="nav-item"
-            aria-label="Document vault"
-            onClick={() => setModal("import")}
-          >
-            <FileLock2 />
-            <span>Document vault</span>
-            {pending.length > 0 && <b>{pending.length}</b>}
-          </button>
-          <button
-            className="nav-item"
-            aria-label="Canvas"
-            onClick={() => setModal("canvas")}
-          >
-            <Link2 />
-            <span>Canvas</span>
-            {data.canvasConnections.some(
-              (connection) => connection.status === "error",
-            ) && <b>!</b>}
-          </button>
-          <button
-            className="nav-item"
-            aria-label="Backups"
-            onClick={openBackups}
-          >
-            <HardDrive />
-            <span>Backups</span>
-          </button>
-          <button
-            className="nav-item"
-            aria-label="Data recovery"
-            onClick={() => void openDataRecovery()}
-          >
-            <RefreshCw />
-            <span>Data recovery</span>
-          </button>
-        </nav>
-        <p className="nav-label">Account</p>
-        <nav aria-label="Account">
-          <button
-            className="nav-item"
-            aria-label="Optional account"
-            onClick={openAccount}
-          >
-            <UserRound />
-            <span>Optional account</span>
-            {accountStatus?.signedIn && <b>✓</b>}
-          </button>
-          <button
-            className="nav-item"
-            aria-label="App updates"
-            onClick={openUpdates}
-          >
-            <RefreshCw />
-            <span>App updates</span>
-          </button>
-        </nav>
-        <div className="sidebar-foot">
-          <button
-            className="nav-item"
-            aria-label="Settings"
-            onClick={() => setModal("settings")}
-          >
-            <Settings />
-            <span>Settings</span>
-          </button>
-          <button
-            className="nav-item"
-            aria-label="App lock"
-            onClick={openSecurity}
-          >
-            <LockKeyhole />
-            <span>App lock</span>
-          </button>
-          <button
-            className="nav-item danger-nav"
-            aria-label="Delete local profile"
-            onClick={() => {
-              setDeleteConfirmation("");
-              setError("");
-              setModal("delete-profile");
-            }}
-          >
-            <LogOut />
-            <span>Delete local profile</span>
-          </button>
-          <div className="privacy">
-            <ShieldCheck />
-            <span>
-              <strong>Private by default</strong>
-              <small>Encrypted on this device</small>
-            </span>
-          </div>
-        </div>
-      </aside>
+      <DesktopNavigation
+        active={view}
+        onNavigate={setView}
+        onQuickAdd={() => setModal("task")}
+        onSettings={() => setModal("settings")}
+        onSecurity={openSecurity}
+        onDeleteProfile={() => {
+          setDeleteConfirmation("");
+          setError("");
+          setModal("delete-profile");
+        }}
+      />
       <main className="main">
         <header className="topbar">
           <div className="crumb">
             <LayoutGrid />
             <span>
-              {view === "today" ? "Today" : view === "timetable" ? "Timetable" : view === "assignments" ? "Assignments" : "Courses"}
+              {view === "today" ? "Today" : view === "calendar" ? "Calendar" : view === "work" ? "Work" : view === "courses" ? "Courses" : "Study"}
             </span>
             <ChevronRight />
             <span>{view === "today" ? "Agenda" : "Local workspace"}</span>
           </div>
           <div className="top-actions">
-            <ThemeControls
-              compact
-              value={appearance}
-              onChange={(next) => {
-                setAppearance(next);
-                applyAppearance(next, accent);
-                void updateAppearance(next).catch((value) => setError(String(value)));
-              }}
-            />
             <span className="offline">
               <WifiOff /> Works offline
             </span>
@@ -1294,7 +1187,7 @@ export function StudentCenter() {
               </span>
             </div>
             {error && (
-              <div className="alert">
+              <div className="alert" role="alert">
                 <CircleAlert />
                 <span>{error}</span>
                 <button onClick={() => setError("")}>
@@ -1359,7 +1252,7 @@ export function StudentCenter() {
                   </button>
                 </div>
               </section>
-              <aside className="capacity">
+              <aside className="capacity" aria-label="Today's capacity">
                 <p>Capacity</p>
                 {data.blocks.length === 0 ? (
                   // Zero statistics against an empty plan say nothing; tell the
@@ -1480,7 +1373,7 @@ export function StudentCenter() {
                   </div>
                 )}
               </section>
-              <aside className="side-stack">
+              <aside className="side-stack" aria-label="Today details">
                 <section className="small-card">
                   <div className="small-head">
                     <h3>Quick capture</h3>
@@ -1490,15 +1383,12 @@ export function StudentCenter() {
                     <button onClick={() => setModal("import")}>
                       <FileUp /> Import work
                     </button>
-                    <button onClick={() => setModal("task")}>
-                      <ListChecks /> Add a task
-                    </button>
                     <button
                       onClick={() => {
                         setAssistantExplanation("");
                         setModal("assistant");
-                        getAccountStatus()
-                          .then(setAccountStatus)
+                        listAiProviders()
+                          .then(setAiProviders)
                           .catch((e) => setError(String(e)));
                       }}
                     >
@@ -1508,6 +1398,10 @@ export function StudentCenter() {
                       <RefreshCw /> Adjust day
                     </button>
                   </div>
+                </section>
+                <section className="small-card">
+                  <div className="small-head"><h3>Planned vs actual</h3><span>Today</span></div>
+                  {reflection.started ? <><p>{reflection.completed} completed · {reflection.started} started.</p><p>You started {Math.abs(reflection.averageVariance)} minutes {reflection.averageVariance>0?"later":"earlier"} than planned on average.</p></> : <p>Start a focus block to build a private reflection. Coqui records timing locally.</p>}
                 </section>
                 {data.conflicts.length > 0 && (
                   <section className="small-card vault-card conflict-summary">
@@ -1574,11 +1468,11 @@ export function StudentCenter() {
                 <section className="small-card vault-card">
                   <Link2 />
                   <div>
-                    <h3>Canvas read-only</h3>
+                    <h3>Canvas connections</h3>
                     <p>
                       {data.canvasConnections.length
                         ? `${data.canvasConnections.length} local connection${data.canvasConnections.length === 1 ? "" : "s"}. ${data.canvasConnections.reduce((sum, connection) => sum + connection.pendingCandidates, 0)} changes await review.`
-                        : "Connect with a personal token. Credentials stay in the OS vault."}
+                        : "Paste the Canvas calendar-feed link for a quick read-only setup, or use the full connection in Advanced."}
                     </p>
                     <button onClick={() => setModal("canvas")}>
                       {data.canvasConnections.length
@@ -1590,59 +1484,46 @@ export function StudentCenter() {
               </aside>
             </div>
           </div>
+        ) : view === "study" ? (
+          <ModularStudyView onOpenAssistant={() => void openAiSettings()} />
+        ) : view === "calendar" ? (
+          <CalendarView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} onConnections={() => setModal("canvas")} canvasConnections={data.canvasConnections} />
+        ) : view === "work" ? (
+          <WorkView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} />
+        ) : view === "academic-settings" ? (
+          <AcademicSettingsView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} />
         ) : (
-          <WorkspaceView mode={view} onDashboard={(next) => setData(next)} />
+          <CoursesView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} />
         )}
       </main>
       <button className="fab" onClick={() => setModal("task")} aria-label="Quick add">
         <Plus />
         <span>Quick add</span>
       </button>
-      <nav className="mobile-nav">
-        <button
-          className={view === "today" ? "active" : ""}
-          onClick={() => setView("today")}
-        >
-          <Home />
-          Today
-        </button>
-        <button
-          className={view === "timetable" ? "active" : ""}
-          onClick={() => setView("timetable")}
-        >
-          <CalendarDays />
-          Timetable
-        </button>
-        <button
-          className={view === "assignments" ? "active" : ""}
-          onClick={() => setView("assignments")}
-        >
-          <ListChecks />
-          Assignments
-        </button>
-        <button onClick={() => setModal("import")}>
-          <FileLock2 />
-          Vault
-        </button>
-        <button onClick={() => setModal("task")}>
-          <Plus />
-          Add
-        </button>
-        <button
-          className={view === "courses" ? "active" : ""}
-          onClick={() => setView("courses")}
-        >
-          <BookOpen />
-          Courses
-        </button>
-      </nav>
+      <MobileNavigation
+        active={view}
+        onNavigate={setView}
+        onQuickAdd={() => setModal("task")}
+        onSettings={() => setModal("settings")}
+        onSecurity={openSecurity}
+        onDeleteProfile={() => setModal("delete-profile")}
+      />
       {modal === "import" && (
         <Modal
-          title="Import into your encrypted vault"
-          subtitle="Student Center copies and encrypts the file. Nothing changes until you approve extracted facts."
+          title="Bring in my schedule"
+          subtitle="Choose the quickest source. Coqui shows a review before anything reaches your plan."
           close={() => setModal(null)}
         >
+          <div className="import-choice-grid">
+            <button className="outline" onClick={() => { setCanvasMode("calendar"); setModal("canvas"); }}>
+              <Link2 /><strong>Canvas calendar link</strong><span>Paste the one link Canvas provides</span>
+            </button>
+            <button className="outline" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { setToast(await launchScheduleCapture()); window.setTimeout(() => importPasteTarget.current?.focus(), 0); } catch (next) { setError(String(next)); } finally { setBusy(false); } }}>
+              <LayoutGrid /><strong>Capture screen area</strong><span>Use the system snipping tool, then paste</span>
+            </button>
+          </div>
           <button
+            ref={importPasteTarget}
             className="dropzone"
             disabled={busy}
             onClick={() =>
@@ -1654,13 +1535,16 @@ export function StudentCenter() {
             }
           >
             <Upload />
-            <strong>Choose or drop academic files</strong>
+            <strong>Paste, choose, or drop a schedule</strong>
             <span>PDF, image, ICS, Word, Excel, CSV, PowerPoint, or text</span>
             <span>Or paste a screenshot of your schedule with Ctrl/Cmd+V</span>
           </button>
+          <button className="quick-add-detailed" onClick={() => { setModal(null); setView("courses"); }}>
+            <BookOpen /> Enter classes manually <ChevronRight />
+          </button>
           <p className="privacy-note">
             <ShieldCheck /> The original stays private. AI is never used without
-            sign-in and explicit consent.
+            a connected provider and explicit consent.
           </p>
           <section className="vault-library" aria-labelledby="vault-heading">
             <div className="small-head">
@@ -1757,7 +1641,7 @@ export function StudentCenter() {
                     <p>
                       <ShieldCheck aria-hidden="true" /> Coqui read this
                       screenshot on your computer. If the class times came out
-                      wrong, it can ask the managed AI to try again — that sends{" "}
+                      wrong, it can ask your selected AI provider to try again — that sends{" "}
                       <strong>this image and the text read from it</strong> off
                       your computer. Everything it proposes still needs your
                       review, and you never have to do this.
@@ -1767,13 +1651,18 @@ export function StudentCenter() {
                       disabled={busy}
                       onClick={() =>
                         run(async () => {
+                          const available = await listAiProviders();
+                          const resolved = available.find((item) => item.connected && item.healthy);
+                          if (!resolved) throw new Error("Connect and test an AI provider in Settings first.");
+                          const approved = window.confirm(`Send this screenshot and its locally extracted text to ${resolved.provider} (${resolved.model})? Nothing else in your vault is included.`);
+                          if (!approved) return null;
                           const result = await readScheduleWithAi(
                             vaultEvidence.documentId,
                             true,
                           );
                           setModal("review");
                           return result.dashboard;
-                        }, "Managed AI proposed classes for review; nothing was added to your plan.")
+                        }, "Your selected AI provider proposed classes for review; nothing was added to your plan.")
                       }
                     >
                       Ask AI to re-read this screenshot
@@ -1793,65 +1682,16 @@ export function StudentCenter() {
         >
           {pending.length ? (
             <>
-              <div className="candidate-list">
-                {pending.map((c) => {
-                  const conflicted = conflictCandidateIds.has(c.id);
-                  return (
-                    <label
-                      className={`candidate ${conflicted ? "candidate-conflicted" : ""}`}
-                      key={c.id}
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={conflicted}
-                        checked={
-                          !conflicted && selectedCandidates.includes(c.id)
-                        }
-                        onChange={(event) =>
-                          setSelectedCandidates((current) =>
-                            event.target.checked
-                              ? [...current, c.id]
-                              : current.filter((id) => id !== c.id),
-                          )
-                        }
-                      />
-                      <span>
-                        <strong>{c.title}</strong>
-                        <small>
-                          {c.kind === "commitment"
-                            ? "Calendar commitment"
-                            : c.kind === "course"
-                              ? "Active course"
-                              : c.kind === "class_meeting"
-                                ? "Weekly class"
-                                : "Academic task"}{" "}
-                          · {c.course}
-                          {/* A weekly class repeats; showing the first
-                              occurrence as a date would read as a one-off. */}
-                          {c.kind === "class_meeting"
-                            ? `${c.weekdays?.length ? ` · ${c.weekdays.map((day) => WEEKDAY_LABELS[day]).join(" ")}` : ""}${c.startsAtLocal ? ` · ${c.startsAtLocal}–${c.endsAtLocal}` : ""}${c.timezone ? ` · ${c.timezone}` : ""}`
-                            : `${c.dueAt ? ` · Due ${new Date(c.dueAt).toLocaleString()}` : ""}${c.startsAt ? ` · ${new Date(c.startsAt).toLocaleString()}` : ""}${c.durationMinutes ? ` · ${c.durationMinutes} min` : ""}`}
-                        </small>
-                        <q>{c.evidence}</q>
-                        <em>
-                          {c.sourceLocator} ·{" "}
-                          {c.sourceType.replaceAll("_", " ")}
-                        </em>
-                        {conflicted && (
-                          <mark>
-                            Resolve this critical date separately; bulk approval
-                            is disabled.
-                          </mark>
-                        )}
-                        {c.warnings.map((warning) => (
-                          <mark key={warning}>{warning}</mark>
-                        ))}
-                      </span>
-                      <b>{Math.round(c.confidence * 100)}%</b>
-                    </label>
-                  );
-                })}
-              </div>
+              <ScheduleImportReview
+                candidates={pending}
+                selectedIds={selectedCandidates}
+                conflictedIds={conflictCandidateIds}
+                busy={busy}
+                onSelection={setSelectedCandidates}
+                onDashboard={setData}
+                onError={setError}
+                terms={todayWorkspace?.terms ?? []}
+              />
               <div className="modal-actions split-actions">
                 <button
                   className="outline danger"
@@ -1860,10 +1700,28 @@ export function StudentCenter() {
                     run(
                       () => rejectCandidates(selectedCandidates),
                       `${selectedCandidates.length} candidates rejected.`,
-                    ).then(() => setModal(null))
+                    ).then((next) => {
+                      if (!next) return;
+                      const selectedSources = [...new Set(
+                        pending
+                          .filter((item) => selectedCandidates.includes(item.id))
+                          .map((item) => item.documentId),
+                      )];
+                      const ready = selectedSources.filter(
+                        (id) =>
+                          next.unsettledScheduleSources.includes(id) &&
+                          !next.candidates.some(
+                            (item) => item.documentId === id && item.status === "pending",
+                          ),
+                      );
+                      if (ready.length) {
+                        setRetentionDocumentIds(ready);
+                        setModal("retention");
+                      } else setModal(null);
+                    })
                   }
                 >
-                  Reject selected
+                  Ignore selected
                 </button>
                 <span />
                 <button className="outline" onClick={() => setModal(null)}>
@@ -1886,7 +1744,25 @@ export function StudentCenter() {
                     run(
                       () => approveCandidates(selectedCandidates),
                       `${selectedCandidates.length} items approved and planned.`,
-                    ).then(() => setModal(null))
+                    ).then((next) => {
+                      if (!next) return;
+                      const selectedSources = [...new Set(
+                        pending
+                          .filter((item) => selectedCandidates.includes(item.id))
+                          .map((item) => item.documentId),
+                      )];
+                      const ready = selectedSources.filter(
+                        (id) =>
+                          next.unsettledScheduleSources.includes(id) &&
+                          !next.candidates.some(
+                            (item) => item.documentId === id && item.status === "pending",
+                          ),
+                      );
+                      if (ready.length) {
+                        setRetentionDocumentIds(ready);
+                        setModal("retention");
+                      } else setModal(null);
+                    })
                   }
                 >
                   Approve and plan
@@ -1899,6 +1775,16 @@ export function StudentCenter() {
               available in your vault.
             </div>
           )}
+        </Modal>
+      )}
+      {modal === "retention" && (
+        <Modal title="Keep the schedule source?" subtitle="Your approved classes and evidence stay either way." close={() => setModal(null)}>
+          <div className="consent-box"><ShieldCheck /><div><strong>Your choice, every import</strong><p>Keep the original image or document encrypted for later review, or delete the source now. Coqui never makes this choice silently.</p></div></div>
+          {retentionDocumentIds.length > 1 && <p className="field-help">Source 1 of {retentionDocumentIds.length}. You will choose separately for every imported source file.</p>}
+          <div className="modal-actions">
+            <button className="outline danger" disabled={busy || !retentionDocumentIds.length} onClick={() => run(() => settleScheduleSource(retentionDocumentIds[0],"delete_now"),"Schedule source deleted.").then((next) => { if (!next) return; const remaining = retentionDocumentIds.slice(1); setRetentionDocumentIds(remaining); if (!remaining.length) setModal(null); })}>Delete source now</button>
+            <button className="solid" disabled={busy || !retentionDocumentIds.length} onClick={() => run(() => settleScheduleSource(retentionDocumentIds[0],"keep_encrypted"),"Schedule source kept encrypted.").then((next) => { if (!next) return; const remaining = retentionDocumentIds.slice(1); setRetentionDocumentIds(remaining); if (!remaining.length) setModal(null); })}>Keep encrypted source</button>
+          </div>
         </Modal>
       )}
       {modal === "calendar-refresh" && calendarDiff && (
@@ -2180,6 +2066,19 @@ export function StudentCenter() {
               void updateAccent(next).catch((value) => setError(String(value)));
             }}
           />
+          <section className="setup-fieldset">
+            <h3>Integrations</h3>
+            <div className="settings-link-grid">
+              <button className="outline" onClick={() => { setCanvasMode("calendar"); setModal("canvas"); }}><Link2 /> Canvas calendar and full connection</button>
+              <button className="outline" onClick={() => void openAiSettings()}><Brain /> OpenAI, Anthropic, and Gemini</button>
+              <button className="outline" onClick={openAccount}><UserRound /> Account & encrypted sync</button>
+              <button className="outline" onClick={openBackups}><HardDrive /> Backup & recovery</button>
+              <button className="outline" onClick={openSecurity}><LockKeyhole /> Privacy & security</button>
+              <button className="outline" onClick={openUpdates}><RefreshCw /> Updates</button>
+              <button className="outline" onClick={() => { setModal(null); setView("academic-settings"); }}><CalendarDays /> Academic & planning settings</button>
+              <button className="outline" onClick={() => void openDataRecovery()}><RefreshCw /> Advanced data recovery</button>
+            </div>
+          </section>
           {/* Optional in every sense: it runs only when asked, it proposes
               rather than applies, and every failure — no network, a blocked
               host, a school that publishes nothing — leaves the dates you have
@@ -2213,6 +2112,33 @@ export function StudentCenter() {
               </small>
             )}
           </section>
+        </Modal>
+      )}
+      {modal === "ai" && (
+        <Modal title="AI providers" subtitle="Bring your own key. Requests leave this computer only after you review the provider, model, and data scope." close={() => { setAiKey(""); setModal(null); }}>
+          <div className="connection-list">
+            {aiProviders.map((provider, index) => (
+              <article className="connection" key={provider.provider}>
+                <div className="connection-head"><span><Brain /><strong>{provider.provider === "openai" ? "OpenAI" : provider.provider === "anthropic" ? "Anthropic" : "Google Gemini"}</strong><small>{provider.model} · {provider.maskedKey ?? "Not connected"}</small></span><b className={`status ${provider.healthy ? "connected" : provider.connected ? "error" : "disconnected"}`}>{provider.healthy ? "ready" : provider.connected ? "check needed" : "not connected"}</b></div>
+                <p>Priority {index + 1}. Usage never changes this order.</p>
+                <div className="connection-actions">
+                  <button className="outline" disabled={index === 0 || busy} onClick={() => { const order=aiProviders.map((item)=>item.provider); [order[index-1],order[index]]=[order[index],order[index-1]]; void setAiProviderOrder(order).then(setAiProviders).catch((next)=>setError(String(next))); }}>Move up</button>
+                  {provider.connected && <button className="outline" disabled={busy} onClick={() => void testAiProvider(provider.provider).then(setAiProviders).catch((next)=>setError(String(next)))}>Test</button>}
+                  {provider.connected && <button className="outline danger" disabled={busy} onClick={() => void removeAiProvider(provider.provider).then(setAiProviders).catch((next)=>setError(String(next)))}>Disconnect</button>}
+                  <button className="outline" onClick={() => { setAiProvider(provider.provider); setAiModel(provider.model); setAiKey(""); }}>Configure</button>
+                </div>
+              </article>
+            ))}
+          </div>
+          <section className="setup-fieldset">
+            <h3>Connect {aiProvider === "openai" ? "OpenAI" : aiProvider === "anthropic" ? "Anthropic" : "Gemini"}</h3>
+            <label className="field">API key<input type="password" value={aiKey} onChange={(event)=>setAiKey(event.target.value)} autoComplete="off" placeholder="Saved only in the OS credential vault" /></label>
+            <label className="field">Model<input value={aiModel} onChange={(event)=>setAiModel(event.target.value)} placeholder="Recommended default" /></label>
+            <label className="check-row"><input type="checkbox" checked={aiAgeConfirmed} onChange={(event)=>setAiAgeConfirmed(event.target.checked)} /><span>I am 18 or older and understand that my own provider account, billing, and data terms apply.</span></label>
+            <p className="field-help">Coqui sends only the scope shown before each request. It never silently retries with another provider. <a href={aiProviders.find((item)=>item.provider===aiProvider)?.disclosureUrl} target="_blank" rel="noreferrer">Review this provider’s data terms</a>.</p>
+            <button className="solid" disabled={busy || aiKey.length < 20 || !aiAgeConfirmed} onClick={async()=>{const submittedKey=aiKey;setAiKey("");setBusy(true);setError("");try{const next=await saveAiProviderKey(aiProvider,submittedKey,aiModel||undefined,aiAgeConfirmed);setAiProviders(next);setToast(`${aiProvider} connected securely.`);}catch(next){setError(String(next));}finally{setBusy(false);}}}>Validate and connect</button>
+          </section>
+          <section className="setup-fieldset"><h3>Local usage</h3>{aiUsage.length ? aiUsage.map((item)=><p className="field-help" key={`${item.provider}:${item.model}`}><strong>{item.provider} · {item.model}</strong> — {item.requests} requests, {item.inputTokens.toLocaleString()} input tokens, {item.outputTokens.toLocaleString()} output tokens, {item.failures} failures.</p>) : <p className="field-help">No AI requests recorded on this device.</p>}</section>
         </Modal>
       )}
       {modal === "search" && (
@@ -2270,7 +2196,7 @@ export function StudentCenter() {
                   <p>Nothing local matches “{searchQuery.trim()}”.</p>
                 </div>
               );
-            const go = (destination: "courses" | "assignments" | "timetable") => {
+            const go = (destination: "courses" | "work" | "calendar") => {
               setModal(null);
               setView(destination);
             };
@@ -2310,7 +2236,7 @@ export function StudentCenter() {
                     <div className="record-actions">
                       <button
                         className="outline"
-                        onClick={() => go("assignments")}
+                        onClick={() => go("work")}
                       >
                         Open
                       </button>
@@ -2332,7 +2258,7 @@ export function StudentCenter() {
                     <div className="record-actions">
                       <button
                         className="outline"
-                        onClick={() => go("timetable")}
+                        onClick={() => go("calendar")}
                       >
                         Open
                       </button>
@@ -2429,7 +2355,7 @@ export function StudentCenter() {
             className="quick-add-detailed"
             onClick={() => {
               setModal(null);
-              setView("assignments");
+              setView("work");
             }}
           >
             <ListChecks /> Add an exam or detailed assignment
@@ -2439,8 +2365,8 @@ export function StudentCenter() {
       )}
       {modal === "canvas" && (
         <Modal
-          title="Canvas connection"
-          subtitle="Read-only sync runs on this computer. Every imported fact remains pending until you review it."
+          title="Connect Canvas"
+          subtitle="The calendar link is the fastest setup. Every imported fact remains pending until you review it."
           close={() => setModal(null)}
         >
           <div className="connection-list">
@@ -2452,7 +2378,7 @@ export function StudentCenter() {
                     <strong>
                       {connection.accountName || connection.baseUrl}
                     </strong>
-                    <small>{connection.baseUrl}</small>
+                    <small>{connection.provider === "canvas_calendar" ? "Calendar link · secret path hidden" : "Canvas Full Connection"} · {connection.baseUrl}</small>
                   </span>
                   <b className={`status ${connection.status}`}>
                     {connection.status.replaceAll("_", " ")}
@@ -2464,6 +2390,14 @@ export function StudentCenter() {
                     : "Not synced yet"}{" "}
                   · {connection.pendingCandidates} pending
                 </p>
+                {connection.provider === "canvas_calendar" && (
+                  <small>
+                    Automatic refresh {connection.refreshOnStartup ? "on" : "off"}
+                    {connection.nextEligibleRefreshAt
+                      ? ` · next eligible ${new Date(connection.nextEligibleRefreshAt).toLocaleString()}`
+                      : ""}
+                  </small>
+                )}
                 {connection.lastError && <mark>{connection.lastError}</mark>}
                 <div className="connection-actions">
                   <button
@@ -2474,19 +2408,33 @@ export function StudentCenter() {
                     }
                     onClick={() =>
                       run(
-                        () => syncCanvas(connection.id),
+                        () => connection.provider === "canvas_calendar" ? refreshCanvasCalendar(connection.id) : syncCanvas(connection.id),
                         "Canvas refresh completed.",
                       )
                     }
                   >
                     <RefreshCw /> Refresh
                   </button>
+                  {connection.provider === "canvas_calendar" && connection.status !== "disconnected" && (
+                    <button
+                      className="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        run(
+                          () => setCanvasCalendarRefresh(connection.id, !connection.refreshOnStartup),
+                          `Automatic Canvas refresh ${connection.refreshOnStartup ? "disabled" : "enabled"}.`,
+                        )
+                      }
+                    >
+                      {connection.refreshOnStartup ? "Turn auto refresh off" : "Turn auto refresh on"}
+                    </button>
+                  )}
                   <button
                     className="outline danger"
                     disabled={busy || connection.status === "disconnected"}
                     onClick={() =>
                       run(
-                        () => disconnectCanvas(connection.id),
+                        () => connection.provider === "canvas_calendar" ? disconnectCanvasCalendar(connection.id) : disconnectCanvas(connection.id),
                         "Canvas disconnected.",
                       )
                     }
@@ -2513,34 +2461,32 @@ export function StudentCenter() {
             ["connected", "error"].includes(connection.status),
           ) && (
             <>
+              <div className="segmented" role="group" aria-label="Canvas connection type">
+                <button className={canvasMode === "calendar" ? "active" : ""} onClick={() => setCanvasMode("calendar")}>Calendar link</button>
+                <button className={canvasMode === "full" ? "active" : ""} onClick={() => setCanvasMode("full")}>Full connection · Advanced</button>
+              </div>
               <label className="field">
-                Canvas address
+                {canvasMode === "calendar" ? "Canvas calendar feed link" : "Canvas address"}
                 <input
                   value={canvasUrl}
                   onChange={(event) => setCanvasUrl(event.target.value)}
-                  placeholder="https://canvas.yourcollege.edu"
+                  placeholder={canvasMode === "calendar" ? "https://canvas.yourcollege.edu/feeds/calendars/…ics" : "https://canvas.yourcollege.edu"}
                   autoComplete="url"
                 />
               </label>
-              <label className="field">
-                Personal access token
-                <input
-                  type="password"
-                  value={canvasToken}
-                  onChange={(event) => setCanvasToken(event.target.value)}
-                  placeholder="Stored only in the OS credential vault"
-                  autoComplete="off"
-                />
-              </label>
+              {canvasMode === "full" && <label className="field">
+                  Personal access token
+                  <input type="password" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} placeholder="Stored only in the OS credential vault" autoComplete="off" />
+                </label>}
+              {canvasMode === "calendar" && <><p className="field-help">In Canvas, open Calendar → Calendar Feed, copy the link, and paste it here. Coqui stores the complete link only in your operating system’s credential vault.</p><label className="check-row"><input type="checkbox" checked={canvasRefreshOnStartup} onChange={(event)=>setCanvasRefreshOnStartup(event.target.checked)} /><span>Refresh automatically after unlock when at least 24 hours have passed</span></label></>}
               <div className="consent-box">
                 <ShieldCheck />
                 <div>
                   <strong>Read-only and local</strong>
                   <p>
-                    Student Center validates the public HTTPS host, blocks
-                    redirects and private networks, and never writes to Canvas.
-                    The token is never stored in the SQL database or returned to
-                    the interface.
+                    Coqui validates every HTTPS destination, blocks private
+                    networks, and never writes to Canvas. The secret link or
+                    token is never stored in the SQL database or returned here.
                   </p>
                 </div>
               </div>
@@ -2548,20 +2494,20 @@ export function StudentCenter() {
                 <button
                   className="solid"
                   disabled={
-                    busy || !canvasUrl.trim() || canvasToken.length < 16
+                    busy || !canvasUrl.trim() || (canvasMode === "full" && canvasToken.length < 16)
                   }
-                  onClick={() =>
-                    run(
-                      () =>
-                        connectCanvas(canvasUrl.trim(), canvasToken).then(
-                          (next) => {
-                            setCanvasToken("");
-                            return next;
-                          },
-                        ),
+                  onClick={() => {
+                    const submittedUrl = canvasUrl.trim();
+                    const submittedToken = canvasToken;
+                    setCanvasUrl("");
+                    setCanvasToken("");
+                    void run(
+                      () => canvasMode === "calendar"
+                        ? connectCanvasCalendar(submittedUrl, "Canvas calendar", canvasRefreshOnStartup)
+                        : connectCanvas(submittedUrl, submittedToken),
                       "Canvas connected; review the imported facts.",
-                    )
-                  }
+                    );
+                  }}
                 >
                   Validate and connect
                 </button>
@@ -2732,7 +2678,7 @@ export function StudentCenter() {
                       <strong>Replace this local profile</strong>
                       <small>
                         I understand the current database and document vault
-                        will be replaced. Canvas credentials are not restored.
+                        will be replaced. Integration and AI credentials are not restored.
                       </small>
                     </span>
                   </label>
@@ -3224,22 +3170,22 @@ export function StudentCenter() {
       )}
       {modal === "assistant" && (
         <Modal
-          title="Managed AI is optional"
-          subtitle="Brain-dump structuring requires an account and internet. Core planning and local extraction never do."
+          title="AI is optional"
+          subtitle="Core planning and local extraction remain available without an account, internet, or API key."
           close={() => setModal(null)}
         >
           <div className="consent-box">
             <Sparkles />
             <div>
               <strong>
-                {accountStatus?.signedIn
-                  ? `Signed in as ${accountStatus.email}`
-                  : "Sign-in required"}
+                {aiProviders.find((item) => item.connected && item.healthy)
+                  ? `${aiProviders.find((item) => item.connected && item.healthy)?.provider} · ${aiProviders.find((item) => item.connected && item.healthy)?.model}`
+                  : "Connect an AI provider first"}
               </strong>
               <p>
-                When enabled, only the excerpt you select is sent over TLS.
+                Data scope: only the excerpt shown below is sent over TLS.
                 Responses become reviewable candidates and can’t directly alter
-                your plan.
+                your plan. A failure is never retried with another provider without asking.
               </p>
             </div>
           </div>
@@ -3256,7 +3202,7 @@ export function StudentCenter() {
               <option value="brain_dump">Structure a brain dump</option>
               <option value="task_decomposition">Break down an assignment</option>
               <option value="document_extraction">Clarify an excerpt</option>
-              <option value="explanation">Explain planner facts</option>
+              <option value="planner_explanation">Explain planner facts</option>
             </select>
           </label>
           <label className="field">
@@ -3277,8 +3223,7 @@ export function StudentCenter() {
               onChange={(event) => setAssistantConsent(event.target.checked)}
             />
             <span>
-              I consent to sending only this excerpt to Student Center’s managed
-              AI service for this request.
+              I consent to sending only this excerpt to the provider and model shown above for this request.
             </span>
           </label>
           {assistantExplanation && (
@@ -3294,16 +3239,16 @@ export function StudentCenter() {
             <button className="outline" onClick={() => setModal(null)}>
               Cancel
             </button>
-            {!accountStatus?.signedIn && (
-              <button className="outline" onClick={() => setModal("account")}>
-                Sign in
+            {!aiProviders.some((item) => item.connected && item.healthy) && (
+              <button className="outline" onClick={() => void openAiSettings()}>
+                Configure providers
               </button>
             )}
             <button
               className="solid"
               disabled={
                 busy ||
-                !accountStatus?.signedIn ||
+                !aiProviders.some((item) => item.connected && item.healthy) ||
                 !assistantConsent ||
                 !assistantExcerpt.trim()
               }
@@ -3319,12 +3264,14 @@ export function StudentCenter() {
                   setData(result.dashboard);
                   setToast(
                     result.dashboard.importNotice ??
-                      "Managed AI response is ready for review.",
+                      `${result.provider} response is ready for review.`,
                   );
                   setAssistantExplanation(result.explanation ?? "");
                   if (result.candidatesCreated > 0) setModal("review");
                 } catch (e) {
-                  setError(String(e));
+                  setAiProviders(await listAiProviders().catch(() => aiProviders));
+                  setAssistantConsent(false);
+                  setError(`${String(e)} Nothing was sent to another provider. Review the resolved provider and consent again to retry.`);
                 } finally {
                   setBusy(false);
                 }
@@ -3341,7 +3288,7 @@ export function StudentCenter() {
           subtitle="Untouched legacy mock records are quarantined automatically and never affect your plan."
           close={() => setModal(null)}
         >
-          {error && <div className="alert">{error}</div>}
+          {error && <div className="alert" role="alert">{error}</div>}
           {legacyItems.length ? (
             <div className="record-list compact">
               {legacyItems.map((item) => (
@@ -3414,1538 +3361,6 @@ export function StudentCenter() {
     </div>
   );
 }
-
-function WorkspaceView({
-  mode,
-  onDashboard,
-}: {
-  mode: "timetable" | "assignments" | "courses";
-  onDashboard: (dashboard: Dashboard) => void;
-}) {
-  const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
-  const [agenda, setAgenda] = useState<CalendarAgenda | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [courseEdit, setCourseEdit] = useState<CourseRecord | null>(null);
-  const [course, setCourse] = useState<CourseInput>({ title: "", code: "" });
-  // Adding a course mid-semester had no autocomplete at all, so a code typed
-  // here never reached the school catalog that onboarding already uses.
-  const [courseSuggestions, setCourseSuggestions] = useState<CourseSuggestion[]>([]);
-  const emptyTask: TaskInput = {
-    title: "",
-    kind: "assignment",
-    minutes: 30,
-    priority: 3,
-    academicRisk: 0,
-    energyDemand: "medium",
-    location: "",
-    splittable: true,
-    minSessionMinutes: 20,
-    maxSessionMinutes: 60,
-    dependencies: [],
-  };
-  const [taskEdit, setTaskEdit] = useState<TaskRecord | null>(null);
-  const [task, setTask] = useState<TaskInput>(emptyTask);
-  const emptyCommitment: CommitmentEditorInput = {
-    title: "",
-    startsAt: "",
-    endsAt: "",
-    kind: "class",
-    location: "",
-    travelBeforeMinutes: 0,
-    travelAfterMinutes: 0,
-    protected: true,
-  };
-  const [commitmentEdit, setCommitmentEdit] = useState<CommitmentRecord | null>(
-    null,
-  );
-  const [commitment, setCommitment] =
-    useState<CommitmentEditorInput>(emptyCommitment);
-  const emptyAcademicEvent: AcademicCalendarEventInput = {
-    title: "",
-    startsOn: new Date().toISOString().slice(0, 10),
-    endsOn: new Date().toISOString().slice(0, 10),
-    allDay: true,
-    noClass: true,
-    source: "user",
-  };
-  const [academicEvent, setAcademicEvent] =
-    useState<AcademicCalendarEventInput>(emptyAcademicEvent);
-  const [academicEventEdit, setAcademicEventEdit] =
-    useState<AcademicCalendarEventRecord | null>(null);
-  const emptyInstructor = { courseId: "", name: "", email: "", officeLocation: "", officeHours: "" };
-  const emptyMeeting = { courseId: "", weekdays: [1, 3, 5], startsAtLocal: "09:00", endsAtLocal: "09:50", component: "lecture", location: "" };
-  const [instructorDraft, setInstructorDraft] = useState(emptyInstructor);
-  const [instructorEdit, setInstructorEdit] = useState<InstructorRecord | null>(null);
-  const [meetingDraft, setMeetingDraft] = useState(emptyMeeting);
-  const [meetingEdit, setMeetingEdit] = useState<ClassMeetingSeriesRecord | null>(null);
-  const emptyTerm: AcademicTermInput = { name: "", startsOn: "", endsOn: "", active: true };
-  const [term, setTerm] = useState<AcademicTermInput>(emptyTerm);
-  const [termEdit, setTermEdit] = useState<AcademicTermRecord | null>(null);
-  const [preferences, setPreferences] = useState<PreferenceInput | null>(null);
-  const [profileEditor, setProfileEditor] = useState({
-    name: "",
-    timezone: "",
-    expectedVersion: 0,
-  });
-  useEffect(() => {
-    let active = true;
-    setWorkspace(null);
-    Promise.all([
-      getLocalWorkspace(),
-      mode === "timetable" ? getCalendarAgenda() : Promise.resolve(null),
-    ])
-      .then(([next, nextAgenda]) => {
-        if (active) {
-          setWorkspace(next);
-          setAgenda(nextAgenda);
-          if (next.profile)
-            setProfileEditor({
-              name: next.profile.name,
-              timezone: next.profile.timezone,
-              expectedVersion: next.profile.version,
-            });
-          if (next.preferences)
-            setPreferences({
-              ...next.preferences,
-              expectedVersion: next.preferences.version,
-              availability: next.availability,
-            });
-        }
-      })
-      .catch((next) => {
-        if (active) setError(String(next));
-      });
-    return () => {
-      active = false;
-    };
-  }, [mode]);
-  const applied = async (next: WorkspaceSnapshot) => {
-    setWorkspace(next);
-    if (next.profile)
-      setProfileEditor({
-        name: next.profile.name,
-        timezone: next.profile.timezone,
-        expectedVersion: next.profile.version,
-      });
-    if (next.preferences)
-      setPreferences({
-        ...next.preferences,
-        expectedVersion: next.preferences.version,
-        availability: next.availability,
-      });
-    if (mode === "timetable") setAgenda(await getCalendarAgenda());
-    // This runs only after a workspace mutation, so onboarding is already
-    // complete and the lighter dashboard fetch is enough.
-    onDashboard(await getDashboard());
-  };
-  const act = async (operation: () => Promise<WorkspaceSnapshot>) => {
-    setBusy(true);
-    setError("");
-    try {
-      await applied(await operation());
-    } catch (next) {
-      setError(String(next));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const editCourse = (value: CourseRecord) => {
-    setCourseEdit(value);
-    setCourse({
-      title: value.title,
-      code: value.code,
-      termId: value.termId,
-      expectedVersion: value.version,
-    });
-  };
-  const editTask = (value: TaskRecord) => {
-    setTaskEdit(value);
-    setTask({
-      title: value.title,
-      minutes: value.minutes,
-      dueAt: value.dueAt,
-      courseId: value.courseId,
-      priority: value.priority,
-      kind: value.kind,
-      academicRisk: value.academicRisk,
-      earliestStart: value.earliestStart,
-      energyDemand: value.energyDemand,
-      location: value.location,
-      splittable: value.splittable,
-      minSessionMinutes: value.minSessionMinutes,
-      maxSessionMinutes: value.maxSessionMinutes,
-      dependencies: value.dependencies,
-      expectedVersion: value.version,
-    });
-  };
-  const editCommitment = (value: CommitmentRecord) => {
-    setCommitmentEdit(value);
-    setCommitment({
-      title: value.title,
-      startsAt: value.startsAt,
-      endsAt: value.endsAt,
-      kind: value.kind,
-      location: value.location,
-      travelBeforeMinutes: value.travelBeforeMinutes,
-      travelAfterMinutes: value.travelAfterMinutes,
-      protected: value.protected,
-      expectedVersion: value.version,
-    });
-  };
-  const localValue = (value?: string) =>
-    value ? new Date(value).toISOString().slice(0, 16) : "";
-  const lockBlock = async (blockId: string, locked: boolean) => {
-    setBusy(true);
-    setError("");
-    try {
-      const dashboard = await setPlanBlockLock(blockId, locked);
-      onDashboard(dashboard);
-      setAgenda(await getCalendarAgenda());
-    } catch (next) {
-      setError(String(next));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const toggleAvailabilityDay = (weekday: number, enabled: boolean) =>
-    setPreferences((current) =>
-      current
-        ? {
-            ...current,
-            availability: enabled
-              ? [
-                  ...current.availability,
-                  { weekday, startsAtLocal: "08:00", endsAtLocal: "21:00" },
-                ].sort((left, right) => left.weekday - right.weekday)
-              : current.availability.filter((rule) => rule.weekday !== weekday),
-          }
-        : current,
-    );
-  const updateAvailabilityDay = (
-    weekday: number,
-    key: "startsAtLocal" | "endsAtLocal",
-    value: string,
-  ) =>
-    setPreferences((current) =>
-      current
-        ? {
-            ...current,
-            availability: current.availability.map((rule) =>
-              rule.weekday === weekday ? { ...rule, [key]: value } : rule,
-            ),
-          }
-        : current,
-    );
-  const agendaDays = useMemo(() => {
-    if (!agenda) return [];
-    const start = new Date(agenda.startsAt);
-    return Array.from({ length: 7 }, (_, index) => {
-      const sample = new Date(start.getTime() + index * 86_400_000 + 12 * 3_600_000);
-      const key = zonedDateKey(sample, agenda.timezone);
-      return {
-        key,
-        label: new Intl.DateTimeFormat([], {
-          timeZone: agenda.timezone,
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-        }).format(sample),
-        blocks: agenda.blocks.filter(
-          (block) => zonedDateKey(block.startsAt, agenda.timezone) === key,
-        ),
-      };
-    });
-  }, [agenda]);
-  if (!workspace)
-    return (
-      <div className="content workspace-page">
-        <div className="loading">
-          <strong>Loading your encrypted local records…</strong>
-          {error && <p>{error}</p>}
-        </div>
-      </div>
-    );
-  return (
-    <div className={`content workspace-page mode-${mode}`}>
-      <div className="page-head">
-        <div>
-          <p className="eyebrow">Account-free and offline</p>
-          <h1>{mode === "timetable" ? "Timetable" : mode === "assignments" ? "Assignments" : "Courses"}</h1>
-          <p>
-            {mode === "timetable"
-              ? "Your classes, protected time, and study blocks in one readable week."
-              : mode === "assignments"
-                ? "Assignments and exams, ordered by what needs attention next."
-                : "Course details, instructors, meeting patterns, and local preferences."}
-          </p>
-        </div>
-        <span className="mode-pill">
-          <HardDrive /> Local authority
-        </span>
-      </div>
-      {error && (
-        <div className="alert">
-          <CircleAlert />
-          <span>{error}</span>
-          <button onClick={() => setError("")}>
-            <X />
-          </button>
-        </div>
-      )}
-      {mode === "timetable" ? (
-        <div className="workspace-grid">
-          <section className="workspace-panel">
-            <div className="section-head">
-              <h2>Week calendar</h2>
-              <span>{agenda?.blocks.length ?? 0} blocks</span>
-            </div>
-            <div className="week-calendar" aria-label="Seven-day visual calendar">
-              {agendaDays.map((day) => (
-                <section key={day.key}>
-                  <h3>{day.label}</h3>
-                  {day.blocks.length ? (
-                    day.blocks.map((block) => (
-                      <div
-                        className={`week-block ${block.kind}`}
-                        key={block.id}
-                      >
-                        <time>{formatTime(block.startsAt)}</time>
-                        <strong>{block.title}</strong>
-                        <small>{minutesBetween(block.startsAt, block.endsAt)} min</small>
-                      </div>
-                    ))
-                  ) : (
-                    <p>Open</p>
-                  )}
-                </section>
-              ))}
-            </div>
-            {agenda?.overloadConflicts.map((conflict) => (
-              <div className="alert" key={conflict.id}>
-                <CircleAlert />
-                <span>{conflict.description}</span>
-              </div>
-            ))}
-            {agenda?.blocks.length ? (
-              <><h3 className="agenda-fallback-title">Agenda view</h3><ol
-                className="record-list calendar-agenda"
-                aria-label="Seven-day agenda view"
-              >
-                {agenda.blocks.map((item) => (
-                  <li key={item.id}>
-                    <article
-                      className={item.completed ? "record-complete" : ""}
-                    >
-                      <div className={`record-icon ${item.kind}`}>
-                        <CalendarDays />
-                      </div>
-                      <div>
-                        <strong>{item.title}</strong>
-                        <small>
-                          {formatDateTime(item.startsAt)} –{" "}
-                          {formatTime(item.endsAt)} ·{" "}
-                          {minutesBetween(item.startsAt, item.endsAt)} min
-                        </small>
-                        <small>
-                          {item.location || "Any location"} ·{" "}
-                          {item.locked ? "Locked" : "Flexible"} ·{" "}
-                          {item.reasonCodes
-                            .slice(0, 2)
-                            .map((reason) => reason.replaceAll("_", " "))
-                            .join(" · ")}
-                        </small>
-                      </div>
-                      {item.taskId && !item.completed && (
-                        <div className="record-actions">
-                          <button
-                            className="outline"
-                            disabled={busy}
-                            aria-pressed={item.locked}
-                            onClick={() =>
-                              void lockBlock(item.id, !item.locked)
-                            }
-                          >
-                            {item.locked ? "Unlock" : "Lock"}
-                          </button>
-                        </div>
-                      )}
-                    </article>
-                  </li>
-                ))}
-              </ol></>
-            ) : (
-              <div className="empty-state">
-                <CalendarDays />
-                <strong>No planned blocks this week</strong>
-                <p>
-                  Add a task or commitment. Feasible work will appear here
-                  without overlaps.
-                </p>
-              </div>
-            )}
-            <div className="section-head subhead">
-              <h3>Fixed commitments</h3>
-              <span>{workspace.commitments.length}</span>
-            </div>
-            {workspace.commitments.length ? (
-              <div className="record-list">
-                {workspace.commitments.map((item) => (
-                  <article key={item.id}>
-                    <div className={`record-icon ${item.kind}`}>
-                      <CalendarDays />
-                    </div>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>
-                        {formatDateTime(item.startsAt)} –{" "}
-                        {new Intl.DateTimeFormat([], {
-                          timeStyle: "short",
-                        }).format(new Date(item.endsAt))}
-                      </small>
-                      <small>
-                        {item.location || "No location"} ·{" "}
-                        {item.travelBeforeMinutes + item.travelAfterMinutes}{" "}
-                        travel minutes ·{" "}
-                        {item.protected ? "Protected" : "Flexible"}
-                      </small>
-                    </div>
-                    <div className="record-actions">
-                      <button
-                        className="outline"
-                        onClick={() => editCommitment(item)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="text-button danger"
-                        disabled={busy}
-                        onClick={() => {
-                          if (window.confirm(`Delete ${item.title}?`))
-                            void act(() =>
-                              deleteCommitment(item.id, item.version),
-                            );
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <CalendarDays />
-                <strong>No fixed commitments yet</strong>
-                <p>
-                  Add classes, work, or protected time. Student Center will keep
-                  plans out of those windows.
-                </p>
-              </div>
-            )}
-            <div className="section-head subhead">
-              <h3>Academic calendar</h3>
-              <span>{workspace.academicEvents.length}</span>
-            </div>
-            {workspace.academicEvents.length ? (
-              <div className="record-list compact">
-                {workspace.academicEvents.map((item) => (
-                  <article key={item.id}>
-                    <div className="record-icon protected"><CalendarDays /></div>
-                    <div><strong>{item.title}</strong><small>{item.startsOn}{item.endsOn !== item.startsOn ? ` – ${item.endsOn}` : ""} · {item.noClass ? "No classes" : "Academic event"}</small></div>
-                    <div className="record-actions">
-                      <button className="outline" onClick={() => { setAcademicEventEdit(item); setAcademicEvent({ title: item.title, startsOn: item.startsOn, endsOn: item.endsOn, allDay: item.allDay, noClass: item.noClass, source: item.source }); }}>Edit</button>
-                      <button className="text-button danger" disabled={busy} onClick={() => { if (window.confirm(`Delete ${item.title}?`)) void act(() => deleteAcademicEvent(item.id, item.version)); }}>Delete</button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : <p className="section-empty-copy">No holidays or no-class days added yet.</p>}
-          </section>
-          <section className="workspace-panel editor">
-            <h2>{commitmentEdit ? "Edit commitment" : "Add commitment"}</h2>
-            <label className="field">
-              Title
-              <input
-                value={commitment.title}
-                onChange={(event) =>
-                  setCommitment((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-                placeholder="Chemistry lab"
-              />
-            </label>
-            <div className="form-grid">
-              <label className="field">
-                Starts
-                <input
-                  type="datetime-local"
-                  value={localValue(commitment.startsAt)}
-                  onChange={(event) =>
-                    setCommitment((current) => ({
-                      ...current,
-                      startsAt: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : "",
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Ends
-                <input
-                  type="datetime-local"
-                  value={localValue(commitment.endsAt)}
-                  onChange={(event) =>
-                    setCommitment((current) => ({
-                      ...current,
-                      endsAt: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : "",
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Type
-                <select
-                  value={commitment.kind}
-                  onChange={(event) =>
-                    setCommitment((current) => ({
-                      ...current,
-                      kind: event.target.value as CommitmentEditorInput["kind"],
-                    }))
-                  }
-                >
-                  <option value="class">Class</option>
-                  <option value="work">Work</option>
-                  <option value="life">Life</option>
-                  <option value="protected">Protected time</option>
-                </select>
-              </label>
-              <label className="field">
-                Location
-                <input
-                  value={commitment.location}
-                  onChange={(event) =>
-                    setCommitment((current) => ({
-                      ...current,
-                      location: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Travel before
-                <input
-                  type="number"
-                  min="0"
-                  max="240"
-                  step="5"
-                  value={commitment.travelBeforeMinutes}
-                  onChange={(event) =>
-                    setCommitment((current) => ({
-                      ...current,
-                      travelBeforeMinutes: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Travel after
-                <input
-                  type="number"
-                  min="0"
-                  max="240"
-                  step="5"
-                  value={commitment.travelAfterMinutes}
-                  onChange={(event) =>
-                    setCommitment((current) => ({
-                      ...current,
-                      travelAfterMinutes: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-            </div>
-            <label className="setting-toggle compact">
-              <input
-                type="checkbox"
-                checked={commitment.protected}
-                onChange={(event) =>
-                  setCommitment((current) => ({
-                    ...current,
-                    protected: event.target.checked,
-                  }))
-                }
-              />
-              <span>
-                <strong>Protect this time during replanning</strong>
-                <small>Fixed commitments are never overlapped.</small>
-              </span>
-            </label>
-            <div className="modal-actions">
-              {commitmentEdit && (
-                <button
-                  className="outline"
-                  onClick={() => {
-                    setCommitmentEdit(null);
-                    setCommitment(emptyCommitment);
-                  }}
-                >
-                  Cancel
-                </button>
-              )}
-              <button
-                className="solid"
-                disabled={
-                  busy ||
-                  !commitment.title.trim() ||
-                  !commitment.startsAt ||
-                  !commitment.endsAt
-                }
-                onClick={() =>
-                  void act(() =>
-                    commitmentEdit
-                      ? updateCommitment(commitmentEdit.id, commitment)
-                      : createCommitment(commitment),
-                  ).then(() => {
-                    setCommitmentEdit(null);
-                    setCommitment(emptyCommitment);
-                  })
-                }
-              >
-                {commitmentEdit ? "Save changes" : "Add commitment"}
-              </button>
-            </div>
-            <div className="editor-divider" />
-            <h2>{academicEventEdit ? "Edit academic event" : "Add a holiday or no-class day"}</h2>
-            <label className="field">Title<input value={academicEvent.title} onChange={(event) => setAcademicEvent((current) => ({ ...current, title: event.target.value }))} placeholder="Fall break" /></label>
-            <div className="form-grid">
-              <label className="field">Starts<input type="date" value={academicEvent.startsOn} onChange={(event) => setAcademicEvent((current) => ({ ...current, startsOn: event.target.value, endsOn: current.endsOn < event.target.value ? event.target.value : current.endsOn }))} /></label>
-              <label className="field">Ends<input type="date" value={academicEvent.endsOn} onChange={(event) => setAcademicEvent((current) => ({ ...current, endsOn: event.target.value }))} /></label>
-            </div>
-            <label className="setting-toggle compact"><input type="checkbox" checked={academicEvent.noClass} onChange={(event) => setAcademicEvent((current) => ({ ...current, noClass: event.target.checked }))} /><span><strong>No classes or schedulable work</strong><small>Coqui treats this as protected capacity.</small></span></label>
-            <div className="modal-actions">
-              {academicEventEdit && <button className="outline" onClick={() => { setAcademicEventEdit(null); setAcademicEvent(emptyAcademicEvent); }}>Cancel</button>}
-              <button className="solid" disabled={busy || !academicEvent.title.trim()} onClick={() => { const input = { ...academicEvent, termId: workspace.terms.find((value) => value.active)?.id }; void act(() => academicEventEdit ? updateAcademicEvent(academicEventEdit.id, { ...input, expectedVersion: academicEventEdit.version }) : createAcademicEvent(input)).then(() => { setAcademicEventEdit(null); setAcademicEvent(emptyAcademicEvent); }); }}>{academicEventEdit ? "Save academic event" : "Add academic event"}</button>
-            </div>
-          </section>
-        </div>
-      ) : (
-        <>
-          <div className={`workspace-grid academics ${mode}`}>
-            {mode === "courses" && (
-            <section className="workspace-panel">
-              <div className="section-head">
-                <h2>Courses</h2>
-                <span>{workspace.courses.length}</span>
-              </div>
-              {workspace.courses.length ? (
-                <div className="record-list compact">
-                  {workspace.courses.map((item) => (
-                    <article key={item.id}>
-                      <div className="record-icon course">
-                        <BookOpen />
-                      </div>
-                      <div>
-                        <strong>{item.code || item.title}</strong>
-                        <small>{item.title}</small>
-                        {workspace.instructors.filter((instructor) => instructor.courseId === item.id).map((instructor) => (
-                          <small key={instructor.id}>
-                            Instructor · {instructor.name}{instructor.email ? ` · ${instructor.email}` : ""}
-                            <button className="text-button" onClick={() => { setInstructorEdit(instructor); setInstructorDraft({ courseId: instructor.courseId, name: instructor.name, email: instructor.email, officeLocation: instructor.officeLocation, officeHours: instructor.officeHours }); }}>Edit</button>
-                            <button className="text-button danger" disabled={busy} onClick={() => { if (window.confirm(`Remove ${instructor.name} from ${item.code || item.title}?`)) void act(() => deleteInstructor(instructor.id, instructor.version)); }}>Remove</button>
-                          </small>
-                        ))}
-                        {workspace.classMeetings.filter((meeting) => meeting.courseId === item.id).map((meeting) => (
-                          <small key={meeting.id}>
-                            {meeting.weekdays.map((day) => weekdays[day].slice(0, 3)).join("/")} · {meeting.startsAtLocal}–{meeting.endsAtLocal} · {meeting.component}
-                            <button className="text-button" onClick={() => { setMeetingEdit(meeting); setMeetingDraft({ courseId: meeting.courseId, weekdays: meeting.weekdays, startsAtLocal: meeting.startsAtLocal, endsAtLocal: meeting.endsAtLocal, component: meeting.component, location: meeting.location }); }}>Edit</button>
-                            <button className="text-button danger" disabled={busy} onClick={() => { if (window.confirm(`Remove this ${meeting.component} time from ${item.code || item.title}?`)) void act(() => deleteClassMeeting(meeting.id, meeting.version)); }}>Remove</button>
-                          </small>
-                        ))}
-                      </div>
-                      <div className="record-actions">
-                        <button
-                          className="outline"
-                          onClick={() => editCourse(item)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="text-button danger"
-                          disabled={busy}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete ${item.title}? Tasks will be kept without a course.`,
-                              )
-                            )
-                              void act(() =>
-                                deleteCourse(item.id, item.version),
-                              );
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <BookOpen />
-                  <strong>No courses yet</strong>
-                  <p>Add a course manually or approve one from an import.</p>
-                </div>
-              )}
-              <div className="inline-editor">
-                <h3>{courseEdit ? "Edit course" : "Add a course"}</h3>
-                <div className="form-grid">
-                  <label className="field">
-                    Course name
-                    <input
-                      value={course.title}
-                      onChange={(event) =>
-                        setCourse((current) => ({
-                          ...current,
-                          title: event.target.value,
-                        }))
-                      }
-                      placeholder="English Composition"
-                    />
-                  </label>
-                  <label className="field">
-                    Code
-                    <input
-                      value={course.code}
-                      onChange={(event) => {
-                        const code = event.target.value;
-                        setCourse((current) => ({ ...current, code }));
-                        const institutionId = workspace?.institution?.id ?? "";
-                        if (!code.trim() || !institutionId) {
-                          setCourseSuggestions([]);
-                          return;
-                        }
-                        searchCourseSuggestions(institutionId, code)
-                          .then(setCourseSuggestions)
-                          .catch(() => setCourseSuggestions([]));
-                      }}
-                      placeholder="ENG 102"
-                    />
-                  </label>
-                </div>
-                {courseSuggestions.length > 0 && (
-                  <div className="course-suggestions">
-                    {courseSuggestions.map((suggestion) => (
-                      <button
-                        key={`${suggestion.source}-${suggestion.code}`}
-                        onClick={() => {
-                          setCourse({ code: suggestion.code, title: suggestion.title });
-                          setCourseSuggestions([]);
-                        }}
-                      >
-                        <span>
-                          <strong>
-                            {suggestion.code} · {suggestion.title}
-                          </strong>
-                          <small>
-                            {suggestion.sections?.length
-                              ? `${suggestion.sourceLabel}${suggestion.termLabel ? ` · ${suggestion.termLabel}` : ""} · add class times from Timetable`
-                              : suggestion.sourceLabel}
-                          </small>
-                        </span>
-                        <em>{Math.round(suggestion.confidence * 100)}%</em>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="modal-actions">
-                  {courseEdit && (
-                    <button
-                      className="outline"
-                      onClick={() => {
-                        setCourseEdit(null);
-                        setCourse({ title: "", code: "" });
-                        setCourseSuggestions([]);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                  <button
-                    className="solid"
-                    disabled={busy || !course.title.trim()}
-                    onClick={() =>
-                      void act(() =>
-                        courseEdit
-                          ? updateCourse(courseEdit.id, course)
-                          : createCourse(course),
-                      ).then(() => {
-                        setCourseEdit(null);
-                        setCourse({ title: "", code: "" });
-                        setCourseSuggestions([]);
-                      })
-                    }
-                  >
-                    {courseEdit ? "Save course" : "Add course"}
-                  </button>
-                </div>
-              </div>
-              {workspace.courses.length > 0 && <div className="course-detail-editors">
-                <div className="inline-editor">
-                  <h3>{instructorEdit ? "Edit instructor" : "Add an instructor"}</h3>
-                  <div className="form-grid"><label className="field">Course<select value={instructorDraft.courseId || workspace.courses[0].id} onChange={(event) => setInstructorDraft((current) => ({ ...current, courseId: event.target.value }))}>{workspace.courses.map((item) => <option value={item.id} key={item.id}>{item.code || item.title}</option>)}</select></label><label className="field">Name<input value={instructorDraft.name} onChange={(event) => setInstructorDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Professor name" /></label><label className="field">Email (optional)<input type="email" value={instructorDraft.email} onChange={(event) => setInstructorDraft((current) => ({ ...current, email: event.target.value }))} /></label><label className="field">Office (optional)<input value={instructorDraft.officeLocation} onChange={(event) => setInstructorDraft((current) => ({ ...current, officeLocation: event.target.value }))} /></label></div>
-                  <div className="modal-actions">
-                    {instructorEdit && <button className="outline" onClick={() => { setInstructorEdit(null); setInstructorDraft(emptyInstructor); }}>Cancel</button>}
-                    <button className="solid" disabled={busy || !instructorDraft.name.trim()} onClick={() => { const input = { ...instructorDraft, courseId: instructorDraft.courseId || workspace.courses[0].id }; void act(() => instructorEdit ? updateInstructor(instructorEdit.id, { ...input, expectedVersion: instructorEdit.version }) : createInstructor(input)).then(() => { setInstructorEdit(null); setInstructorDraft(emptyInstructor); }); }}>{instructorEdit ? "Save instructor" : "Add instructor"}</button>
-                  </div>
-                </div>
-                <div className="inline-editor">
-                  <h3>{meetingEdit ? "Edit class time" : "Add a recurring class time"}</h3>
-                  <label className="field">Course<select value={meetingDraft.courseId || workspace.courses[0].id} onChange={(event) => setMeetingDraft((current) => ({ ...current, courseId: event.target.value }))}>{workspace.courses.map((item) => <option value={item.id} key={item.id}>{item.code || item.title}</option>)}</select></label>
-                  <div className="day-chips">{weekdays.map((day, dayIndex) => <button className={meetingDraft.weekdays.includes(dayIndex) ? "active" : ""} key={day} onClick={() => setMeetingDraft((current) => ({ ...current, weekdays: current.weekdays.includes(dayIndex) ? current.weekdays.filter((value) => value !== dayIndex) : [...current.weekdays, dayIndex].sort() }))}>{day.slice(0, 3)}</button>)}</div>
-                  <div className="form-grid"><label className="field">Starts<input type="time" value={meetingDraft.startsAtLocal} onChange={(event) => setMeetingDraft((current) => ({ ...current, startsAtLocal: event.target.value }))} /></label><label className="field">Ends<input type="time" value={meetingDraft.endsAtLocal} onChange={(event) => setMeetingDraft((current) => ({ ...current, endsAtLocal: event.target.value }))} /></label><label className="field">Type<select value={meetingDraft.component} onChange={(event) => setMeetingDraft((current) => ({ ...current, component: event.target.value }))}><option value="lecture">Lecture</option><option value="lab">Lab</option><option value="seminar">Seminar</option></select></label><label className="field">Location<input value={meetingDraft.location} onChange={(event) => setMeetingDraft((current) => ({ ...current, location: event.target.value }))} /></label></div>
-                  <div className="modal-actions">
-                    {meetingEdit && <button className="outline" onClick={() => { setMeetingEdit(null); setMeetingDraft(emptyMeeting); }}>Cancel</button>}
-                    <button className="solid" disabled={busy || meetingDraft.weekdays.length === 0} onClick={() => { const courseId = meetingDraft.courseId || workspace.courses[0].id; const termId = workspace.courses.find((item) => item.id === courseId)?.termId || workspace.terms.find((value) => value.active)?.id; if (!termId || !workspace.profile) return; const input = { ...meetingDraft, courseId, termId, timezone: workspace.profile.timezone }; void act(() => meetingEdit ? updateClassMeeting(meetingEdit.id, { ...input, expectedVersion: meetingEdit.version }) : createClassMeeting(input)).then(() => { setMeetingEdit(null); setMeetingDraft(emptyMeeting); }); }}>{meetingEdit ? "Save class time" : "Add class time"}</button>
-                  </div>
-                </div>
-              </div>}
-            </section>
-            )}
-            {mode === "assignments" && (
-            <section className="workspace-panel">
-              <div className="section-head">
-                <h2>Assignments & exams</h2>
-                <span>
-                  {workspace.tasks.filter((item) => !item.completed).length}{" "}
-                  open
-                </span>
-              </div>
-              {workspace.tasks.length ? (
-                <div className="record-list compact">
-                  {workspace.tasks.map((item) => (
-                    <article
-                      className={item.completed ? "record-complete" : ""}
-                      key={item.id}
-                    >
-                      <div className={`record-icon task ${item.kind}`}>
-                        <ListChecks />
-                      </div>
-                      <div>
-                        <strong>{item.title}</strong>
-                        <small>
-                          {item.kind === "exam" ? "Exam" : item.kind === "assignment" ? "Assignment" : "Task"} · {item.minutes} min · Priority {item.priority}
-                          {item.dueAt
-                            ? ` · Due ${formatDateTime(item.dueAt)}`
-                            : " · No deadline"}
-                        </small>
-                        <small>
-                          {item.energyDemand} energy ·{" "}
-                          {item.splittable
-                            ? `${item.minSessionMinutes}–${item.maxSessionMinutes} min sessions`
-                            : "Indivisible"}
-                        </small>
-                      </div>
-                      <div className="record-actions">
-                        <button
-                          className="outline"
-                          onClick={() => editTask(item)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="text-button danger"
-                          disabled={busy}
-                          onClick={() => {
-                            if (window.confirm(`Delete ${item.title}?`))
-                              void act(() =>
-                                deleteLocalTask(item.id, item.version),
-                              );
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <ListChecks />
-                  <strong>No tasks yet</strong>
-                  <p>
-                    Add your first task or import a syllabus to create
-                    reviewable deadlines.
-                  </p>
-                </div>
-              )}
-            </section>
-            )}
-          </div>
-          {mode === "assignments" && (
-          <section className="workspace-panel task-editor">
-            <h2>{taskEdit ? `Edit ${task.kind}` : "Add an assignment or exam"}</h2>
-            <div className="form-grid compact">
-              <label className="field full">
-                Task
-                <input
-                  value={task.title}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      title: event.target.value,
-                    }))
-                  }
-                  placeholder="Draft lab report"
-                />
-              </label>
-              <label className="field">
-                Type
-                <select
-                  value={task.kind}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      kind: event.target.value as TaskInput["kind"],
-                    }))
-                  }
-                >
-                  <option value="assignment">Assignment</option>
-                  <option value="exam">Exam</option>
-                  <option value="task">General task</option>
-                </select>
-              </label>
-              <label className="field">
-                Course
-                <select
-                  value={task.courseId ?? ""}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      courseId: event.target.value || undefined,
-                    }))
-                  }
-                >
-                  <option value="">No course</option>
-                  {workspace.courses.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.code || item.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                Estimate
-                <input
-                  type="number"
-                  min="5"
-                  max="1440"
-                  step="5"
-                  value={task.minutes}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      minutes: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Due
-                <input
-                  type="datetime-local"
-                  value={localValue(task.dueAt)}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      dueAt: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : undefined,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Earliest start
-                <input
-                  type="datetime-local"
-                  value={localValue(task.earliestStart)}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      earliestStart: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : undefined,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Priority
-                <input
-                  type="number"
-                  min="1"
-                  max="5"
-                  value={task.priority}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      priority: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Academic risk
-                <input
-                  type="number"
-                  min="0"
-                  max="5"
-                  value={task.academicRisk}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      academicRisk: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Energy
-                <select
-                  value={task.energyDemand}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      energyDemand: event.target
-                        .value as TaskInput["energyDemand"],
-                    }))
-                  }
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </label>
-              <label className="field">
-                Location
-                <input
-                  value={task.location}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      location: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Minimum session
-                <input
-                  type="number"
-                  min="5"
-                  max="240"
-                  step="5"
-                  disabled={!task.splittable}
-                  value={task.minSessionMinutes}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      minSessionMinutes: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                Maximum session
-                <input
-                  type="number"
-                  min="5"
-                  max="240"
-                  step="5"
-                  disabled={!task.splittable}
-                  value={task.maxSessionMinutes}
-                  onChange={(event) =>
-                    setTask((current) => ({
-                      ...current,
-                      maxSessionMinutes: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-            </div>
-            <label className="setting-toggle compact">
-              <input
-                type="checkbox"
-                checked={task.splittable}
-                onChange={(event) =>
-                  setTask((current) => ({
-                    ...current,
-                    splittable: event.target.checked,
-                  }))
-                }
-              />
-              <span>
-                <strong>Allow this task to split into sessions</strong>
-                <small>
-                  Student Center will still respect the minimum and maximum
-                  session lengths.
-                </small>
-              </span>
-            </label>
-            <fieldset className="dependency-picker">
-              <legend>Prerequisites</legend>
-              {workspace.tasks.filter((item) => item.id !== taskEdit?.id)
-                .length ? (
-                workspace.tasks
-                  .filter((item) => item.id !== taskEdit?.id)
-                  .map((item) => (
-                    <label key={item.id}>
-                      <input
-                        type="checkbox"
-                        checked={task.dependencies.includes(item.id)}
-                        onChange={(event) =>
-                          setTask((current) => ({
-                            ...current,
-                            dependencies: event.target.checked
-                              ? [...current.dependencies, item.id]
-                              : current.dependencies.filter(
-                                  (dependency) => dependency !== item.id,
-                                ),
-                          }))
-                        }
-                      />
-                      <span>
-                        <strong>{item.title}</strong>
-                        <small>
-                          {item.completed ? "Completed" : "Must finish first"}
-                        </small>
-                      </span>
-                    </label>
-                  ))
-              ) : (
-                <p>Add another task to define a prerequisite.</p>
-              )}
-            </fieldset>
-            <div className="modal-actions">
-              {taskEdit && (
-                <button
-                  className="outline"
-                  onClick={() => {
-                    setTaskEdit(null);
-                    setTask(emptyTask);
-                  }}
-                >
-                  Cancel
-                </button>
-              )}
-              <button
-                className="solid"
-                disabled={busy || !task.title.trim()}
-                onClick={() =>
-                  void act(() =>
-                    taskEdit
-                      ? updateLocalTask(taskEdit.id, task)
-                      : createLocalTask(task),
-                  ).then(() => {
-                    setTaskEdit(null);
-                    setTask(emptyTask);
-                  })
-                }
-              >
-                {taskEdit ? "Save task" : "Add task and replan"}
-              </button>
-            </div>
-          </section>
-          )}
-          {mode === "courses" && (
-          <>
-          <section className="workspace-panel preference-editor">
-            <div className="section-head">
-              <h2>Academic terms</h2>
-              <span>{workspace.terms.length}</span>
-            </div>
-            {workspace.terms.length ? (
-              <div className="record-list compact">
-                {workspace.terms.map((item) => (
-                  <article key={item.id}>
-                    <div className="record-icon course">
-                      <CalendarDays />
-                    </div>
-                    <div>
-                      <strong>
-                        {item.name}
-                        {item.active ? " · Active" : ""}
-                      </strong>
-                      <small>
-                        {item.startsOn} – {item.endsOn}
-                      </small>
-                    </div>
-                    <div className="record-actions">
-                      <button
-                        className="outline"
-                        onClick={() => {
-                          setTermEdit(item);
-                          setTerm({
-                            name: item.name,
-                            startsOn: item.startsOn,
-                            endsOn: item.endsOn,
-                            active: item.active,
-                            expectedVersion: item.version,
-                          });
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="text-button danger"
-                        disabled={busy}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Delete ${item.name}? Courses and class times in this term are removed with it.`,
-                            )
-                          )
-                            void act(() => deleteAcademicTerm(item.id, item.version));
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <CalendarDays />
-                <strong>No terms yet</strong>
-                <p>Add the term your courses belong to.</p>
-              </div>
-            )}
-            <div className="inline-editor">
-              <h3>{termEdit ? "Edit term" : "Add a term"}</h3>
-              <div className="form-grid">
-                <label className="field">
-                  Term name
-                  <input
-                    value={term.name}
-                    onChange={(event) =>
-                      setTerm((current) => ({ ...current, name: event.target.value }))
-                    }
-                    placeholder="Fall 2026"
-                  />
-                </label>
-                <label className="field">
-                  Starts
-                  <input
-                    type="date"
-                    value={term.startsOn}
-                    onChange={(event) =>
-                      setTerm((current) => ({ ...current, startsOn: event.target.value }))
-                    }
-                  />
-                </label>
-                <label className="field">
-                  Ends
-                  <input
-                    type="date"
-                    value={term.endsOn}
-                    onChange={(event) =>
-                      setTerm((current) => ({ ...current, endsOn: event.target.value }))
-                    }
-                  />
-                </label>
-                <label className="setting-toggle compact">
-                  <input
-                    type="checkbox"
-                    checked={term.active}
-                    onChange={(event) =>
-                      setTerm((current) => ({ ...current, active: event.target.checked }))
-                    }
-                  />
-                  <span>Current term</span>
-                </label>
-              </div>
-              <div className="modal-actions">
-                {termEdit && (
-                  <button
-                    className="outline"
-                    onClick={() => {
-                      setTermEdit(null);
-                      setTerm(emptyTerm);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                )}
-                <button
-                  className="solid"
-                  disabled={
-                    busy || !term.name.trim() || !term.startsOn || !term.endsOn
-                  }
-                  onClick={() =>
-                    void act(() =>
-                      termEdit
-                        ? updateAcademicTerm(termEdit.id, term)
-                        : createAcademicTerm(term),
-                    ).then(() => {
-                      setTermEdit(null);
-                      setTerm(emptyTerm);
-                    })
-                  }
-                >
-                  {termEdit ? "Save term" : "Add term"}
-                </button>
-              </div>
-            </div>
-          </section>
-          <section className="workspace-panel preference-editor">
-            <h2>Local profile</h2>
-            <div className="form-grid compact">
-              <label className="field">
-                Name
-                <input
-                  value={profileEditor.name}
-                  onChange={(event) =>
-                    setProfileEditor((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                IANA timezone
-                <input
-                  value={profileEditor.timezone}
-                  onChange={(event) =>
-                    setProfileEditor((current) => ({
-                      ...current,
-                      timezone: event.target.value,
-                    }))
-                  }
-                  placeholder="America/Phoenix"
-                />
-              </label>
-            </div>
-            <div className="modal-actions">
-              <button
-                className="solid"
-                disabled={
-                  busy ||
-                  !profileEditor.name.trim() ||
-                  !profileEditor.timezone.trim()
-                }
-                onClick={() =>
-                  void act(() => updateStudentProfile(profileEditor))
-                }
-              >
-                Save profile and replan
-              </button>
-            </div>
-          </section>
-          {preferences && (
-            <section className="workspace-panel preference-editor">
-              <h2>Planning preferences</h2>
-              <div className="form-grid compact">
-                <label className="field">
-                  Sleep begins
-                  <input
-                    type="time"
-                    value={preferences.sleepStart}
-                    onChange={(event) =>
-                      setPreferences((current) =>
-                        current
-                          ? { ...current, sleepStart: event.target.value }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-                <label className="field">
-                  Sleep ends
-                  <input
-                    type="time"
-                    value={preferences.sleepEnd}
-                    onChange={(event) =>
-                      setPreferences((current) =>
-                        current
-                          ? { ...current, sleepEnd: event.target.value }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-                <label className="field">
-                  Max session
-                  <input
-                    type="number"
-                    min="15"
-                    max="240"
-                    step="5"
-                    value={preferences.maxSessionMinutes}
-                    onChange={(event) =>
-                      setPreferences((current) =>
-                        current
-                          ? {
-                              ...current,
-                              maxSessionMinutes: Number(event.target.value),
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-                <label className="field">
-                  Break minutes
-                  <input
-                    type="number"
-                    min="0"
-                    max="60"
-                    step="5"
-                    value={preferences.breakMinutes}
-                    onChange={(event) =>
-                      setPreferences((current) =>
-                        current
-                          ? {
-                              ...current,
-                              breakMinutes: Number(event.target.value),
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-                <label className="field">
-                  Transition minutes
-                  <input
-                    type="number"
-                    min="0"
-                    max="120"
-                    step="5"
-                    value={preferences.transitionMinutes}
-                    onChange={(event) =>
-                      setPreferences((current) =>
-                        current
-                          ? {
-                              ...current,
-                              transitionMinutes: Number(event.target.value),
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-                <label className="field">
-                  Default commute
-                  <input
-                    type="number"
-                    min="0"
-                    max="240"
-                    step="5"
-                    value={preferences.defaultCommuteMinutes}
-                    onChange={(event) =>
-                      setPreferences((current) =>
-                        current
-                          ? {
-                              ...current,
-                              defaultCommuteMinutes: Number(event.target.value),
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <fieldset className="availability compact-availability">
-                <legend>Weekly availability</legend>
-                {weekdays.map((name, weekday) => {
-                  const rule = preferences.availability.find(
-                    (item) => item.weekday === weekday,
-                  );
-                  return (
-                    <div key={name}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(rule)}
-                          onChange={(event) =>
-                            toggleAvailabilityDay(weekday, event.target.checked)
-                          }
-                        />
-                        <span>{name}</span>
-                      </label>
-                      <input
-                        aria-label={`${name} availability starts`}
-                        type="time"
-                        disabled={!rule}
-                        value={rule?.startsAtLocal ?? "08:00"}
-                        onChange={(event) =>
-                          updateAvailabilityDay(
-                            weekday,
-                            "startsAtLocal",
-                            event.target.value,
-                          )
-                        }
-                      />
-                      <span>to</span>
-                      <input
-                        aria-label={`${name} availability ends`}
-                        type="time"
-                        disabled={!rule}
-                        value={rule?.endsAtLocal ?? "21:00"}
-                        onChange={(event) =>
-                          updateAvailabilityDay(
-                            weekday,
-                            "endsAtLocal",
-                            event.target.value,
-                          )
-                        }
-                      />
-                    </div>
-                  );
-                })}
-              </fieldset>
-              <div className="modal-actions">
-                <button
-                  className="solid"
-                  disabled={busy}
-                  onClick={() =>
-                    void act(() => updatePlanningPreferences(preferences))
-                  }
-                >
-                  Save and replan
-                </button>
-              </div>
-            </section>
-          )}
-          </>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-const weekdays = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
-type LegacyOnboardingState = OnboardingState & {
-  demoReviewRequired: boolean;
-  demoCandidates: Array<{ id: string; title: string; detail: string }>;
-};
 
 function AccountModal({
   status,
@@ -5694,8 +4109,8 @@ function AccountModal({
             />
           </label>
           <p className="privacy-note">
-            <ShieldCheck /> Only the refresh token is persisted, inside Windows
-            Credential Manager or macOS Keychain. Access tokens stay in
+            <ShieldCheck /> Only the refresh token is persisted, inside the operating-system
+            credential vault. Access tokens stay in
             native-process memory.
           </p>
           <div className="modal-actions">
@@ -5768,12 +4183,32 @@ function Modal({
   close: () => void;
   children: React.ReactNode;
 }) {
+  const modalRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const root = modalRef.current;
+    const focusable = () => Array.from(root?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') ?? []);
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable(); if (!items.length) return;
+      const first = items[0]; const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.removeEventListener("keydown", onKeyDown); previous?.focus(); };
+  }, []);
   return (
     <div
       className="overlay"
       onMouseDown={(e) => e.target === e.currentTarget && close()}
     >
       <section
+        ref={modalRef}
         className="modal"
         role="dialog"
         aria-modal="true"
@@ -5841,7 +4276,7 @@ function LockScreen({
             />
           </label>
           {error && (
-            <div className="alert">
+            <div className="alert" role="alert">
               <CircleAlert />
               <span>{error}</span>
             </div>

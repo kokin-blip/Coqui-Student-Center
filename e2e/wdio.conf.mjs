@@ -1,4 +1,12 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+
+// The native smoke deletes its profile during teardown. Give the WebDriver-only
+// build a unique disposable root so a local run can never touch the real app.
+process.env.STUDENT_CENTER_E2E_DATA_DIR ??= mkdtempSync(
+  path.join(tmpdir(), "coqui-student-center-e2e-"),
+);
 
 const fallback = process.platform === "win32"
   ? "apps/desktop/src-tauri/target/release/student-center.exe"

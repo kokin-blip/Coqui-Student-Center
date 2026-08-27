@@ -1022,14 +1022,6 @@ input:focus-visible {
     grid-template-columns: 1fr;
   }
   .fab {
-    bottom: 79px;
-    right: 15px;
-    width: 48px;
-    height: 48px;
-    padding: 0;
-    justify-content: center;
-  }
-  .fab span {
     display: none;
   }
   .mobile-nav {

@@ -6,7 +6,10 @@ import {
   CalendarDays,
   Check,
   Clock3,
+  FileUp,
   ImageUp,
+  LayoutGrid,
+  Link2,
   LocateFixed,
   MapPin,
   Plus,
@@ -18,9 +21,11 @@ import {
 import {
   AppBootstrap,
   completeOnboarding,
+  connectCanvasCalendar,
   importDocumentBytes,
   isDesktop,
   pastedScheduleImage,
+  launchScheduleCapture,
   getTimezoneSuggestion,
   getInstitutionSetupOptions,
   OnboardingCourseInput,
@@ -128,6 +133,7 @@ export function OnboardingExperience({
   const [sectionPicker, setSectionPicker] = useState<{ courseIndex: number; suggestion: CourseSuggestion } | null>(null);
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotNotice, setScreenshotNotice] = useState("");
+  const [canvasFeedUrl, setCanvasFeedUrl] = useState("");
   // Onboarding reports its own results. The workspace's paste handler writes to
   // a toast and a review modal that are not rendered here, so a paste during
   // setup used to import successfully and then say nothing at all.
@@ -143,7 +149,6 @@ export function OnboardingExperience({
       setScreenshotNotice(classes.length
         ? `${classes.length} class${classes.length === 1 ? "" : "es"} read and waiting for your review after setup.`
         : "That image was saved but no class times could be read from it. Add your courses below instead.");
-      setImportAfter(true);
     } catch (next) {
       setScreenshotNotice(String(next));
     } finally {
@@ -359,7 +364,7 @@ export function OnboardingExperience({
   ];
   return (
     <main className="onboarding-experience">
-      <aside className="onboarding-story">
+      <aside className="onboarding-story" aria-label="Setup progress and privacy">
         <AppLogo wordmark />
         <div>
           <p className="eyebrow">Private, local, realistic</p>
@@ -399,6 +404,74 @@ export function OnboardingExperience({
           </>}
           {step === 2 && <>
             <div className="setup-intro compact"><BookOpen /><div><strong>Don't have your schedule yet?</strong><p>Skip this step. You can add courses and class times any time from Courses.</p></div></div>
+            <section className="onboarding-import-center" aria-labelledby="onboarding-import-heading">
+              <div className="small-head">
+                <div>
+                  <strong id="onboarding-import-heading">Bring in my schedule</strong>
+                  <p className="field-help">Choose the source you already have. Every detected item waits for review.</p>
+                </div>
+              </div>
+              {isDesktop() && <div className="import-choice-grid">
+                <div className="onboarding-canvas-choice">
+                  <label className="field full">
+                    <span><Link2 aria-hidden="true" /> Connect a Canvas calendar link</span>
+                    <input
+                      type="url"
+                      value={canvasFeedUrl}
+                      onChange={(event) => setCanvasFeedUrl(event.target.value)}
+                      placeholder="https://canvas.example.edu/feeds/calendars/..."
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <details>
+                    <summary>Where do I get this link?</summary>
+                    <p className="field-help">In Canvas, open Calendar, choose Calendar Feed, copy the link, and paste it here. Treat it like a password.</p>
+                  </details>
+                  <button className="outline" disabled={screenshotBusy || !canvasFeedUrl.trim()} onClick={async () => {
+                    const submittedUrl = canvasFeedUrl.trim();
+                    setCanvasFeedUrl("");
+                    setScreenshotBusy(true);
+                    setScreenshotNotice("");
+                    try {
+                      const next = await connectCanvasCalendar(submittedUrl);
+                      const count = next.candidates.filter((candidate) => candidate.status === "pending").length;
+                      setScreenshotNotice(count ? `${count} Canvas item${count === 1 ? "" : "s"} found and waiting for review after setup.` : "Canvas connected. No new schedule items were found yet.");
+                    } catch (next) {
+                      setScreenshotNotice(String(next));
+                    } finally {
+                      setScreenshotBusy(false);
+                    }
+                  }}><Link2 /> Connect Canvas</button>
+                </div>
+                <button className="outline" disabled={screenshotBusy} onClick={async () => {
+                  setScreenshotBusy(true);
+                  setScreenshotNotice("");
+                  try {
+                    setScreenshotNotice(await launchScheduleCapture());
+                  } catch (next) {
+                    setScreenshotNotice(String(next));
+                  } finally {
+                    setScreenshotBusy(false);
+                  }
+                }}><LayoutGrid /><strong>Capture screen area</strong><span>Use the system snipping tool, then paste here</span></button>
+                <button className="outline" disabled={screenshotBusy} onClick={async () => {
+                  setScreenshotBusy(true);
+                  setScreenshotNotice("");
+                  try {
+                    const next = await selectAndImport();
+                    if (next) {
+                      const count = next.candidates.filter((candidate) => candidate.status === "pending").length;
+                      setScreenshotNotice(count ? `${count} item${count === 1 ? "" : "s"} extracted and waiting for review after setup.` : "The source was saved, but no schedule items were detected.");
+                    }
+                  } catch (next) {
+                    setScreenshotNotice(String(next));
+                  } finally {
+                    setScreenshotBusy(false);
+                  }
+                }}><FileUp /><strong>Import a file or document</strong><span>PDF, image, calendar, Word, Excel, CSV, PowerPoint, or text</span></button>
+              </div>}
+            </section>
             {/* The fastest path in, for the students who have a screenshot and
                 no desire to retype it. Nothing it finds is applied here: the
                 classes land in the review queue and are confirmed after setup,
@@ -406,14 +479,14 @@ export function OnboardingExperience({
                 hand below stays a complete path on its own. */}
             {isDesktop() && <div className="screenshot-step">
               <label className="field full">
-                <span><ImageUp aria-hidden="true" /> Import a screenshot of your schedule</span>
-                <input type="file" accept="image/png,image/jpeg" disabled={screenshotBusy} onChange={(event) => {
+                <span><ImageUp aria-hidden="true" /> Upload a schedule image</span>
+                <input type="file" accept="image/png,image/jpeg,application/pdf" disabled={screenshotBusy} onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (file) void importScreenshot(file);
                 }} />
               </label>
-              <p className="field-help">Or press Ctrl/Cmd+V anywhere with a screenshot copied. It is encrypted on your computer and read there; nothing is sent anywhere and nothing is added to your plan until you approve it.</p>
+              <p className="field-help">Or press Ctrl/Cmd+V anywhere with a screenshot copied. The source is encrypted on your computer and read there; nothing is sent anywhere and nothing is added to your plan until you approve it.</p>
               {screenshotNotice && <p className="source-note" aria-live="polite">{screenshotNotice}</p>}
             </div>}
             <div className="course-builder-head"><div><strong>Your courses</strong><small>Suggestions are optional and always need confirmation.</small></div><button className="outline" onClick={() => update("courses", [...draft.courses, emptyCourse(draft.courses.length)])}><Plus /> Add course</button></div>

@@ -288,6 +288,7 @@ pub struct ClassMeetingSeriesRecord {
     pub ends_at_local: String,
     pub component: String,
     pub location: String,
+    pub modality: String,
     pub instructor_id: Option<String>,
     pub version: i64,
 }
@@ -404,6 +405,8 @@ pub struct ClassMeetingSeriesInput {
     pub ends_at_local: String,
     pub component: String,
     pub location: String,
+    #[serde(default)]
+    pub modality: String,
     pub instructor_id: Option<String>,
     pub expected_version: Option<i64>,
 }
@@ -550,6 +553,7 @@ fn migrate_inner(conn: &Connection, previous_schema_version: i64) -> Result<()> 
            ends_at_local TEXT NOT NULL,
            component TEXT NOT NULL DEFAULT 'lecture',
            location TEXT NOT NULL DEFAULT '',
+           modality TEXT NOT NULL DEFAULT '',
            instructor_id TEXT,
            version INTEGER NOT NULL DEFAULT 1,
            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
@@ -915,9 +919,9 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
     }
     let commitments = query_records(conn, "SELECT id,title,starts_at,ends_at,kind,location,travel_before_minutes,travel_after_minutes,protected,version,record_origin FROM commitments ORDER BY starts_at,title,id", |row| Ok(CommitmentRecord { id: row.get(0)?, title: row.get(1)?, starts_at: row.get(2)?, ends_at: row.get(3)?, kind: row.get(4)?, location: row.get(5)?, travel_before_minutes: row.get(6)?, travel_after_minutes: row.get(7)?, protected: row.get::<_, i64>(8)? != 0, version: row.get(9)?, record_origin: row.get(10)? }))?;
     let instructors = query_records(conn, "SELECT id,course_id,name,email,office_location,office_hours,version FROM instructors ORDER BY name,id", |row| Ok(InstructorRecord { id: row.get(0)?, course_id: row.get(1)?, name: row.get(2)?, email: row.get(3)?, office_location: row.get(4)?, office_hours: row.get(5)?, version: row.get(6)? }))?;
-    let class_meetings = query_records(conn, "SELECT id,course_id,term_id,timezone,weekdays,starts_at_local,ends_at_local,component,location,instructor_id,version FROM class_meeting_series ORDER BY starts_at_local,id", |row| {
+    let class_meetings = query_records(conn, "SELECT id,course_id,term_id,timezone,weekdays,starts_at_local,ends_at_local,component,location,modality,instructor_id,version FROM class_meeting_series ORDER BY starts_at_local,id", |row| {
         let weekdays_json: String = row.get(4)?;
-        Ok(ClassMeetingSeriesRecord { id: row.get(0)?, course_id: row.get(1)?, term_id: row.get(2)?, timezone: row.get(3)?, weekdays: serde_json::from_str(&weekdays_json).unwrap_or_default(), starts_at_local: row.get(5)?, ends_at_local: row.get(6)?, component: row.get(7)?, location: row.get(8)?, instructor_id: row.get(9)?, version: row.get(10)? })
+        Ok(ClassMeetingSeriesRecord { id: row.get(0)?, course_id: row.get(1)?, term_id: row.get(2)?, timezone: row.get(3)?, weekdays: serde_json::from_str(&weekdays_json).unwrap_or_default(), starts_at_local: row.get(5)?, ends_at_local: row.get(6)?, component: row.get(7)?, location: row.get(8)?, modality:row.get(9)?, instructor_id: row.get(10)?, version: row.get(11)? })
     })?;
     let academic_events = query_records(conn, "SELECT id,term_id,title,starts_on,ends_on,all_day,no_class,source,version FROM academic_calendar_events ORDER BY starts_on,title,id", |row| Ok(AcademicCalendarEventRecord { id: row.get(0)?, term_id: row.get(1)?, title: row.get(2)?, starts_on: row.get(3)?, ends_on: row.get(4)?, all_day: row.get::<_, i64>(5)? != 0, no_class: row.get::<_, i64>(6)? != 0, source: row.get(7)?, version: row.get(8)? }))?;
     let preferences = conn.query_row("SELECT sleep_start,sleep_end,max_session_minutes,break_minutes,transition_minutes,default_commute_minutes,version FROM planning_preferences WHERE profile_id=?1", params![PROFILE_ID], |row| Ok(PlanningPreferenceRecord { sleep_start: row.get(0)?, sleep_end: row.get(1)?, max_session_minutes: row.get(2)?, break_minutes: row.get(3)?, transition_minutes: row.get(4)?, default_commute_minutes: row.get(5)?, version: row.get(6)? })).optional()?;
@@ -1136,7 +1140,7 @@ pub fn delete_instructor(conn: &Connection, id: &str, expected_version: i64) -> 
 pub fn create_class_meeting(conn: &Connection, input: &ClassMeetingSeriesInput) -> Result<String> {
     validate_class_meeting(input)?;
     let id = Uuid::new_v4().to_string();
-    conn.execute("INSERT INTO class_meeting_series(id,course_id,term_id,timezone,weekdays,starts_at_local,ends_at_local,component,location,instructor_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![id,input.course_id,input.term_id,input.timezone,serde_json::to_string(&input.weekdays).unwrap_or_else(|_| "[]".into()),input.starts_at_local,input.ends_at_local,input.component.trim(),input.location.trim(),input.instructor_id])?;
+    conn.execute("INSERT INTO class_meeting_series(id,course_id,term_id,timezone,weekdays,starts_at_local,ends_at_local,component,location,modality,instructor_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![id,input.course_id,input.term_id,input.timezone,serde_json::to_string(&input.weekdays).unwrap_or_else(|_| "[]".into()),input.starts_at_local,input.ends_at_local,input.component.trim(),input.location.trim(),input.modality.trim(),input.instructor_id])?;
     Ok(id)
 }
 
@@ -1146,7 +1150,7 @@ pub fn update_class_meeting(
     input: &ClassMeetingSeriesInput,
 ) -> Result<()> {
     validate_class_meeting(input)?;
-    require_changed(conn.execute("UPDATE class_meeting_series SET course_id=?2,term_id=?3,timezone=?4,weekdays=?5,starts_at_local=?6,ends_at_local=?7,component=?8,location=?9,instructor_id=?10,version=version+1 WHERE id=?1 AND version=?11", params![id,input.course_id,input.term_id,input.timezone,serde_json::to_string(&input.weekdays).unwrap_or_else(|_| "[]".into()),input.starts_at_local,input.ends_at_local,input.component.trim(),input.location.trim(),input.instructor_id,required_version(input.expected_version)?])?)
+    require_changed(conn.execute("UPDATE class_meeting_series SET course_id=?2,term_id=?3,timezone=?4,weekdays=?5,starts_at_local=?6,ends_at_local=?7,component=?8,location=?9,modality=?10,instructor_id=?11,version=version+1 WHERE id=?1 AND version=?12", params![id,input.course_id,input.term_id,input.timezone,serde_json::to_string(&input.weekdays).unwrap_or_else(|_| "[]".into()),input.starts_at_local,input.ends_at_local,input.component.trim(),input.location.trim(),input.modality.trim(),input.instructor_id,required_version(input.expected_version)?])?)
 }
 
 pub fn delete_class_meeting(conn: &Connection, id: &str, expected_version: i64) -> Result<()> {
@@ -1295,6 +1299,7 @@ fn validate_class_meeting(input: &ClassMeetingSeriesInput) -> Result<()> {
         || ends <= starts
         || input.component.chars().count() > 40
         || input.location.chars().count() > 200
+        || input.modality.chars().count() > 80
     {
         return Err(ProfileError::Invalid(
             "class meeting fields are invalid".into(),

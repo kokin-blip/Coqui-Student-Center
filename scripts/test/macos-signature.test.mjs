@@ -84,7 +84,7 @@ function diskImage({ signApp }) {
     ["create", "-quiet", "-srcfolder", join(root, "Coqui Student Center.app"), "-volname", "Coqui Student Center", dmg],
     { encoding: "utf8" },
   );
-  assert.equal(created.status, 0, created.stderr);
+  assert.equal(created.status, 0, created.stderr || created.stdout || `hdiutil exited ${created.status}`);
   return { root, dmg };
 }
 

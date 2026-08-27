@@ -19,6 +19,7 @@ export type PlanBlock = {
 };
 export type ImportCandidate = {
   id: string;
+  documentId: string;
   kind: "task" | "commitment" | "course" | "class_meeting";
   title: string;
   course: string;
@@ -32,6 +33,12 @@ export type ImportCandidate = {
   startsAtLocal?: string;
   endsAtLocal?: string;
   timezone?: string;
+  sectionNumber?: string;
+  location?: string;
+  modality?: string;
+  termId?: string;
+  suggestedAction?: "add" | "update";
+  studentEditedFields?: string[];
   evidence: string;
   sourceLocator: string;
   sourceType: string;
@@ -54,16 +61,39 @@ export type DocumentSummary = {
   // still reads; anything needing the picture itself has nothing left to send.
   originalAvailable: boolean;
 };
+export type ScheduleSourcePreview = {
+  fileName: string;
+  mime: string;
+  dataUrl: string;
+};
+export type CandidateEditInput = Pick<
+  ImportCandidate,
+  | "title"
+  | "course"
+  | "dueAt"
+  | "startsAt"
+  | "endsAt"
+  | "durationMinutes"
+  | "weekdays"
+  | "startsAtLocal"
+  | "endsAtLocal"
+  | "timezone"
+  | "sectionNumber"
+  | "location"
+  | "modality"
+  | "termId"
+>;
 export type ManagedAiCapability =
   | "brain_dump"
   | "document_extraction"
   | "task_decomposition"
-  | "explanation";
+  | "planner_explanation";
 export type ManagedAiResult = {
   dashboard: Dashboard;
   explanation?: string;
   candidatesCreated: number;
   model: string;
+  provider: "openai" | "anthropic" | "gemini" | string;
 };
 export type OcrPhase = "checking" | "ready" | "unavailable";
 export type OcrStatus = {
@@ -78,13 +108,47 @@ export type OcrStatus = {
 };
 export type CanvasConnection = {
   id: string;
+  provider: "canvas" | "canvas_calendar";
   baseUrl: string;
   accountName: string;
   status: string;
   lastSyncedAt?: string;
   lastError?: string;
+  refreshOnStartup: boolean;
+  nextEligibleRefreshAt?: string;
   pendingCandidates: number;
 };
+export type AiProviderId = "openai" | "anthropic" | "gemini";
+export type AiProviderStatus = {
+  provider: AiProviderId;
+  connected: boolean;
+  healthy: boolean;
+  model: string;
+  maskedKey?: string;
+  capabilities: string[];
+  lastCheckedAt?: string;
+  disclosureUrl: string;
+};
+export type AiUsageSummary = {
+  provider: string;
+  model: string;
+  requests: number;
+  failures: number;
+  inputTokens: number;
+  outputTokens: number;
+  averageLatencyMs: number;
+};
+export type GroundedCitation = { sourceId: string; locator: string; quote: string };
+export type StudyMaterial = { id: string; fileName: string; mime: string; courseIds: string[]; segmentCount: number };
+export type StudyArtifact = { id: string; courseId: string; kind: string; title: string; content: string; citations: GroundedCitation[]; provider: string; model: string; updatedAt: string };
+export type StudyReview = { id: string; artifactId: string; confidence: number; misses: number; intervalDays: number; nextReviewAt: string; lastReviewedAt?: string };
+export type GradeCategory = { id: string; courseId: string; name: string; weight: number };
+export type GradeItem = { id: string; courseId: string; categoryId?: string; title: string; score?: number; pointsPossible: number; dueAt?: string; status: "graded" | "missing" | "planned" };
+export type CourseGrade = { courseId: string; currentPercent?: number; missingWorkImpact: number; projectedLetter?: string; creditHours: number };
+export type CourseGradingScale = { courseId: string; bands: { label: string; minimumPercent: number; gradePoints: number }[]; creditHours: number };
+export type StudyWorkspace = { materials: StudyMaterial[]; artifacts: StudyArtifact[]; reviews: StudyReview[]; gradeCategories: GradeCategory[]; gradeItems: GradeItem[]; courseGrades: CourseGrade[]; gradingScales: CourseGradingScale[]; gpaProjection?: number };
+export type GroundedStudyInput = { capability: "source_qa" | "study_guide" | "flashcards" | "practice_questions" | "practice_test"; courseIds: string[]; documentIds: string[]; prompt: string; title: string; consent: boolean };
+export type GradeBand = { label: string; minimumPercent: number; gradePoints: number };
 export type CanvasSyncRun = {
   id: string;
   connectionId: string;
@@ -150,6 +214,7 @@ export type Dashboard = {
   conflicts: SourceConflict[];
   ocr: OcrStatus;
   importNotice?: string;
+  unsettledScheduleSources: string[];
 };
 export type CalendarAgenda = {
   timezone: string;
@@ -447,6 +512,7 @@ export type ClassMeetingSeriesRecord = {
   endsAtLocal: string;
   component: string;
   location: string;
+  modality: string;
   instructorId?: string;
   version: number;
 };
@@ -655,9 +721,11 @@ const browserSeed: Dashboard = {
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   offline: true,
   planDate: new Date().toISOString().slice(0, 10),
+  unsettledScheduleSources: [],
   candidates: [
     {
       id: "canvas-change-demo",
+      documentId: "00000000-0000-4000-8000-000000000201",
       kind: "task",
       title: "Research paper outline",
       course: "English 102",
@@ -673,6 +741,7 @@ const browserSeed: Dashboard = {
     },
     {
       id: "ics-weekly-demo",
+      documentId: "00000000-0000-4000-8000-000000000202",
       kind: "class_meeting",
       title: "Statistics 201",
       course: "Statistics 201",
@@ -814,7 +883,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 13,
+      schemaVersion: 17,
       onboarding: onboardingMode ? structuredClone(browserOnboardingState) : null,
       dashboard: onboardingMode ? null : structuredClone(browserSeed),
     };
@@ -983,7 +1052,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 13,
+      schemaVersion: 17,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -1111,6 +1180,11 @@ export async function setPlanBlockLock(blockId: string, locked: boolean) {
   }
   return call<Dashboard>("set_plan_block_lock", { blockId, locked });
 }
+export async function movePlanBlock(blockId: string, startsAt: string, endsAt: string) {
+  if (!isDesktop()) { browserSeed.blocks = browserSeed.blocks.map((block) => block.id === blockId ? { ...block, startsAt, endsAt, locked: true } : block); return structuredClone(browserSeed); }
+  return call<Dashboard>("move_plan_block", { blockId, startsAt, endsAt });
+}
+export async function undoCalendarChange() { return isDesktop() ? call<Dashboard>("undo_calendar_change") : structuredClone(browserSeed); }
 export async function createAcademicTerm(input: AcademicTermInput) {
   return call<WorkspaceSnapshot>("create_academic_term", { input });
 }
@@ -1334,7 +1408,7 @@ const browserAccount = (signedIn = false, email?: string): AccountStatus => ({
   googleSignInPending: false,
   message: signedIn
     ? "Optional encrypted backup and sync can be enabled from this account."
-    : "Sign in only if you want encrypted backup, sync, or managed AI.",
+    : "Sign in only if you want encrypted backup or sync. BYOK AI stays local to this device.",
 });
 export async function getAccountStatus(): Promise<AccountStatus> {
   if (isDesktop()) return call<AccountStatus>("get_account_status");
@@ -1652,7 +1726,7 @@ export async function dismissReminder(blockId: string) {
   return call<Dashboard>("dismiss_reminder", { blockId });
 }
 export async function approveCandidates(ids: string[]) {
-  return call<Dashboard>("approve_candidates", { ids });
+  return call<Dashboard>("apply_schedule_import", { ids });
 }
 export async function rejectCandidates(ids: string[]) {
   return call<Dashboard>("reject_candidates", { ids });
@@ -1665,6 +1739,66 @@ export async function resolveSourceConflict(
 }
 export async function connectCanvas(baseUrl: string, token: string) {
   return call<Dashboard>("connect_canvas", { baseUrl, token });
+}
+export async function connectCanvasCalendar(feedUrl: string, label = "Canvas calendar", refreshOnStartup = true) {
+  return call<Dashboard>("connect_canvas_calendar", { feedUrl, label, refreshOnStartup });
+}
+export async function refreshCanvasCalendar(connectionId: string) {
+  return call<Dashboard>("refresh_canvas_calendar", { connectionId });
+}
+export async function setCanvasCalendarRefresh(connectionId: string, refreshOnStartup: boolean) {
+  if (!isDesktop()) {
+    browserSeed.canvasConnections = browserSeed.canvasConnections.map((connection) =>
+      connection.id === connectionId ? { ...connection, refreshOnStartup } : connection,
+    );
+    return structuredClone(browserSeed);
+  }
+  return call<Dashboard>("set_canvas_calendar_refresh", { connectionId, refreshOnStartup });
+}
+export async function disconnectCanvasCalendar(connectionId: string) {
+  return call<Dashboard>("disconnect_canvas_calendar", { connectionId });
+}
+let browserAiProviders: AiProviderStatus[] = (["openai", "anthropic", "gemini"] as AiProviderId[]).map((provider) => ({
+  provider,
+  connected: false,
+  healthy: false,
+  model: provider === "openai" ? "gpt-5.4-mini-2026-03-17" : provider === "anthropic" ? "claude-sonnet-5" : "gemini-3.7-flash",
+  capabilities: ["brain_dump", "document_extraction", "schedule_vision", "task_decomposition", "planner_explanation", "source_qa", "study_guide", "flashcards", "practice_questions", "practice_test"],
+  disclosureUrl: provider === "openai" ? "https://openai.com/policies/api-data-usage-policies/" : provider === "anthropic" ? "https://privacy.claude.com/en/articles/7996868-how-long-do-you-store-my-organization-s-data" : "https://ai.google.dev/gemini-api/terms",
+}));
+export async function listAiProviders() { return isDesktop() ? call<AiProviderStatus[]>("list_ai_providers") : structuredClone(browserAiProviders); }
+export async function saveAiProviderKey(provider: AiProviderId, key: string, model: string | undefined, ageConfirmed: boolean) {
+  if (!isDesktop()) {
+    if (!ageConfirmed || key.trim().length < 20) throw new Error("Confirm your age and enter a valid API key.");
+    browserAiProviders = browserAiProviders.map((item) => item.provider === provider ? { ...item, connected: true, healthy: true, model: model?.trim() || item.model, maskedKey: `••••${key.slice(-4)}` } : item);
+    return structuredClone(browserAiProviders);
+  }
+  return call<AiProviderStatus[]>("save_ai_provider_key", { provider, key, model, ageConfirmed });
+}
+export async function testAiProvider(provider: AiProviderId) { return isDesktop() ? call<AiProviderStatus[]>("test_ai_provider", { provider }) : structuredClone(browserAiProviders); }
+export async function removeAiProvider(provider: AiProviderId) { if (!isDesktop()) { browserAiProviders = browserAiProviders.map((item) => item.provider === provider ? { ...item, connected: false, healthy: false, maskedKey: undefined } : item); return structuredClone(browserAiProviders); } return call<AiProviderStatus[]>("remove_ai_provider", { provider }); }
+export async function setAiProviderOrder(order: AiProviderId[]) { if (!isDesktop()) { browserAiProviders = order.map((provider) => browserAiProviders.find((item) => item.provider === provider)!); return structuredClone(browserAiProviders); } return call<AiProviderStatus[]>("set_ai_provider_order", { order }); }
+export async function getAiUsage() { return isDesktop() ? call<AiUsageSummary[]>("get_ai_usage") : []; }
+let browserStudyWorkspace: StudyWorkspace = { materials: [], artifacts: [], reviews: [], gradeCategories: [], gradeItems: [], courseGrades: [], gradingScales: [] };
+export async function getStudyWorkspace() { return isDesktop() ? call<StudyWorkspace>("get_study_workspace") : structuredClone(browserStudyWorkspace); }
+export async function setStudyMaterialCourses(documentId: string, courseIds: string[]) { if (!isDesktop()) { browserStudyWorkspace.materials = browserStudyWorkspace.materials.map((item) => item.id === documentId ? { ...item, courseIds } : item); return structuredClone(browserStudyWorkspace); } return call<StudyWorkspace>("set_study_material_courses", { documentId, courseIds }); }
+export async function generateGroundedStudyArtifact(input: GroundedStudyInput) { if (!isDesktop()) { const artifact: StudyArtifact = { id: crypto.randomUUID(), courseId: input.courseIds[0], kind: input.capability, title: input.title || "Grounded study result", content: "Browser preview: the installed app validates every claim against selected local sources.", citations: [], provider: "openai", model: "browser-test-model", updatedAt: new Date().toISOString() }; browserStudyWorkspace.artifacts.unshift(artifact); return { workspace: structuredClone(browserStudyWorkspace), artifactId: artifact.id, provider: artifact.provider, model: artifact.model }; } return call<{ workspace: StudyWorkspace; artifactId: string; provider: string; model: string }>("generate_grounded_study_artifact", { input }); }
+export async function updateStudyArtifact(artifactId: string, title: string, content: string) { if (!isDesktop()) { browserStudyWorkspace.artifacts = browserStudyWorkspace.artifacts.map((item) => item.id === artifactId ? { ...item, title, content, updatedAt: new Date().toISOString() } : item); return structuredClone(browserStudyWorkspace); } return call<StudyWorkspace>("update_study_artifact", { artifactId, title, content }); }
+export async function reviewStudyArtifact(artifactId: string, confidence: number) { return isDesktop() ? call<StudyWorkspace>("review_study_artifact", { artifactId, confidence }) : structuredClone(browserStudyWorkspace); }
+export async function saveGradeCategory(input: { id?: string; courseId: string; name: string; weight: number }) { return isDesktop() ? call<StudyWorkspace>("save_grade_category", { input }) : structuredClone(browserStudyWorkspace); }
+export async function saveGradeItem(input: { id?: string; courseId: string; categoryId?: string; title: string; score?: number; pointsPossible: number; dueAt?: string; status: GradeItem["status"] }) { return isDesktop() ? call<StudyWorkspace>("save_grade_item", { input }) : structuredClone(browserStudyWorkspace); }
+export async function calculateGradeWhatIf(input: { courseId: string; categoryId?: string; title: string; score?: number; pointsPossible: number; status: GradeItem["status"] }) { return isDesktop() ? call<{ percent?: number; projectedLetter?: string }>("calculate_grade_what_if", { input }) : { percent: input.score === undefined ? undefined : input.score / input.pointsPossible * 100 }; }
+export async function saveGradingScale(courseId: string, bands: GradeBand[], creditHours: number) {
+  if (!isDesktop()) {
+    const scale = { courseId, bands: structuredClone(bands), creditHours };
+    browserStudyWorkspace.gradingScales = [scale, ...browserStudyWorkspace.gradingScales.filter((item) => item.courseId !== courseId)];
+    return structuredClone(browserStudyWorkspace);
+  }
+  return call<StudyWorkspace>("save_grading_scale", { courseId, bands, creditHours });
+}
+export async function launchScheduleCapture() { return call<string>("launch_schedule_capture"); }
+export async function settleScheduleSource(documentId: string, decision: "keep_encrypted" | "delete_now") {
+  return call<Dashboard>("settle_schedule_source", { documentId, decision });
 }
 export async function syncCanvas(connectionId: string) {
   return call<Dashboard>("sync_canvas", { connectionId });
@@ -1697,7 +1831,7 @@ export async function exportEncryptedBackup(
 export async function selectBackupFile(): Promise<string | null> {
   if (!isDesktop()) return null;
   const selected = await open({
-    multiple: false,
+    multiple: true,
     filters: [
       {
         name: "Student Center encrypted backup",
@@ -1746,7 +1880,10 @@ export async function selectAndImport(): Promise<Dashboard | null> {
     ],
   });
   if (!selected) return null;
-  return importDocumentPath(String(selected));
+  const paths = Array.isArray(selected) ? selected.slice(0, 20) : [String(selected)];
+  let dashboard: Dashboard | null = null;
+  for (const path of paths) dashboard = await importDocumentPath(String(path));
+  return dashboard;
 }
 export async function importDocumentPath(path: string) {
   return call<Dashboard>("import_document", { path });
@@ -1768,7 +1905,7 @@ export async function importDocumentPath(path: string) {
  * student's own screen anywhere, and the calling UI has to say so plainly.
  */
 export async function readScheduleWithAi(documentId: string, consent: boolean) {
-  return call<ManagedAiResult>("read_schedule_with_ai", { documentId, consent });
+  return call<ManagedAiResult>("analyze_schedule_source", { documentId, consent });
 }
 /**
  * The image on a paste event, if this paste is a screenshot import at all.
@@ -1825,6 +1962,21 @@ export async function getDocumentEvidence(documentId: string) {
     ? call<ImportCandidate[]>("get_document_evidence", { documentId })
     : structuredClone(browserSeed.candidates);
 }
+export async function getScheduleSourcePreview(documentId: string) {
+  if (!isDesktop()) throw new Error("Visual source preview is available in the installed app.");
+  return call<ScheduleSourcePreview>("get_schedule_source_preview", { documentId });
+}
+export async function updateImportCandidate(candidateId: string, input: CandidateEditInput) {
+  if (!isDesktop()) {
+    const candidate = browserSeed.candidates.find((item) => item.id === candidateId);
+    if (!candidate || candidate.status !== "pending") throw new Error("Pending candidate not found");
+    Object.assign(candidate, input, {
+      studentEditedFields: Object.keys(input),
+    });
+    return structuredClone(browserSeed);
+  }
+  return call<Dashboard>("update_import_candidate", { candidateId, input });
+}
 export async function listenForFileDrops(
   handler: (paths: string[]) => void,
 ): Promise<() => void> {
@@ -1844,16 +1996,17 @@ export async function requestManagedAi(
     const dashboard = structuredClone(browserSeed);
     const result: ManagedAiResult = {
       dashboard,
-      candidatesCreated: capability === "explanation" ? 0 : 1,
+      candidatesCreated: capability === "planner_explanation" ? 0 : 1,
       explanation:
-        capability === "explanation"
+        capability === "planner_explanation"
           ? "This action is recommended because it fits the current available window."
           : undefined,
       model: "browser-test-model",
+      provider: "openai",
     };
     return result;
   }
-  return call<ManagedAiResult>("request_managed_ai", {
+  return call<ManagedAiResult>("request_ai_capability", {
     input: { capability, excerpt, locale, consent },
   });
 }

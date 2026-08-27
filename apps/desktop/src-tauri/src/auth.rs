@@ -509,7 +509,7 @@ impl AccountRuntime {
             } else if signed_in {
                 "Optional encrypted backup and sync can be enabled from this account.".into()
             } else {
-                "Sign in only if you want encrypted backup, sync, or managed AI.".into()
+                "Sign in only if you want encrypted backup or sync. AI uses your own provider connection and does not require a Coqui account.".into()
             },
         }
     }

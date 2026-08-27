@@ -474,12 +474,18 @@ pub struct ExtractedCandidate {
     pub starts_at_local: String,
     pub ends_at_local: String,
     pub timezone: String,
+    pub section_number: String,
+    pub location: String,
+    pub modality: String,
 }
 
 #[derive(Debug)]
 pub struct Extraction {
     pub candidates: Vec<ExtractedCandidate>,
     pub warnings: Vec<String>,
+    /// Bounded, page/slide/section-addressable text retained for explicit,
+    /// source-grounded study requests. Callers decide whether to persist it.
+    pub segments: Vec<Segment>,
 }
 
 pub fn detect_document(bytes: &[u8], file_name: &str) -> Result<DocumentKind, ImportError> {
@@ -607,6 +613,7 @@ pub fn extract_document(
     let kind = detect_document(bytes, file_name)?;
     let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
     let mut warnings = Vec::new();
+    let mut study_segments = Vec::new();
     let candidates = match &kind {
         DocumentKind::Ics => extract_ics(bytes, tz)?,
         DocumentKind::Csv => extract_csv(bytes, file_name, tz)?,
@@ -649,6 +656,7 @@ pub fn extract_document(
                     return Ok(Extraction {
                         candidates: Vec::new(),
                         warnings,
+                        segments: Vec::new(),
                     });
                 };
                 match ocr_scanned_pdf(pdf_path, ocr) {
@@ -658,10 +666,12 @@ pub fn extract_document(
                         return Ok(Extraction {
                             candidates: Vec::new(),
                             warnings,
+                            segments: Vec::new(),
                         });
                     }
                 }
             }
+            study_segments = segments.clone();
             candidates_from_segments(file_name, &segments, tz)
         }
         DocumentKind::Image(_) => {
@@ -718,6 +728,7 @@ pub fn extract_document(
                     known_courses: known_courses.to_vec(),
                 },
             );
+            study_segments.push(segment.clone());
             if reading.candidates.is_empty() {
                 warnings.extend(reading.warnings);
                 candidates_from_segments(file_name, &[segment], tz)
@@ -734,15 +745,23 @@ pub fn extract_document(
         }
         DocumentKind::Docx => {
             let segments = extract_office_xml(bytes, "word/", "paragraph")?;
+            study_segments = segments.clone();
             candidates_from_segments(file_name, &segments, tz)
         }
         DocumentKind::Pptx => {
             let segments = extract_office_xml(bytes, "ppt/slides/slide", "slide")?;
+            study_segments = segments.clone();
             candidates_from_segments(file_name, &segments, tz)
         }
         DocumentKind::Text => {
             let text = std::str::from_utf8(bytes)
                 .map_err(|error| ImportError::Malformed(error.to_string()))?;
+            study_segments.push(Segment {
+                text: text.into(),
+                locator: "text body".into(),
+                confidence: 1.0,
+                tokens: Vec::new(),
+            });
             candidates_from_segments(
                 file_name,
                 &[Segment {
@@ -759,6 +778,7 @@ pub fn extract_document(
     Ok(Extraction {
         candidates,
         warnings,
+        segments: study_segments,
     })
 }
 
@@ -994,6 +1014,10 @@ fn extract_ics(bytes: &[u8], fallback_tz: Tz) -> Result<Vec<ExtractedCandidate>,
     extract_ics_at(bytes, fallback_tz, Utc::now())
 }
 
+pub fn extract_calendar_bytes(bytes: &[u8], fallback_tz: Tz) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    extract_ics(bytes, fallback_tz)
+}
+
 fn extract_ics_at(
     bytes: &[u8],
     fallback_tz: Tz,
@@ -1091,6 +1115,18 @@ fn candidates_from_event(
     let start_raw = start_property.value.as_deref().unwrap_or_default();
     let tzid = property_parameter(start_property, "TZID");
     let starts_at = parse_ical_datetime(start_raw, tzid, fallback_tz)?;
+    // A modified occurrence keeps its RECURRENCE-ID even when DTSTART moves.
+    // Using DTSTART as the external identity would turn every Canvas edit into
+    // a second record instead of a reviewable update to the linked occurrence.
+    let recurrence_identity = property(&event.properties, "RECURRENCE-ID")
+        .map(|value| {
+            parse_ical_datetime(
+                value.value.as_deref().unwrap_or_default(),
+                property_parameter(value, "TZID").or(tzid),
+                fallback_tz,
+            )
+        })
+        .transpose()?;
     let end = if let Some(end_property) = property(&event.properties, "DTEND") {
         parse_ical_datetime(
             end_property.value.as_deref().unwrap_or_default(),
@@ -1147,6 +1183,9 @@ fn candidates_from_event(
                 starts_at_local: local_start.format("%H:%M").to_string(),
                 ends_at_local: local_end.format("%H:%M").to_string(),
                 timezone: tz.name().to_string(),
+                section_number: String::new(),
+                location: String::new(),
+                modality: String::new(),
             }]);
         }
     }
@@ -1175,7 +1214,10 @@ fn candidates_from_event(
     let horizon_start = observed_at - Duration::days(1);
     let horizon_end = observed_at + Duration::days(180);
     let evidence = format!(
-        "SUMMARY:{summary} · DTSTART:{start_raw}{}",
+        "SUMMARY:{summary} · DTSTART:{start_raw}{}{}",
+        recurrence_identity
+            .map(|value| format!(" · RECURRENCE-ID:{}", value.to_rfc3339()))
+            .unwrap_or_default(),
         rrule
             .map(|value| format!(" · RRULE:{value}"))
             .unwrap_or_default()
@@ -1194,7 +1236,10 @@ fn candidates_from_event(
             duration_minutes: None,
             evidence: evidence.clone(),
             source_locator: format!("calendar event {uid} · occurrence {}", index + 1),
-            source_uid: format!("ics:{uid}:{}", start.timestamp()),
+            source_uid: format!(
+                "ics:{uid}:{}",
+                recurrence_identity.unwrap_or(start).timestamp()
+            ),
             confidence: 1.0,
             warnings: Vec::new(),
             ..Default::default()
@@ -2124,6 +2169,31 @@ mod tests {
         let rows = extract_ics(ics.as_bytes(), chrono_tz::America::Phoenix).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.kind == "commitment"));
+    }
+
+    #[test]
+    fn recurrence_id_keeps_a_moved_occurrence_linked_to_the_same_source() {
+        let observed_at = DateTime::parse_from_rfc3339("2026-08-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let calendar = |starts: &str, ends: &str| format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:canvas-event-42\r\nRECURRENCE-ID:20260901T090000Z\r\nSUMMARY:Statistics review\r\nDTSTART:{starts}\r\nDTEND:{ends}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        );
+        let first = extract_ics_at(
+            calendar("20260901T100000Z", "20260901T110000Z").as_bytes(),
+            chrono_tz::UTC,
+            observed_at,
+        ).unwrap();
+        let changed = extract_ics_at(
+            calendar("20260901T110000Z", "20260901T120000Z").as_bytes(),
+            chrono_tz::UTC,
+            observed_at,
+        ).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(changed.len(), 1);
+        assert_eq!(first[0].source_uid, changed[0].source_uid);
+        assert_ne!(first[0].starts_at, changed[0].starts_at);
+        assert!(first[0].evidence.contains("RECURRENCE-ID"));
     }
 
     #[test]

@@ -1,13 +1,5 @@
-use reqwest::{
-    blocking::{Client, Response},
-    redirect::Policy,
-    StatusCode,
-};
 use serde::{Deserialize, Serialize};
-use std::{io::Read, time::Duration};
-use url::Url;
 
-const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 const MAX_EXCERPT_CHARS: usize = 12_000;
 /// A schedule screenshot is a few hundred kilobytes; a phone capture at 3x is a
 /// couple of megabytes. Eight leaves room without letting an arbitrary file be
@@ -16,21 +8,23 @@ const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ManagedAiError {
-    #[error("managed AI is not configured in this build")]
+    #[error("an AI provider is not configured in this build")]
     NotConfigured,
-    #[error("managed AI configuration is invalid")]
-    InvalidConfiguration,
-    #[error("managed AI input is invalid: {0}")]
+    #[error("AI credential storage is unavailable")]
+    Credential,
+    #[error("AI provider rejected the API key")]
+    Unauthorized,
+    #[error("AI provider input is invalid: {0}")]
     InvalidInput(String),
-    #[error("managed AI is unavailable; local data was not changed")]
+    #[error("the AI provider is unavailable; local data was not changed")]
     Network,
-    #[error("managed AI quota is temporarily unavailable; local data was not changed")]
+    #[error("the AI provider quota is temporarily unavailable; local data was not changed")]
     Quota,
-    #[error("managed AI timed out; local data was not changed")]
+    #[error("the AI provider timed out; local data was not changed")]
     Timeout,
-    #[error("managed AI rejected the request ({0}); local data was not changed")]
+    #[error("the AI provider rejected the request ({0}); local data was not changed")]
     Rejected(u16),
-    #[error("managed AI returned an invalid review response; local data was not changed")]
+    #[error("the AI provider returned an invalid review response; local data was not changed")]
     InvalidResponse,
 }
 
@@ -41,8 +35,31 @@ pub type Result<T> = std::result::Result<T, ManagedAiError>;
 pub enum AiCapability {
     BrainDump,
     DocumentExtraction,
+    ScheduleVision,
     TaskDecomposition,
-    Explanation,
+    PlannerExplanation,
+    SourceQa,
+    StudyGuide,
+    Flashcards,
+    PracticeQuestions,
+    PracticeTest,
+}
+
+impl AiCapability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BrainDump => "brain_dump",
+            Self::DocumentExtraction => "document_extraction",
+            Self::ScheduleVision => "schedule_vision",
+            Self::TaskDecomposition => "task_decomposition",
+            Self::PlannerExplanation => "planner_explanation",
+            Self::SourceQa => "source_qa",
+            Self::StudyGuide => "study_guide",
+            Self::Flashcards => "flashcards",
+            Self::PracticeQuestions => "practice_questions",
+            Self::PracticeTest => "practice_test",
+        }
+    }
 }
 
 /// An image sent alongside the excerpt.
@@ -62,6 +79,8 @@ pub struct AiImage {
 }
 
 impl AiImage {
+    pub fn mime_type(&self) -> &str { self.mime_type }
+    pub fn data(&self) -> &str { &self.data }
     /// Sniff the bytes and encode them, or refuse.
     ///
     /// The magic bytes decide; a caller's claim about the type is not consulted,
@@ -95,16 +114,6 @@ fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     } else {
         None
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AiRequest<'a> {
-    capability: AiCapability,
-    excerpt: &'a str,
-    locale: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<&'a AiImage>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -162,81 +171,7 @@ pub struct AiResponse {
     pub usage: AiUsage,
 }
 
-#[derive(Clone)]
-pub struct ManagedAiClient {
-    origin: Url,
-    client: Client,
-}
-
-impl ManagedAiClient {
-    pub fn compiled() -> Result<Self> {
-        let origin =
-            option_env!("STUDENT_CENTER_CLOUD_API_URL").ok_or(ManagedAiError::NotConfigured)?;
-        Self::new(origin)
-    }
-
-    fn new(origin: &str) -> Result<Self> {
-        let origin = Url::parse(origin).map_err(|_| ManagedAiError::InvalidConfiguration)?;
-        if origin.scheme() != "https"
-            || !origin.username().is_empty()
-            || origin.password().is_some()
-            || origin.host_str().is_none()
-            || origin.port_or_known_default() != Some(443)
-            || origin.path() != "/"
-            || origin.query().is_some()
-            || origin.fragment().is_some()
-        {
-            return Err(ManagedAiError::InvalidConfiguration);
-        }
-        let client = Client::builder()
-            .redirect(Policy::none())
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(25))
-            .user_agent(concat!("StudentCenter/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|_| ManagedAiError::Network)?;
-        Ok(Self { origin, client })
-    }
-
-    pub fn request(
-        &self,
-        access_token: &str,
-        capability: AiCapability,
-        excerpt: &str,
-        locale: &str,
-        image: Option<&AiImage>,
-    ) -> Result<AiResponse> {
-        validate_input(access_token, excerpt, locale, image)?;
-        let endpoint = self
-            .origin
-            .join("v1/ai/structure")
-            .map_err(|_| ManagedAiError::InvalidConfiguration)?;
-        if endpoint.origin() != self.origin.origin() {
-            return Err(ManagedAiError::InvalidConfiguration);
-        }
-        let response = self
-            .client
-            .post(endpoint)
-            .bearer_auth(access_token)
-            .json(&AiRequest {
-                capability,
-                excerpt,
-                locale,
-                image,
-            })
-            .send()
-            .map_err(|error| {
-                if error.is_timeout() {
-                    ManagedAiError::Timeout
-                } else {
-                    ManagedAiError::Network
-                }
-            })?;
-        read_response(response, capability, excerpt)
-    }
-}
-
-fn validate_input(
+pub(crate) fn validate_input(
     access_token: &str,
     excerpt: &str,
     locale: &str,
@@ -282,42 +217,7 @@ fn validate_input(
     Ok(())
 }
 
-fn read_response(
-    response: Response,
-    capability: AiCapability,
-    excerpt: &str,
-) -> Result<AiResponse> {
-    let status = response.status();
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        return Err(ManagedAiError::Quota);
-    }
-    if status == StatusCode::GATEWAY_TIMEOUT {
-        return Err(ManagedAiError::Timeout);
-    }
-    if status.is_redirection() || !status.is_success() {
-        return Err(ManagedAiError::Rejected(status.as_u16()));
-    }
-    if response
-        .content_length()
-        .is_some_and(|size| size > MAX_RESPONSE_BYTES)
-    {
-        return Err(ManagedAiError::InvalidResponse);
-    }
-    let mut body = Vec::new();
-    response
-        .take(MAX_RESPONSE_BYTES + 1)
-        .read_to_end(&mut body)
-        .map_err(|_| ManagedAiError::Network)?;
-    if body.len() as u64 > MAX_RESPONSE_BYTES {
-        return Err(ManagedAiError::InvalidResponse);
-    }
-    let result: AiResponse =
-        serde_json::from_slice(&body).map_err(|_| ManagedAiError::InvalidResponse)?;
-    validate_response(&result, capability, excerpt)?;
-    Ok(result)
-}
-
-fn validate_response(result: &AiResponse, capability: AiCapability, excerpt: &str) -> Result<()> {
+pub(crate) fn validate_response(result: &AiResponse, capability: AiCapability, excerpt: &str) -> Result<()> {
     if !result.review_required
         || uuid::Uuid::parse_str(&result.account_id).is_err()
         || result.model.trim().is_empty()
@@ -328,7 +228,7 @@ fn validate_response(result: &AiResponse, capability: AiCapability, excerpt: &st
     {
         return Err(ManagedAiError::InvalidResponse);
     }
-    if capability == AiCapability::Explanation {
+    if matches!(capability, AiCapability::PlannerExplanation) {
         if !result.candidates.is_empty()
             || result
                 .explanation
@@ -517,16 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_origin_and_input_validation_fail_closed() {
-        for invalid in [
-            "http://api.example.com/",
-            "https://user@api.example.com/",
-            "https://api.example.com:8443/",
-            "https://api.example.com/path",
-        ] {
-            assert!(ManagedAiClient::new(invalid).is_err(), "accepted {invalid}");
-        }
-        assert!(ManagedAiClient::new("https://api.example.com/").is_ok());
+    fn input_validation_fails_closed() {
         assert!(validate_input(&"t".repeat(32), "finish paper", "en-US", None).is_ok());
         assert!(validate_input(&"t".repeat(32), " finish paper", "en-US", None).is_err());
     }
@@ -698,25 +589,8 @@ mod tests {
         assert!(validate_input(&"t".repeat(32), " schedule", "en-US", Some(&image)).is_err());
         assert!(validate_input(&"t".repeat(32), "schedule", "en-US", Some(&image)).is_ok());
 
-        let request = AiRequest {
-            capability: AiCapability::DocumentExtraction,
-            excerpt: "schedule",
-            locale: "en-US",
-            image: Some(&image),
-        };
-        let json = serde_json::to_value(&request).unwrap();
-        assert_eq!(json["image"]["mimeType"], "image/png");
-        assert!(json["excerpt"].is_string());
-
-        // A request without an image omits the field rather than sending null,
-        // so a server that has not been updated still parses it.
-        let plain = AiRequest {
-            capability: AiCapability::DocumentExtraction,
-            excerpt: "schedule",
-            locale: "en-US",
-            image: None,
-        };
-        assert!(serde_json::to_value(&plain).unwrap().get("image").is_none());
+        assert_eq!(image.mime_type(), "image/png");
+        assert!(!image.data().is_empty());
     }
 
     // The desktop app and the cloud service deploy separately, so a response
@@ -746,6 +620,6 @@ mod tests {
         )
         .is_ok());
         assert!(validate_response(&result, AiCapability::BrainDump, "finish paper").is_err());
-        assert!(validate_response(&result, AiCapability::Explanation, "finish paper").is_err());
+        assert!(validate_response(&result, AiCapability::PlannerExplanation, "finish paper").is_err());
     }
 }
