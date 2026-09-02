@@ -1,0 +1,23 @@
+name: Live Supabase certification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Verify deployed migrations and RLS with two dedicated users
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          STUDENT_CENTER_RLS_TEST_TOKEN_A: ${{ secrets.STUDENT_CENTER_RLS_TEST_TOKEN_A }}
+          STUDENT_CENTER_RLS_TEST_TOKEN_B: ${{ secrets.STUDENT_CENTER_RLS_TEST_TOKEN_B }}
+        run: npm run cloud:verify-live

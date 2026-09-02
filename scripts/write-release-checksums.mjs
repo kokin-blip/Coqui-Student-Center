@@ -5,6 +5,7 @@ import path from "node:path";
 const roots = [
   "apps/desktop/src-tauri/target/release/bundle/nsis",
   "apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg",
+  "apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos",
 ];
 
 let written = 0;
@@ -17,7 +18,7 @@ for (const root of roots) {
     throw error;
   }
   for (const entry of entries) {
-    if (!entry.isFile() || !/\.(exe|dmg)$/i.test(entry.name)) continue;
+    if (!entry.isFile() || !/\.(exe|dmg|zip)$|\.app\.tar\.gz$/i.test(entry.name)) continue;
     const artifact = path.join(root, entry.name);
     const digest = createHash("sha256").update(await readFile(artifact)).digest("hex");
     await writeFile(`${artifact}.sha256`, `${digest}  ${entry.name}\n`, "utf8");

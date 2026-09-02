@@ -1,6 +1,6 @@
 [package]
 name = "student-center"
-version = "0.11.0"
+version = "0.12.0"
 description = "Local-first Student Center desktop application"
 edition = "2021"
 

@@ -1,19 +1,22 @@
 name: Release
 
-# Publishing is driven by the tag, not by a branch, so the default branch name
-# is irrelevant here. workflow_dispatch exists to re-run a lane that failed
-# after the tag was already pushed.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach artifacts to, e.g. v0.9.0"
+        description: "Existing tag to build, for example v0.12.0"
         required: true
+      release_mode:
+        description: "Unsigned prerelease or future signed updater release"
+        type: choice
+        required: true
+        default: unsigned
+        options:
+          - unsigned
+          - signed-updater
 
-# Without this the whole matrix builds successfully and then 403s on the very
-# last step, throwing away two native builds.
 permissions:
   contents: write
 
@@ -22,42 +25,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Deliberately mirrors the `desktop` job in ci.yml: the vcpkg -> Tesseract ->
-  # ocr:prepare -> ocr:verify chain is the mandatory pre-packaging gate, not
-  # optional setup. The e2e smoke is not repeated here; ci.yml already runs it
-  # against the same commit.
-  release:
+  build-packages:
     strategy:
-      # One platform failing must not cancel the other. A half-published
-      # prerelease is recoverable by re-dispatching the failed lane; a
-      # cancelled one wastes both builds.
       fail-fast: false
       matrix:
         include:
           - platform: windows-latest
+            label: windows-x64
             args: --bundles nsis
             ocr_target: windows-x64
             vcpkg_triplet: x64-windows-static
             rust_target: ""
-            # Per-platform, because fail_on_unmatched_files below treats a glob
-            # that matches nothing as an error. Listing both platforms' globs
-            # on both legs would fail every run.
-            artifacts: |
+            packages: |
               apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
               apps/desktop/src-tauri/target/release/bundle/nsis/*.sha256
+            updater_artifacts: |
+              apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip
+              apps/desktop/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
           - platform: macos-15
+            label: macos-arm64
             args: --target aarch64-apple-darwin --bundles dmg
             ocr_target: macos-arm64
             vcpkg_triplet: arm64-osx-static
             rust_target: aarch64-apple-darwin
-            artifacts: |
+            packages: |
               apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.sha256
+            updater_artifacts: |
+              apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+              apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.sha256
     runs-on: ${{ matrix.platform }}
     steps:
-      # On a tag push ref_name is the tag; on a dispatch it is the branch, so
-      # the tag has to be named explicitly or a re-run would build the wrong
-      # commit and have no release to attach to.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
@@ -70,8 +69,6 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: npm ci
-      # Same cache key as ci.yml so a release reuses the Tesseract build CI
-      # already paid for. Keep the two keys in sync when the pin moves.
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/student-center-vcpkg-cache
@@ -84,32 +81,155 @@ jobs:
         run: npm run ocr:prepare -- --target=${{ matrix.ocr_target }} --tesseract-root=${{ runner.temp }}/student-center-vcpkg/installed/${{ matrix.vcpkg_triplet }}
       - name: Enforce OCR release gate
         run: npm run ocr:verify -- --target=${{ matrix.ocr_target }} --require-ready
-      - name: Enforce course catalog gate
-        run: npm run catalog:verify
-      - name: Verify bundled academic calendars
-        run: npm run calendar:verify
+      - run: npm run catalog:verify
+      - run: npm run calendar:verify
       - name: Test native app with prepared OCR runtime
         env:
           STUDENT_CENTER_OCR_RUNTIME: ${{ github.workspace }}/apps/desktop/src-tauri/resources/ocr/${{ matrix.ocr_target }}
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-      # No tauri.release.conf.json overlay: it sets createUpdaterArtifacts, which
-      # fails the build outright unless TAURI_SIGNING_PRIVATE_KEY is present.
-      # This private-beta build has no updater signing key, so updater artifacts
-      # are out. Unrelated to macOS code signing, which is configured in
-      # tauri.conf.json and enforced by the gate below.
-      - run: npm run desktop:build -- ${{ matrix.args }}
-      # The last line of defence before an unopenable DMG becomes a public
-      # release asset. `signingIdentity: "-"` in tauri.conf.json is what makes
-      # the bundle sealed; this proves it actually happened.
-      - name: Enforce macOS signature gate
+      - name: Require signed updater configuration
+        if: (inputs.release_mode || 'unsigned') == 'signed-updater'
+        env:
+          STUDENT_CENTER_UPDATER_ENDPOINT: ${{ secrets.STUDENT_CENTER_UPDATER_ENDPOINT }}
+          STUDENT_CENTER_UPDATER_PUBLIC_KEY: ${{ secrets.STUDENT_CENTER_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run release:validate-updater
+      - name: Build unsigned installers
+        if: (inputs.release_mode || 'unsigned') == 'unsigned'
+        run: npm run desktop:build -- ${{ matrix.args }}
+      - name: Build installers and signed updater artifacts
+        if: (inputs.release_mode || 'unsigned') == 'signed-updater'
+        env:
+          STUDENT_CENTER_UPDATER_ENDPOINT: ${{ secrets.STUDENT_CENTER_UPDATER_ENDPOINT }}
+          STUDENT_CENTER_UPDATER_PUBLIC_KEY: ${{ secrets.STUDENT_CENTER_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run desktop:build -- --config apps/desktop/src-tauri/tauri.release.conf.json ${{ matrix.args }}
+      - name: Verify macOS ad-hoc bundle seal
         if: matrix.platform == 'macos-15'
         run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }}
       - run: npm run release:checksums
-      # fail_on_unmatched_files matters: without it a bundle that quietly did
-      # not build yields a Release that is missing assets but reports success.
+      - name: Smoke Windows installer
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          $installRoot = Join-Path $env:RUNNER_TEMP "CoquiSmoke"
+          Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$installRoot" -Wait
+          $app = Join-Path $installRoot "Coqui Student Center.exe"
+          if (-not (Test-Path $app)) { throw "The NSIS installer did not create the application executable." }
+          $process = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "The installed Windows application exited during smoke testing." }
+          Stop-Process -Id $process.Id -Force
+          $uninstaller = Get-ChildItem $installRoot -Filter "uninstall*.exe" | Select-Object -First 1
+          if (-not $uninstaller) { throw "The NSIS installer did not create an uninstaller." }
+          Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait
+      - name: Smoke mounted macOS package
+        if: matrix.platform == 'macos-15'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(find apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          mount_point="$RUNNER_TEMP/coqui-dmg"
+          copy_root="$RUNNER_TEMP/coqui-app"
+          mkdir -p "$mount_point" "$copy_root"
+          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount_point"
+          trap 'hdiutil detach "$mount_point" -force || true' EXIT
+          cp -R "$mount_point/Coqui Student Center.app" "$copy_root/"
+          binary="$copy_root/Coqui Student Center.app/Contents/MacOS/student-center"
+          "$binary" &
+          app_pid=$!
+          sleep 8
+          kill -0 "$app_pid"
+          kill "$app_pid"
+          wait "$app_pid" || true
+          hdiutil detach "$mount_point"
+          trap - EXIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.label }}
+          path: ${{ matrix.packages }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: (inputs.release_mode || 'unsigned') == 'signed-updater'
+        with:
+          name: updater-${{ matrix.label }}
+          path: ${{ matrix.updater_artifacts }}
+          if-no-files-found: error
+
+  publish-unsigned:
+    needs: build-packages
+    if: (inputs.release_mode || 'unsigned') == 'unsigned'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: release-artifacts
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           prerelease: true
+          body_path: docs/releases/0.12.0.md
           fail_on_unmatched_files: true
-          files: ${{ matrix.artifacts }}
+          files: release-artifacts/*
+
+  updater-manifest:
+    needs: build-packages
+    if: (inputs.release_mode || 'unsigned') == 'signed-updater'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: updater-*
+          path: updater-artifacts
+          merge-multiple: true
+      - run: >-
+          npm run release:create-updater-manifest --
+          --artifacts=updater-artifacts
+          --repository=${{ github.repository }}
+          --tag=${{ inputs.tag || github.ref_name }}
+          --output=latest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-manifest
+          path: |
+            latest.json
+            latest.json.sha256
+
+  publish-signed:
+    needs: updater-manifest
+    if: (inputs.release_mode || 'unsigned') == 'signed-updater'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: release-artifacts
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: updater-*
+          path: release-artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          prerelease: true
+          body_path: docs/releases/0.12.0.md
+          fail_on_unmatched_files: true
+          files: release-artifacts/*

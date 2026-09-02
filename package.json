@@ -1,6 +1,6 @@
 {
   "name": "coqui-student-center",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "description": "Local-first Student Center desktop application",
   "workspaces": [
@@ -16,6 +16,8 @@
     "test:ocr": "node --test scripts/test/*.test.mjs",
     "test:desktop:e2e": "wdio run e2e/wdio.conf.mjs",
     "release:checksums": "node scripts/write-release-checksums.mjs",
+    "release:validate-updater": "node scripts/validate-updater-release-environment.mjs",
+    "release:create-updater-manifest": "node scripts/create-updater-manifest.mjs",
     "institutions:generate": "node scripts/generate-institution-directory.mjs",
     "ocr:prepare": "node scripts/prepare-ocr-runtime.mjs",
     "ocr:verify": "node scripts/verify-ocr-runtime.mjs",
@@ -26,7 +28,8 @@
     "calendar:verify": "node scripts/verify-academic-calendar.mjs",
     "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
     "desktop:build": "tauri build --config apps/desktop/src-tauri/tauri.conf.json",
-    "cloud:dev": "npm run dev --workspace @student-center/cloud-api"
+    "cloud:dev": "npm run dev --workspace @student-center/cloud-api",
+    "cloud:verify-live": "node scripts/verify-live-supabase.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

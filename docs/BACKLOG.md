@@ -6,9 +6,17 @@ be rediscovered. Ordered roughly by value.
 Decisions already made are recorded at the bottom. Re-open them deliberately
 rather than by accident.
 
+## Current platform allocation (2026-09-01)
+
+The active release is desktop-only: macOS Apple Silicon and Windows x64 through the Tauri application. Preserve the completed narrow-window reflow for desktop tiling, zoom, and accessibility, but do not spend current release capacity on a mobile runtime, app-store packaging, widgets, mobile-specific navigation, or cross-device mobile merge behavior.
+
+Reconsider a mobile companion only after the desktop installed-app matrix, live Canvas/provider/Supabase checks, production OCR runtime, code signing/notarization, updater publication, and artifact verification are complete.
+
 ---
 
 ## 1. Course catalog coverage
+
+**Current status (0.11.0 worktree).** Coverage is still intentionally limited, but the UI now emits a term-staleness warning when a bundled catalog term has ended. The coverage and authenticated-source policy below remain current.
 
 **What 0.10.0 changed.** A thin catalog matters less than it did. A student who
 cannot find their course in the bundled 133 can now paste a screenshot of their
@@ -93,6 +101,10 @@ it is showing, so a student is warned, but the data does not update itself.
 
 ## 2. Auto-updater via GitHub Releases
 
+**Current status (0.12.0 worktree).** The repository validates updater trust configuration, can build signed updater artifacts, verifies artifact/signature pairing, and creates the cross-platform `latest.json` manifest. Generating and installing the real signing keys and publishing a signed-updater release remain external release-operator gates.
+
+**0.12.0 delivery.** An explicit unsigned mode now builds and smoke-tests both installers, publishes only after both matrix legs pass, and leaves automatic updates inert. The signed-updater mode below is preserved for a later credentialed release.
+
 Would end hand-distributing DMGs. **Does not require Supabase** —
 `validate_updater_configuration` in `apps/desktop/src-tauri/src/main.rs` only
 requires HTTPS, a host, and no embedded credentials. A static `latest.json`
@@ -121,6 +133,8 @@ again. That is the same failure class as the 0.9.0 "damaged" bug.
 
 ## 3. Collapse commitments already imported from a recurring event
 
+**Completed in the 0.11.0 worktree.** Academic & Planning shows a reviewable preview and only collapses groups proven to be weekly, preserving linked provenance. It remains opt-in.
+
 Import now writes one class meeting series for a weekly rule, but anything
 imported before 0.9.2 is still dozens of individual commitments. Agreed
 behaviour: **leave them alone by default**, and offer an opt-in collapse.
@@ -147,10 +161,8 @@ bug, different fix, needs a code-signing certificate.
 
 ## 5. Smaller items
 
-- **ICS `LOCATION` is not read.** Imported class meetings default to a `lecture`
-  component with an empty location.
-- **Course and title duplicate in review** for imported classes, because an ICS
-  `SUMMARY` fills both fields.
+- **Completed:** ICS `LOCATION` is imported when present.
+- **Completed:** imported class review no longer repeats the same summary as both course and title.
 - **Quick add offers enrolled courses, not the catalog.** Deliberate — an
   assignment for a class you are not taking is not a real case — but easy to
   switch if that turns out to be wrong.

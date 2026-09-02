@@ -2,12 +2,18 @@
 
 This work started from audited tag `v0.10.1`, commit `cc98558db1f962d1910716e3873a14d1cd7525d5`, on `origin/codex/foundational-mvp`. The implementation branch is `codex/comprehensive-product-plan`.
 
+## Desktop-first delivery scope
+
+The current release is the installed Tauri desktop application for macOS Apple Silicon and Windows x64. All near-term product, design, test, and release effort is allocated to that target. The responsive shell remains because desktop windows must work when resized, tiled, zoomed, or accessibility-magnified, but its 320px layout is not a mobile companion implementation.
+
+No iOS/Android runtime, store package, mobile synchronization contract, widget, or mobile-only workflow is being developed in this phase. That work stays deferred until the desktop installed-app, credentialed integration, packaging, signing, updater, and recovery gates pass.
+
 ## Delivered foundation
 
-- Schema 17 uses additive, idempotent migrations. Existing encrypted profiles, schedules, documents, plans, sync history, and AI invocation history remain readable.
+- Schema 25 uses additive, idempotent migrations. Existing encrypted profiles, schedules, documents, plans, sync history, AI invocation history, scholarship records, drafts, versions, stories, crawler runs, source diffs, and scholarship requirement documents remain readable.
 - Typed native boundaries own AI providers, Canvas calendar feeds, source preview, candidate editing, validation, provenance, and canonical writes.
 - Backup restore deliberately drops every Canvas and AI credential, removes any pre-restore credential entries, preserves approved records, and marks restored connections for reauthentication.
-- `AppNavigation`, `ScheduleImportReview`, `StudyView`, and `WorkspaceView` are independent UI modules. `CalendarView`, `WorkView`, `CoursesView`, and `AcademicSettingsView` are explicit route-level entry points over their shared local-record workspace, while the app shell owns cross-route state and global dialogs.
+- `TodayView`, `CalendarView`, `WorkView`, `CoursesView`, `StudyView`, `ScholarshipsView`, and Settings own their route state and interface. The obsolete mode-switched `WorkspaceView` has been removed. Administrative tools render as nested Settings detail pages; account/sync, updates, workspace search, quick task capture, and shared overlay focus management are separately owned modules.
 - The WebDriver-only desktop build has a separate application identifier and test-only UI bridge. Its profile root must resolve to a dedicated child of the operating-system temporary directory, preventing local smoke teardown from touching a real Coqui profile.
 
 ## Delivered imports
@@ -18,6 +24,7 @@ This work started from audited tag `v0.10.1`, commit `cc98558db1f962d1910716e387
 - Screenshot and document review shows the encrypted source beside editable course, section, weekday, time, location, modality, term/date and evidence fields. Invalid or conflicted candidates cannot be bulk-applied; cancelling creates no canonical records.
 - Local OCR is first. A screenshot can be sent to the resolved BYOK provider only after a provider/model/data-scope confirmation; the image travels with locally extracted text and returned evidence is checked against that text.
 - Every completed local schedule-source import requires a per-source encrypted-keep or delete-now decision. Deletion shreds the original while retaining minimal evidence and field provenance.
+- Phone-photo import accepts up to twelve pages and applies explicit rotation, crop, and perspective correction locally before OCR. Class meeting series support deterministic multi-week rotation intervals and offsets.
 
 ## Delivered private AI
 
@@ -30,19 +37,22 @@ This work started from audited tag `v0.10.1`, commit `cc98558db1f962d1910716e387
 
 ## Delivered experience and study workspace
 
-- Student navigation is Today, Calendar, Work, Courses, and Study. Settings contains Integrations, Account & Sync, Privacy & Security, Backup & Recovery, Appearance, Updates, and Advanced actions.
+- Student navigation is Today, Calendar, Work, Courses, Study, and Scholarships. Settings contains Integrations, Account & Sync, Privacy & Security, Backup & Recovery, Appearance, Academic & Planning, Updates, and Advanced actions.
 - Today includes a visual timeline, protected commitments, planned work, overload/capacity status, next-action reasoning, focus actions, due-versus-do dates, and plan disruption explanations.
 - Calendar is a real day/week time grid with visually distinct block kinds, unscheduled work, pointer move/resize, lock/undo controls, keyboard move/resize alternatives, an accessible agenda fallback, conflicts, overload, and import/connection access. Locked blocks cannot be moved.
 - Work is divided into Inbox, Upcoming, Overdue, Exams, and Completed with advanced scheduling fields progressively disclosed. Courses use Overview, Work, Schedule, Materials, and Grades tabs; the latter two show the selected course's actual encrypted sources and local forecast summary while Study owns detailed editing.
 - Study limits every request to explicitly selected courses/materials, verifies literal source citations/locators, labels unsupported answers, and creates editable grounded answers, guides, flashcards, practice questions, and practice tests.
 - Confidence reviews create deterministic spaced-revision work. The local gradebook supports weighted categories, missing-work impact, non-mutating what-if scores, student-defined grading bands and GPA points, course credits, and projected GPA.
+- Scholarships provides allowlisted public discovery, attributed/manual records, reviewable source changes, deterministic eligibility explanations, saved/application states, prompt-specific writing, autosave and explicit versions, reusable stories, requirement checklists, guarded AI feedback, and deterministic deadline task creation. Opportunity-specific PDF, image, Office, and text sources are encrypted locally, extracted without creating schedule records, and require an explicit review before recognized requirements or essay prompts are applied. Scholarship data remains local-only but participates in encrypted backups.
 
 ## Release gates
 
 Automated gates are the root TypeScript check, contracts tests, desktop UI component and axe-core accessibility tests, cloud service tests, Rust native tests, OCR fixtures, a production dependency audit, a production UI build, and isolated native first-run/import smoke. CI repeats the native tests and packaging checks on Windows x64 and Apple Silicon macOS. Paid provider requests are prohibited in CI.
 
+Version 0.12.0 adds an unsigned prerelease mode that builds and smoke-tests Windows NSIS and Apple Silicon DMG packages before either artifact is published. The in-app updater remains unconfigured in that mode. The future signed-updater mode continues to require its endpoint, public key, and private signing key.
+
 Before publishing each installer, run the hands-on scenarios from the approved plan on both platforms: fresh offline install, Canvas connect/refresh/change/deduplication, screenshot capture and retention, each provider connect/use/disconnect, no cross-provider fallback, and backup/restore reauthentication. A platform is not considered release-approved from another platform's result.
 
 ## Explicit later scope
 
-Google/Apple/Outlook calendars, richer Canvas API sync, more LMS providers, mobile/widgets, notification actions, collaboration, and institution-managed deployment remain Phase 5 ecosystem work. Multiple-photo correction, crop/rotation assistance, unusual timetable training, and rotating A/B schedule presets are incremental importer improvements and do not weaken the current review-first importer.
+Google/Apple/Outlook calendars, richer Canvas API sync, more LMS providers, mobile companion/widgets, notification actions, collaboration, institution-managed deployment, and account-key rotation after device revocation remain Phase 5 ecosystem work. Mobile work receives no current release resources; narrow layouts are maintained only as desktop reflow and accessibility behavior.
