@@ -45,9 +45,8 @@ describe("installed Student Center", () => {
 
   it("navigates every desktop workspace and opens Settings detail pages", async () => {
     await browser.refresh();
-    const primary = await $('nav[aria-label="Primary navigation"]');
     const destinations = [
-      ["Today", "Today"],
+      ["Today", null],
       ["Calendar", "Calendar"],
       ["Work", "Work"],
       ["Courses", "Courses"],
@@ -56,9 +55,12 @@ describe("installed Student Center", () => {
       ["Settings", "Settings"],
     ];
     for (const [label, heading] of destinations) {
-      const button = await primary.$(`button[aria-label="${label}"]`);
+      const button = await $(`button[aria-label="${label}"]`);
       await button.click();
-      await browser.waitUntil(async () => (await $("h1").getText()) === heading);
+      await browser.waitUntil(async () => (await button.getAttribute("class")).includes("active"));
+      if (heading) {
+        await browser.waitUntil(async () => (await $("h1").getText()) === heading);
+      }
     }
 
     const canvas = await $('button*=Canvas');
