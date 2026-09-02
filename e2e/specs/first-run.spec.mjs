@@ -58,10 +58,7 @@ describe("installed Student Center", () => {
     for (const [label, heading] of destinations) {
       const button = await primary.$(`button[aria-label="${label}"]`);
       await button.click();
-      await browser.waitUntil(async () => {
-        const labels = await Promise.all((await $$("h1")).map((item) => item.getText()));
-        return labels.includes(heading);
-      });
+      await browser.waitUntil(async () => (await $("h1").getText()) === heading);
     }
 
     const canvas = await $('button*=Canvas');
@@ -84,7 +81,7 @@ describe("installed Student Center", () => {
         canonicalUrl: "https://example.edu/scholarships/e2e",
         provider: "E2E University",
         title: "Installed-app scholarship",
-        deadline: "2026-12-01T23:59:00-07:00",
+        deadline: "2026-12-01",
         datePrecision: "date",
         applicationUrl: "https://example.edu/scholarships/e2e",
         studyLevels: [],
