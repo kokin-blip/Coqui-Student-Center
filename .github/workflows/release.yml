@@ -109,7 +109,7 @@ jobs:
       - name: Verify macOS ad-hoc bundle seal
         if: matrix.platform == 'macos-15'
         run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }}
-      - run: npm run release:checksums
+      - run: npm run release:checksums -- --github
       - name: Smoke Windows installer
         if: matrix.platform == 'windows-latest'
         shell: pwsh

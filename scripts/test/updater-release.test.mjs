@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,29 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const script = path.resolve("scripts/create-updater-manifest.mjs");
+const checksumScript = path.resolve("scripts/write-release-checksums.mjs");
+
+test("GitHub checksums reference the actual download names and remain repeatable", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "coqui-checksums-"));
+  const bundle = path.join(root, "apps/desktop/src-tauri/target/release/bundle/nsis");
+  await mkdir(bundle, { recursive: true });
+  const original = path.join(bundle, "Coqui Student Center.exe");
+  const artifact = path.join(bundle, "Coqui.Student.Center.exe");
+  await writeFile(original, "installer fixture");
+  await writeFile(`${original}.sig`, "signature fixture");
+  await writeFile(`${original}.sha256`, "stale checksum");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = spawnSync(process.execPath, [checksumScript, "--github"], {
+      cwd: root, encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const digest = createHash("sha256").update(await readFile(artifact)).digest("hex");
+    assert.equal(await readFile(`${artifact}.sha256`, "utf8"), `${digest}  Coqui.Student.Center.exe\n`);
+    assert.equal(await readFile(`${artifact}.sig`, "utf8"), "signature fixture");
+    await assert.rejects(readFile(original), { code: "ENOENT" });
+    await assert.rejects(readFile(`${original}.sha256`), { code: "ENOENT" });
+  }
+});
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "coqui-updater-"));
