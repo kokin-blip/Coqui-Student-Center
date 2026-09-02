@@ -5735,5 +5735,32 @@
         ]
       }
     ]
+  },
+  {
+    "institutionId": "104179",
+    "termId": "ua-2026-2027",
+    "sourceLabel": "University of Arizona Academic Catalog 2026–2027",
+    "sourceUrl": "https://catalog.arizona.edu/",
+    "courses": [
+      { "code": "ENGL 101", "title": "First-Year Composition", "credits": 3, "sections": [] },
+      { "code": "MATH 106", "title": "Exploring and Understanding Patterns, Functions, and Modeling for Elementary Teachers", "credits": 3, "sections": [] },
+      { "code": "MATH 122B", "title": "First-Semester Calculus", "credits": 4, "sections": [] },
+      { "code": "CSC 110", "title": "Introduction to Computer Programming I", "credits": 4, "sections": [] }
+    ]
+  },
+  {
+    "institutionId": "105330",
+    "termId": "nau-2026-2027",
+    "sourceLabel": "Northern Arizona University Academic Catalog 2026–2027",
+    "sourceUrl": "https://catalog.nau.edu/Courses/",
+    "courses": [
+      { "code": "ENG 105", "title": "Critical Reading And Writing In The University Community", "credits": 4, "sections": [] },
+      { "code": "MAT 114", "title": "Quantitative Reasoning", "credits": 3, "sections": [] },
+      { "code": "MAT 119", "title": "Finite Mathematics", "credits": 3, "sections": [] },
+      { "code": "MAT 136", "title": "Calculus I", "credits": 4, "sections": [] },
+      { "code": "CS 126", "title": "Computer Science I", "credits": 3, "sections": [] },
+      { "code": "CS 136", "title": "Computer Science II", "credits": 3, "sections": [] },
+      { "code": "CS 212", "title": "Web Programming I", "credits": 3, "sections": [] }
+    ]
   }
 ]

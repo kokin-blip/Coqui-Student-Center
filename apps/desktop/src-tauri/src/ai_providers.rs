@@ -126,6 +126,28 @@ pub struct GroundedResult {
     pub usage: AiUsage,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct WritingSuggestion { pub kind:String, pub original_quote:String, pub replacement:String, pub rationale:String, pub supporting_profile_quotes:Vec<String> }
+
+#[derive(Debug, Clone)]
+pub struct WritingFeedbackResult { pub suggestions:Vec<WritingSuggestion>, pub usage:AiUsage }
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+struct WritingFeedbackBody { suggestions:Vec<WritingSuggestion> }
+
+pub fn request_writing_feedback(provider:ProviderId,key:&str,model:&str,draft:&str,profile_snippets:&[String],kinds:&[String])->Result<WritingFeedbackResult,ManagedAiError>{
+    validate_key(key)?;if draft.trim().is_empty()||draft.chars().count()>20_000||profile_snippets.len()>20||profile_snippets.iter().any(|value|value.trim().is_empty()||value.chars().count()>500)||kinds.is_empty()||kinds.len()>5||kinds.iter().any(|value|!matches!(value.as_str(),"grammar"|"structure"|"specificity"|"shortening"|"brainstorm")){return Err(ManagedAiError::InvalidInput("scholarship writing request is invalid".into()));}
+    let prompt=format!("Review a scholarship essay without inventing experiences, achievements, identity, finances, or facts. Return small optional diffs only. originalQuote must be an exact non-empty substring of DRAFT. replacement must preserve the student's facts and voice. supportingProfileQuotes may only contain exact strings from PROFILE_SNIPPETS. If support is absent, suggest a question or structural edit without adding facts. Requested kinds: {}. DRAFT_JSON={} PROFILE_SNIPPETS_JSON={}",kinds.join(","),serde_json::to_string(draft).map_err(|_|ManagedAiError::InvalidInput("draft is invalid".into()))?,serde_json::to_string(profile_snippets).map_err(|_|ManagedAiError::InvalidInput("profile snippets are invalid".into()))?);
+    let schema=writing_feedback_schema();let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    Ok(WritingFeedbackResult{suggestions:validate_writing_feedback_value(value,draft,profile_snippets)?,usage})
+}
+
+fn validate_writing_feedback_value(value:Value,draft:&str,profile_snippets:&[String])->Result<Vec<WritingSuggestion>,ManagedAiError>{let body:WritingFeedbackBody=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;if body.suggestions.len()>12{return Err(ManagedAiError::InvalidResponse);}for suggestion in &body.suggestions{if !matches!(suggestion.kind.as_str(),"grammar"|"structure"|"specificity"|"shortening"|"brainstorm")||suggestion.original_quote.trim().is_empty()||!draft.contains(&suggestion.original_quote)||suggestion.replacement.chars().count()>4_000||suggestion.rationale.trim().is_empty()||suggestion.rationale.chars().count()>1_000||suggestion.supporting_profile_quotes.iter().any(|quote|!profile_snippets.contains(quote)){return Err(ManagedAiError::InvalidResponse);}}Ok(body.suggestions)}
+
+fn writing_feedback_schema()->Value{json!({"type":"object","additionalProperties":false,"properties":{"suggestions":{"type":"array","maxItems":12,"items":{"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","enum":["grammar","structure","specificity","shortening","brainstorm"]},"originalQuote":{"type":"string"},"replacement":{"type":"string"},"rationale":{"type":"string"},"supportingProfileQuotes":{"type":"array","items":{"type":"string"}}},"required":["kind","originalQuote","replacement","rationale","supportingProfileQuotes"]}}},"required":["suggestions"]})}
+
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 struct GroundedBody { content: String, citations: Vec<GroundedCitation>, unsupported: bool }
@@ -495,5 +517,14 @@ mod tests {
         assert!(validate_grounded_value(invented,&sources).is_err());
         let honest=json!({"content":"The notes do not cover this.","unsupported":true,"citations":[]});
         assert!(validate_grounded_value(honest,&sources).unwrap().0.starts_with("Not grounded"));
+    }
+    #[test] fn scholarship_feedback_cannot_invent_quotes_or_profile_support(){
+        let draft="I built a tutoring group for my algebra class.";let snippets=vec!["Field of study: mathematics".to_string()];
+        let valid=json!({"suggestions":[{"kind":"specificity","originalQuote":"tutoring group","replacement":"weekly tutoring group","rationale":"Adds a concrete cadence without changing the experience.","supportingProfileQuotes":[]}]});
+        assert_eq!(validate_writing_feedback_value(valid,draft,&snippets).unwrap().len(),1);
+        let invented=json!({"suggestions":[{"kind":"specificity","originalQuote":"won a national award","replacement":"won a national award","rationale":"Invented.","supportingProfileQuotes":[]}]});
+        assert!(validate_writing_feedback_value(invented,draft,&snippets).is_err());
+        let unsupported=json!({"suggestions":[{"kind":"structure","originalQuote":"algebra class","replacement":"algebra class","rationale":"Unsupported profile.","supportingProfileQuotes":["GPA: 4.00"]}]});
+        assert!(validate_writing_feedback_value(unsupported,draft,&snippets).is_err());
     }
 }

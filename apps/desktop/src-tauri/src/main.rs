@@ -14,6 +14,7 @@ mod planner;
 mod profile;
 mod school_calendar;
 mod schedule_reader;
+mod scholarships;
 mod school_provider;
 mod sync_crypto;
 mod sync_transport;
@@ -50,7 +51,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 17;
+const CURRENT_SCHEMA_VERSION: i64 = 25;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -283,6 +284,8 @@ struct CourseSuggestion {
     /// and a student cannot tell that from the meeting times alone.
     #[serde(default)]
     term_label: String,
+    #[serde(default)]
+    staleness_warning:String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -737,6 +740,17 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS sync_set_elements(entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,field_name TEXT NOT NULL,element_id TEXT NOT NULL,hlc TEXT NOT NULL,device_id TEXT NOT NULL,tombstone INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(entity_type,entity_id,field_name,element_id));
       CREATE TABLE IF NOT EXISTS source_conflicts(id TEXT PRIMARY KEY,description TEXT NOT NULL,resolved INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'overload',candidate_id TEXT,entity_type TEXT,entity_id TEXT,current_due_at TEXT,proposed_due_at TEXT,current_starts_at TEXT,proposed_starts_at TEXT,current_ends_at TEXT,proposed_ends_at TEXT,detected_at TEXT,resolved_at TEXT,resolution TEXT,FOREIGN KEY(candidate_id) REFERENCES import_candidates(id));
       CREATE TABLE IF NOT EXISTS reminder_deliveries(block_id TEXT PRIMARY KEY,plan_starts_at TEXT NOT NULL,delivered_at TEXT,snoozed_until TEXT,dismissed_at TEXT,FOREIGN KEY(block_id) REFERENCES plan_blocks(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS scholarship_opportunities(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS scholarship_applications(id TEXT PRIMARY KEY,opportunity_id TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS scholarship_drafts(id TEXT PRIMARY KEY,opportunity_id TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS scholarship_draft_versions(id TEXT PRIMARY KEY,draft_id TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(draft_id) REFERENCES scholarship_drafts(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS scholarship_story_examples(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS scholarship_crawler_runs(id TEXT PRIMARY KEY,source_id TEXT NOT NULL,payload TEXT NOT NULL,started_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS scholarship_sources(id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 1,weekly_refresh INTEGER NOT NULL DEFAULT 0,last_fetched_at TEXT,last_error TEXT,parser_version TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS scholarship_opportunity_diffs(id TEXT PRIMARY KEY,opportunity_id TEXT NOT NULL,source_id TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,detected_at TEXT NOT NULL,resolved_at TEXT,FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS scholarship_profiles(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS scholarship_writing_suggestions(id TEXT PRIMARY KEY,draft_id TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL,FOREIGN KEY(draft_id) REFERENCES scholarship_drafts(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS scholarship_requirement_documents(id TEXT PRIMARY KEY,opportunity_id TEXT NOT NULL,document_id TEXT NOT NULL,payload TEXT NOT NULL,imported_at TEXT NOT NULL,FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE,FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,UNIQUE(opportunity_id,document_id));
     COMMIT;",
   )?;
     ensure_column(
@@ -1115,10 +1129,325 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     backfill_legacy_canvas_links(&conn)?;
     profile::migrate(&conn, previous_schema_version)?;
     ensure_column(&conn, "class_meeting_series", "modality", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(&conn,"class_meeting_series","rotation_interval_weeks","INTEGER NOT NULL DEFAULT 1")?;
+    ensure_column(&conn,"class_meeting_series","rotation_offset_weeks","INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(&conn,"courses","created_at","TEXT NOT NULL DEFAULT ''")?;
     profile::initialize_defaults(&conn)?;
     conn.execute_batch(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))?;
     Ok(conn)
 }
+
+fn scholarship_payloads(conn:&Connection,sql:&str)->Result<Vec<serde_json::Value>>{
+    let mut query=conn.prepare(sql)?;
+    let values=query.query_map([],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+    Ok(values.into_iter().filter_map(|payload|serde_json::from_str(&payload).ok()).collect())
+}
+
+fn scholarship_profile_in(conn:&Connection)->Result<serde_json::Value>{
+    Ok(conn.query_row("SELECT payload FROM scholarship_profiles WHERE id='local'",[],|row|row.get::<_,String>(0)).optional()?.and_then(|payload|serde_json::from_str(&payload).ok()).unwrap_or_else(||serde_json::json!({"studyLevel":"","fieldsOfStudy":[],"locations":[],"citizenship":[],"residency":[],"gpa":null})))
+}
+
+fn json_strings(value:&serde_json::Value,field:&str)->Vec<String>{value.get(field).and_then(|value|value.as_array()).into_iter().flatten().filter_map(|value|value.as_str()).map(|value|value.trim().to_ascii_lowercase()).filter(|value|!value.is_empty()).collect()}
+
+fn scholarship_match(opportunity:&serde_json::Value,profile:&serde_json::Value)->serde_json::Value{
+    let mut matched=Vec::new();let mut unknown=Vec::new();let mut ineligible=Vec::new();
+    let scalar=profile.get("studyLevel").and_then(|value|value.as_str()).unwrap_or_default().trim().to_ascii_lowercase();let required=json_strings(opportunity,"studyLevels");
+    if required.is_empty(){unknown.push("Provider did not publish study-level criteria".to_string());}else if scalar.is_empty(){unknown.push("Your study level is not set".to_string());}else if required.iter().any(|value|value==&scalar){matched.push(serde_json::json!({"attribute":"Study level","profileValue":scalar,"requirement":required.join(", ")}));}else{ineligible.push(format!("Study level requires {}",required.join(", ")));}
+    for (field,profile_field,label) in [("fieldsOfStudy","fieldsOfStudy","Field of study"),("locations","locations","Location"),("citizenship","citizenship","Citizenship"),("residency","residency","Residency")]{let required=json_strings(opportunity,field);let supplied=json_strings(profile,profile_field);if required.is_empty(){unknown.push(format!("Provider did not publish {} criteria",label.to_ascii_lowercase()));}else if supplied.is_empty(){unknown.push(format!("Your {} is not set",label.to_ascii_lowercase()));}else if let Some(value)=supplied.iter().find(|value|required.contains(value)){matched.push(serde_json::json!({"attribute":label,"profileValue":value,"requirement":required.join(", ")}));}else{ineligible.push(format!("{label} requires {}",required.join(", ")));}}
+    let minimum=opportunity.get("minimumGpa").and_then(|value|value.as_f64());let gpa=profile.get("gpa").and_then(|value|value.as_f64());match(minimum,gpa){(None,_)=>unknown.push("Provider did not publish a GPA criterion".into()),(Some(_),None)=>unknown.push("Your GPA is not set".into()),(Some(required),Some(value))if value>=required=>matched.push(serde_json::json!({"attribute":"GPA","profileValue":format!("{value:.2}"),"requirement":format!("At least {required:.2}")})),(Some(required),Some(_))=>ineligible.push(format!("GPA requires at least {required:.2}")),};
+    let total=matched.len()+unknown.len()+ineligible.len();let score=if total==0{0.0}else{matched.len() as f64/total as f64};
+    serde_json::json!({"opportunityId":opportunity.get("id").and_then(|value|value.as_str()).unwrap_or_default(),"matched":matched,"unknown":unknown,"ineligible":ineligible,"score":score})
+}
+
+fn scholarship_workspace_in(conn:&Connection)->Result<serde_json::Value>{
+    let mut sources=Vec::new();
+    for source in scholarships::SOURCES{
+        conn.execute("INSERT OR IGNORE INTO scholarship_sources(id,parser_version) VALUES(?1,?2)",params![source.id,source.parser_version])?;
+        let (enabled,weekly,last_fetched,last_error):(i64,i64,Option<String>,Option<String>)=conn.query_row("SELECT enabled,weekly_refresh,last_fetched_at,last_error FROM scholarship_sources WHERE id=?1",params![source.id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
+        sources.push(serde_json::json!({"id":source.id,"name":source.name,"kind":source.id,"origin":format!("{}{}",source.origin,source.path),"enabled":enabled!=0,"weeklyRefresh":weekly!=0,"requiresCredential":false,"lastFetchedAt":last_fetched,"status":if last_error.is_some(){"error"}else{"ready"},"lastError":last_error,"attribution":source.attribution,"parserVersion":source.parser_version}));
+    }
+    sources.push(serde_json::json!({"id":"asu-scholarship-universe","name":"ASU Scholarship Universe","kind":"scholarship-universe","origin":"https://asu.scholarshipuniverse.com/","enabled":false,"weeklyRefresh":false,"requiresCredential":true,"status":"disabled","lastError":"Requires an admitted or current student's ASURITE sign-in. Coqui never crawls or reuses that authenticated session.","attribution":"Arizona State University","parserVersion":"manual-launch-1"}));
+    sources.push(serde_json::json!({"id":"careeronestop","name":"CareerOneStop Scholarship Finder API","kind":"careeronestop","origin":"https://api.careeronestop.org/api-explorer/","enabled":false,"weeklyRefresh":false,"requiresCredential":true,"status":"disabled","lastError":"Optional adapter is disabled until a CareerOneStop user ID and API bearer token are configured.","attribution":"CareerOneStop, U.S. Department of Labor","parserVersion":"credential-required-1"}));
+    sources.push(serde_json::json!({"id":"manual","name":"Manual links and files","kind":"manual","origin":"https://coqui.local/scholarships/manual","enabled":true,"weeklyRefresh":false,"requiresCredential":false,"status":"ready","attribution":"Added by the student","parserVersion":"manual-1"}));
+    let opportunities=scholarship_payloads(conn,"SELECT payload FROM scholarship_opportunities ORDER BY updated_at DESC")?;let profile=scholarship_profile_in(conn)?;let matches=opportunities.iter().map(|opportunity|scholarship_match(opportunity,&profile)).collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "sources":sources,
+        "opportunities":opportunities,
+        "documents":scholarship_payloads(conn,"SELECT payload FROM scholarship_requirement_documents ORDER BY imported_at DESC")?,
+        "applications":scholarship_payloads(conn,"SELECT payload FROM scholarship_applications ORDER BY updated_at DESC")?,
+        "drafts":scholarship_payloads(conn,"SELECT payload FROM scholarship_drafts ORDER BY updated_at DESC")?,
+        "stories":scholarship_payloads(conn,"SELECT payload FROM scholarship_story_examples ORDER BY updated_at DESC")?,
+        "runs":scholarship_payloads(conn,"SELECT payload FROM scholarship_crawler_runs ORDER BY started_at DESC LIMIT 30")?,
+        "diffs":scholarship_payloads(conn,"SELECT payload FROM scholarship_opportunity_diffs WHERE resolved_at IS NULL ORDER BY detected_at DESC")?,
+        "profile":profile,
+        "matches":matches
+        ,"suggestions":scholarship_payloads(conn,"SELECT payload FROM scholarship_writing_suggestions WHERE status='pending' ORDER BY created_at DESC")?
+    }))
+}
+
+#[tauri::command]
+fn get_scholarship_workspace(state:tauri::State<AppState>)->Result<serde_json::Value>{state.require_unlocked()?;scholarship_workspace_in(&state.db.lock().unwrap())}
+
+fn preserve_scholarship_student_fields(next:&mut serde_json::Value,previous:&serde_json::Value){
+    for field in ["state","notes","priority","taskIds"]{if let Some(value)=previous.get(field){next[field]=value.clone();}}
+}
+
+fn persist_scholarship_refresh(conn:&Connection,refresh:scholarships::SourceRefresh,run_id:&str)->Result<serde_json::Value>{
+    let tx=conn.unchecked_transaction()?; let mut discovered=0usize; let mut changed=0usize; let mut seen=std::collections::HashSet::new();
+    for opportunity in refresh.opportunities{
+        let mut next=serde_json::to_value(&opportunity).map_err(|_|AppError::Invalid("Scholarship result could not be stored".into()))?;
+        let id=opportunity.id.clone(); seen.insert(id.clone());
+        let previous=tx.query_row("SELECT payload FROM scholarship_opportunities WHERE id=?1",params![id],|row|row.get::<_,String>(0)).optional()?.and_then(|payload|serde_json::from_str::<serde_json::Value>(&payload).ok());
+        if let Some(previous)=previous{
+            preserve_scholarship_student_fields(&mut next,&previous);
+            let critical=["title","awardMinimum","awardMaximum","deadline","deadlineLabel","applicationUrl","summary"];
+            if critical.iter().any(|field|previous.get(*field)!=next.get(*field)){
+                next["verificationStatus"]=serde_json::Value::String("changed".into()); changed+=1;
+                let diff_id=Uuid::new_v4().to_string(); let payload=serde_json::json!({"id":diff_id,"opportunityId":id,"sourceId":refresh.source.id,"kind":"source_changed","detectedAt":refresh.fetched_at,"before":previous,"after":next});
+                tx.execute("INSERT INTO scholarship_opportunity_diffs(id,opportunity_id,source_id,kind,payload,detected_at) VALUES(?1,?2,?3,'source_changed',?4,?5)",params![diff_id,id,refresh.source.id,payload.to_string(),refresh.fetched_at])?;
+            }
+        }else{discovered+=1;}
+        tx.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![id,next.to_string(),refresh.fetched_at])?;
+    }
+    let existing=scholarship_payloads(&tx,&format!("SELECT payload FROM scholarship_opportunities WHERE json_extract(payload,'$.sourceId')='{}'",refresh.source.id.replace('\'',"''")))?;
+    for mut previous in existing{
+        let Some(id)=previous.get("id").and_then(|value|value.as_str()).map(str::to_owned) else{continue}; if seen.contains(&id){continue;}
+        if previous.get("freshness").and_then(|value|value.as_str())==Some("stale"){continue;}
+        previous["freshness"]=serde_json::Value::String("stale".into()); previous["verificationStatus"]=serde_json::Value::String("changed".into()); changed+=1;
+        let diff_id=Uuid::new_v4().to_string();let payload=serde_json::json!({"id":diff_id,"opportunityId":id,"sourceId":refresh.source.id,"kind":"missing_from_source","detectedAt":refresh.fetched_at});
+        tx.execute("UPDATE scholarship_opportunities SET payload=?2,updated_at=?3 WHERE id=?1",params![id,previous.to_string(),refresh.fetched_at])?;
+        tx.execute("INSERT INTO scholarship_opportunity_diffs(id,opportunity_id,source_id,kind,payload,detected_at) VALUES(?1,?2,?3,'missing_from_source',?4,?5)",params![diff_id,id,refresh.source.id,payload.to_string(),refresh.fetched_at])?;
+    }
+    let run=serde_json::json!({"id":run_id,"sourceId":refresh.source.id,"startedAt":refresh.fetched_at,"completedAt":refresh.fetched_at,"status":"complete","discovered":discovered,"changed":changed,"skipped":0,"reasonCategories":[]});
+    tx.execute("UPDATE scholarship_crawler_runs SET payload=?2 WHERE id=?1",params![run_id,run.to_string()])?;
+    tx.execute("UPDATE scholarship_sources SET last_fetched_at=?2,last_error=NULL,parser_version=?3 WHERE id=?1",params![refresh.source.id,refresh.fetched_at,refresh.source.parser_version])?;
+    tx.commit()?; scholarship_workspace_in(conn)
+}
+
+fn refresh_scholarship_source_blocking(state:&AppState,source_id:String)->Result<serde_json::Value>{
+    state.require_unlocked()?; let source=scholarships::descriptor(&source_id).map_err(|error|AppError::Invalid(error.to_string()))?; let run_id=Uuid::new_v4().to_string(); let started_at=Utc::now();
+    {let db=state.db.lock().unwrap();let latest=db.query_row("SELECT started_at FROM scholarship_crawler_runs WHERE source_id=?1 ORDER BY started_at DESC LIMIT 1",params![source_id],|row|row.get::<_,String>(0)).optional()?;if latest.and_then(|value|DateTime::parse_from_rfc3339(&value).ok()).is_some_and(|last|started_at.signed_duration_since(last.with_timezone(&Utc))<Duration::minutes(1)){return Err(AppError::Invalid("Wait one minute before refreshing this source again".into()));}let running=serde_json::json!({"id":run_id,"sourceId":source_id,"startedAt":started_at.to_rfc3339(),"status":"running","discovered":0,"changed":0,"skipped":0,"reasonCategories":[]});db.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES(?1,?2,?3,?4)",params![run_id,source_id,running.to_string(),started_at.to_rfc3339()])?;}
+    match scholarships::refresh(&source_id){Ok(refresh)=>{let db=state.db.lock().unwrap();persist_scholarship_refresh(&db,refresh,&run_id)}Err(error)=>{let safe=error.to_string();let completed=Utc::now().to_rfc3339();let failed=serde_json::json!({"id":run_id,"sourceId":source.id,"startedAt":started_at.to_rfc3339(),"completedAt":completed,"status":"failed","discovered":0,"changed":0,"skipped":0,"reasonCategories":["source_unavailable"]});let db=state.db.lock().unwrap();db.execute("UPDATE scholarship_crawler_runs SET payload=?2 WHERE id=?1",params![run_id,failed.to_string()])?;db.execute("UPDATE scholarship_sources SET last_error=?2 WHERE id=?1",params![source.id,safe])?;Err(AppError::Invalid("Scholarship source refresh failed; saved opportunities were unchanged".into()))}}
+}
+
+#[tauri::command]
+async fn refresh_scholarship_source(state:tauri::State<'_,AppState>,source_id:String)->Result<serde_json::Value>{state.require_unlocked()?;let state=state.inner().clone();tauri::async_runtime::spawn_blocking(move||refresh_scholarship_source_blocking(&state,source_id)).await.map_err(|error|AppError::Background(error.to_string()))?}
+
+#[tauri::command]
+fn set_scholarship_source_refresh(state:tauri::State<AppState>,source_id:String,weekly_refresh:bool)->Result<serde_json::Value>{
+    state.require_unlocked()?;scholarships::descriptor(&source_id).map_err(|error|AppError::Invalid(error.to_string()))?;let db=state.db.lock().unwrap();
+    db.execute("INSERT INTO scholarship_sources(id,weekly_refresh,parser_version) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET weekly_refresh=excluded.weekly_refresh",params![source_id,i64::from(weekly_refresh),scholarships::descriptor(&source_id).unwrap().parser_version])?;
+    scholarship_workspace_in(&db)
+}
+
+#[tauri::command]
+fn resolve_scholarship_diff(state:tauri::State<AppState>,diff_id:String)->Result<serde_json::Value>{
+    state.require_unlocked()?;let db=state.db.lock().unwrap();let changed=db.execute("UPDATE scholarship_opportunity_diffs SET resolved_at=?2 WHERE id=?1 AND resolved_at IS NULL",params![diff_id,Utc::now().to_rfc3339()])?;
+    if changed!=1{return Err(AppError::Invalid("Scholarship change was already resolved or not found".into()));}scholarship_workspace_in(&db)
+}
+
+#[tauri::command]
+fn save_scholarship_profile(state:tauri::State<AppState>,profile:serde_json::Value)->Result<serde_json::Value>{
+    state.require_unlocked()?;let study_level=profile.get("studyLevel").and_then(|value|value.as_str()).unwrap_or_default();if study_level.len()>100{return Err(AppError::Invalid("Study level is too long".into()));}
+    for field in ["fieldsOfStudy","locations","citizenship","residency"]{let Some(values)=profile.get(field).and_then(|value|value.as_array())else{return Err(AppError::Invalid("Scholarship profile fields must be lists".into()));};if values.len()>25||values.iter().any(|value|value.as_str().is_none_or(|value|value.trim().is_empty()||value.len()>120)){return Err(AppError::Invalid("Scholarship profile contains an invalid value".into()));}}
+    if profile.get("gpa").is_some_and(|value|!value.is_null()&&value.as_f64().is_none_or(|value|!(0.0..=5.0).contains(&value))){return Err(AppError::Invalid("GPA must be between 0 and 5".into()));}
+    let db=state.db.lock().unwrap();db.execute("INSERT INTO scholarship_profiles(id,payload,updated_at) VALUES('local',?1,?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![profile.to_string(),Utc::now().to_rfc3339()])?;scholarship_workspace_in(&db)
+}
+
+fn scholarship_deadline_rfc3339(conn:&Connection,value:&str)->Result<String>{
+    let date=NaiveDate::parse_from_str(value,"%Y-%m-%d").map_err(|_|AppError::Invalid("This scholarship does not have an exact deadline yet".into()))?;
+    let timezone=canvas_calendar_timezone(conn);timezone.with_ymd_and_hms(date.year(),date.month(),date.day(),23,59,0).earliest().map(|value|value.to_rfc3339()).ok_or_else(||AppError::Invalid("The scholarship deadline is not valid in your timezone".into()))
+}
+
+fn plan_scholarship_deadline_in(conn:&Connection,opportunity_id:&str)->Result<()> {
+    let payload=conn.query_row("SELECT payload FROM scholarship_opportunities WHERE id=?1",params![opportunity_id],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("Scholarship opportunity was not found".into()))?;
+    let mut opportunity:serde_json::Value=serde_json::from_str(&payload).map_err(|_|AppError::Invalid("Scholarship opportunity could not be read".into()))?;
+    if opportunity.get("taskIds").and_then(|value|value.as_array()).is_some_and(|ids|!ids.is_empty()){return Ok(());}
+    let deadline=opportunity.get("deadline").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("This scholarship does not have an exact deadline yet".into()))?;
+    let due=scholarship_deadline_rfc3339(conn,deadline)?;let title=opportunity.get("title").and_then(|value|value.as_str()).unwrap_or("scholarship application");
+    let tx=conn.unchecked_transaction()?;let task_id=insert_task(&tx,&format!("Submit {title}"),60,Some(&due),None)?;
+    opportunity["taskIds"]=serde_json::json!([task_id]);opportunity["state"]=serde_json::Value::String("preparing".into());
+    tx.execute("UPDATE scholarship_opportunities SET payload=?2,updated_at=?3 WHERE id=?1",params![opportunity_id,opportunity.to_string(),Utc::now().to_rfc3339()])?;
+    mutation(&tx,"scholarship_opportunity",opportunity_id,"deadline_task_created","{}")?;tx.commit()?;regenerate_plan(conn,None)
+}
+
+#[tauri::command]
+fn plan_scholarship_deadline(state:tauri::State<AppState>,opportunity_id:String)->Result<serde_json::Value>{state.require_unlocked()?;let db=state.db.lock().unwrap();require_onboarded(&db)?;plan_scholarship_deadline_in(&db,&opportunity_id)?;scholarship_workspace_in(&db)}
+
+fn scholarship_profile_snippets(profile:&serde_json::Value)->Vec<String>{
+    let mut snippets=Vec::new();if let Some(value)=profile.get("studyLevel").and_then(|value|value.as_str()).filter(|value|!value.trim().is_empty()){snippets.push(format!("Study level: {}",value.trim()));}
+    for (field,label) in [("fieldsOfStudy","Field of study"),("locations","Location"),("citizenship","Citizenship"),("residency","Residency")]{for value in json_strings(profile,field){snippets.push(format!("{label}: {value}"));}}
+    if let Some(value)=profile.get("gpa").and_then(|value|value.as_f64()){snippets.push(format!("GPA: {value:.2}"));}snippets
+}
+
+fn scholarship_writing_snippets(conn:&Connection)->Result<Vec<String>>{
+    let mut snippets=scholarship_profile_snippets(&scholarship_profile_in(conn)?);
+    for story in scholarship_payloads(conn,"SELECT payload FROM scholarship_story_examples ORDER BY updated_at DESC LIMIT 30")?{
+        let title=story.get("title").and_then(|value|value.as_str()).unwrap_or_default().trim();
+        let detail=story.get("detail").and_then(|value|value.as_str()).unwrap_or_default().trim();
+        if !title.is_empty()&&!detail.is_empty(){snippets.push(format!("Story — {title}: {detail}"));}
+    }
+    Ok(snippets)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct ScholarshipWritingRequest{draft_id:String,kinds:Vec<String>,profile_snippets:Vec<String>,provider:String,model:String,policy_acknowledged:bool,consent:bool}
+
+#[tauri::command]
+fn preview_scholarship_writing(state:tauri::State<AppState>,draft_id:String)->Result<serde_json::Value>{
+    state.require_unlocked()?;let db=state.db.lock().unwrap();let (content,opportunity_id):(String,String)=db.query_row("SELECT json_extract(payload,'$.content'),opportunity_id FROM scholarship_drafts WHERE id=?1",params![draft_id],|row|Ok((row.get(0)?,row.get(1)?))).optional()?.ok_or_else(||AppError::Invalid("Save the draft before requesting feedback".into()))?;
+    let policy=db.query_row("SELECT json_extract(payload,'$.aiPolicy') FROM scholarship_opportunities WHERE id=?1",params![opportunity_id],|row|row.get::<_,String>(0)).optional()?.unwrap_or_else(||"unknown".into());if policy=="prohibited"{return Err(AppError::Invalid("This opportunity prohibits AI writing assistance".into()));}
+    let (provider,key,model)=resolve_ai_provider(&db,managed_ai::AiCapability::ScholarshipWriting)?;drop(key);let snippets=scholarship_writing_snippets(&db)?;
+    Ok(serde_json::json!({"draftId":draft_id,"provider":provider.as_str(),"model":model,"policy":policy,"draftScope":{"characters":content.chars().count(),"words":content.split_whitespace().count()},"profileSnippets":snippets,"disclosureUrl":provider.disclosure_url()}))
+}
+
+#[tauri::command]
+async fn request_scholarship_writing_feedback(state:tauri::State<'_,AppState>,input:ScholarshipWritingRequest)->Result<serde_json::Value>{
+    state.require_unlocked()?;if !input.consent{return Err(AppError::Invalid("Explicit consent is required before draft text leaves this device".into()));}let state=state.inner().clone();tauri::async_runtime::spawn_blocking(move||{
+        state.require_unlocked()?;let (draft,policy,provider,key,model)={let db=state.db.lock().unwrap();let (draft,opportunity_id):(String,String)=db.query_row("SELECT json_extract(payload,'$.content'),opportunity_id FROM scholarship_drafts WHERE id=?1",params![input.draft_id],|row|Ok((row.get(0)?,row.get(1)?))).optional()?.ok_or_else(||AppError::Invalid("Draft was not found".into()))?;let policy=db.query_row("SELECT json_extract(payload,'$.aiPolicy') FROM scholarship_opportunities WHERE id=?1",params![opportunity_id],|row|row.get::<_,String>(0)).optional()?.unwrap_or_else(||"unknown".into());if policy=="prohibited"{return Err(AppError::Invalid("This opportunity prohibits AI writing assistance".into()));}if policy!="allowed"&&!input.policy_acknowledged{return Err(AppError::Invalid("Acknowledge the opportunity's unknown or restricted AI policy first".into()));}let provider:ai_providers::ProviderId=input.provider.parse()?;let current_model=ai_model(&db,provider);if current_model!=input.model{return Err(AppError::Invalid("AI provider settings changed; review the disclosure again".into()));}let allowed=scholarship_writing_snippets(&db)?;if input.profile_snippets.iter().any(|snippet|!allowed.contains(snippet)){return Err(AppError::Invalid("A selected profile snippet is no longer available".into()));}let key=ai_providers::load_key(provider)?;(draft,policy,provider,key,current_model)};
+        let started=Instant::now();let response=ai_providers::request_writing_feedback(provider,&key,&model,&draft,&input.profile_snippets,&input.kinds)?;let db=state.db.lock().unwrap();let tx=db.unchecked_transaction()?;for suggestion in response.suggestions{let id=Uuid::new_v4().to_string();let payload=serde_json::json!({"id":id,"draftId":input.draft_id,"kind":suggestion.kind,"originalQuote":suggestion.original_quote,"replacement":suggestion.replacement,"rationale":suggestion.rationale,"supportingProfileQuotes":suggestion.supporting_profile_quotes,"provider":provider.as_str(),"model":model,"policy":policy,"status":"pending","createdAt":Utc::now().to_rfc3339()});tx.execute("INSERT INTO scholarship_writing_suggestions(id,draft_id,payload,status,created_at) VALUES(?1,?2,?3,'pending',?4)",params![id,input.draft_id,payload.to_string(),Utc::now().to_rfc3339()])?;}record_ai_invocation(&tx,provider.as_str(),managed_ai::AiCapability::ScholarshipWriting,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,response.usage.input_tokens,response.usage.output_tokens,"suggestions_created",None)?;tx.commit()?;scholarship_workspace_in(&db)
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+fn resolve_scholarship_writing_suggestion(state:tauri::State<AppState>,suggestion_id:String,apply:bool)->Result<serde_json::Value>{
+    state.require_unlocked()?;let db=state.db.lock().unwrap();let (draft_id,payload):(String,String)=db.query_row("SELECT draft_id,payload FROM scholarship_writing_suggestions WHERE id=?1 AND status='pending'",params![suggestion_id],|row|Ok((row.get(0)?,row.get(1)?))).optional()?.ok_or_else(||AppError::Invalid("Writing suggestion is no longer pending".into()))?;let suggestion:serde_json::Value=serde_json::from_str(&payload).map_err(|_|AppError::Invalid("Writing suggestion could not be read".into()))?;let tx=db.unchecked_transaction()?;
+    if apply{let draft_payload=tx.query_row("SELECT payload FROM scholarship_drafts WHERE id=?1",params![draft_id],|row|row.get::<_,String>(0))?;let mut draft:serde_json::Value=serde_json::from_str(&draft_payload).map_err(|_|AppError::Invalid("Draft could not be read".into()))?;let content=draft.get("content").and_then(|value|value.as_str()).unwrap_or_default();let original=suggestion.get("originalQuote").and_then(|value|value.as_str()).unwrap_or_default();if original.is_empty()||!content.contains(original){return Err(AppError::Invalid("The draft changed; request fresh feedback before applying this suggestion".into()));}let replacement=suggestion.get("replacement").and_then(|value|value.as_str()).unwrap_or_default();let now=Utc::now().to_rfc3339();draft["content"]=serde_json::Value::String(content.replacen(original,replacement,1));draft["updatedAt"]=serde_json::Value::String(now.clone());let version_id=Uuid::new_v4().to_string();let version=serde_json::json!({"id":version_id,"draftId":draft_id,"content":draft["content"],"createdAt":now,"source":"ai_suggestion_applied"});if !draft.get("versions").is_some_and(|value|value.is_array()){draft["versions"]=serde_json::json!([]);}draft["versions"].as_array_mut().unwrap().push(version.clone());tx.execute("UPDATE scholarship_drafts SET payload=?2,updated_at=?3 WHERE id=?1",params![draft_id,draft.to_string(),now])?;tx.execute("INSERT INTO scholarship_draft_versions(id,draft_id,payload,created_at) VALUES(?1,?2,?3,?4)",params![version_id,draft_id,version.to_string(),now])?;mutation(&tx,"scholarship_draft",&draft_id,"suggestion_applied","{}")?;}
+    tx.execute("UPDATE scholarship_writing_suggestions SET status=?2 WHERE id=?1",params![suggestion_id,if apply{"applied"}else{"dismissed"}])?;tx.commit()?;scholarship_workspace_in(&db)
+}
+
+fn scholarship_requirement_suggestions(segments:&[imports::Segment])->(Vec<String>,Vec<serde_json::Value>){
+    let mut requirements=Vec::new();let mut prompts=Vec::new();let word_limit=regex::Regex::new(r"(?i)\b([1-9][0-9]{1,3})\s*words?\b").unwrap();
+    for line in segments.iter().flat_map(|segment|segment.text.lines()).map(|line|line.trim().trim_start_matches(['-','•','*',' '])).filter(|line|!line.is_empty()){
+        let lower=line.to_lowercase();
+        for requirement in [
+            lower.contains("transcript").then_some(if lower.contains("official"){"Official transcript"}else{"Transcript"}),
+            (lower.contains("resume")||lower.contains("résumé")).then_some("Résumé"),
+            lower.contains("recommendation").then_some("Letter of recommendation"),
+            lower.contains("fafsa").then_some("FAFSA record"),
+            lower.contains("portfolio").then_some("Portfolio"),
+            lower.contains("proof of enrollment").then_some("Proof of enrollment"),
+            lower.contains("financial aid form").then_some("Financial aid form"),
+        ].into_iter().flatten(){if !requirements.iter().any(|value:&String|value.eq_ignore_ascii_case(requirement)){requirements.push(requirement.to_string());}}
+        let looks_like_prompt=(lower.contains("essay")||lower.contains("prompt")||line.ends_with('?'))&&line.chars().count()>=20&&line.chars().count()<=800;
+        if looks_like_prompt&&!prompts.iter().any(|value:&serde_json::Value|value.get("prompt").and_then(|value|value.as_str()).is_some_and(|value|value.eq_ignore_ascii_case(line))){
+            let limit=word_limit.captures(line).and_then(|capture|capture.get(1)).and_then(|value|value.as_str().parse::<u64>().ok());
+            prompts.push(serde_json::json!({"id":Uuid::new_v4().to_string(),"prompt":line,"wordLimit":limit}));
+        }
+        if requirements.len()>=25&&prompts.len()>=12{break;}
+    }
+    requirements.truncate(25);prompts.truncate(12);(requirements,prompts)
+}
+
+#[tauri::command]
+fn import_scholarship_requirements(state:tauri::State<AppState>,opportunity_id:String,file_name:String,bytes:Vec<u8>)->Result<serde_json::Value>{
+    state.require_unlocked()?;
+    if bytes.is_empty()||bytes.len() as u64>MAX_IMPORT_BYTES{return Err(AppError::Invalid("files must be non-empty and 25 MB or smaller".into()));}
+    let name=PathBuf::from(&file_name).file_name().and_then(|value|value.to_str()).filter(|value|!value.is_empty()).unwrap_or("requirements-document").to_string();
+    let detected=imports::detect_document(&bytes,&name).map_err(|error|AppError::Extract(error.to_string()))?;
+    let mut scratch=tempfile::Builder::new().prefix("coqui-scholarship-").suffix(&format!(".{}",Path::new(&name).extension().and_then(|value|value.to_str()).unwrap_or("bin"))).tempfile()?;
+    std::io::Write::write_all(&mut scratch,&bytes)?;
+    let db=state.db.lock().unwrap();
+    if db.query_row("SELECT 1 FROM scholarship_opportunities WHERE id=?1",params![opportunity_id],|row|row.get::<_,i64>(0)).optional()?.is_none(){return Err(AppError::Invalid("Scholarship opportunity was not found".into()));}
+    let timezone=db.query_row("SELECT value FROM settings WHERE key='timezone'",[],|row|row.get::<_,String>(0)).unwrap_or_else(|_|"Etc/UTC".into());
+    let extraction=imports::extract_document(imports::DocumentSource::File(scratch.path()),&bytes,&name,&timezone,&state.ocr,&[],&[]).map_err(|error|AppError::Extract(error.to_string()))?;
+    if extraction.segments.iter().all(|segment|segment.text.trim().is_empty()){return Err(AppError::Invalid("This file contained no locally extractable text. Try a text-based PDF, DOCX, image, or plain-text copy.".into()));}
+    let hash=hex::encode(Sha256::digest(&bytes));
+    let existing=db.query_row("SELECT id FROM documents WHERE sha256=?1 ORDER BY imported_at LIMIT 1",params![hash],|row|row.get::<_,String>(0)).optional()?;
+    let document_id=if let Some(id)=existing{id}else{
+        let document_key=random_key();let(encrypted,content_nonce)=encrypt(&document_key,&bytes)?;let(wrapped,key_nonce)=encrypt(&state.master_key,&document_key)?;let id=Uuid::new_v4().to_string();let vault_path=state.vault.join(format!("{id}.vault"));fs::write(&vault_path,encrypted)?;let now=Utc::now().to_rfc3339();
+        db.execute("INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at,extraction_status,extraction_error,source_retention) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'complete',NULL,'keep_encrypted')",params![id,name,detected.mime(),vault_path.to_string_lossy(),B64.encode(wrapped),B64.encode(key_nonce),B64.encode(content_nonce),hash,now])?;
+        id
+    };
+    let segment_count:i64=db.query_row("SELECT COUNT(*) FROM document_segments WHERE document_id=?1",params![document_id],|row|row.get(0))?;
+    if segment_count==0{for(position,segment)in extraction.segments.iter().take(250).enumerate(){let text=segment.text.chars().take(50_000).collect::<String>();if !text.trim().is_empty(){db.execute("INSERT INTO document_segments(id,document_id,locator,text,confidence,position) VALUES(?1,?2,?3,?4,?5,?6)",params![Uuid::new_v4().to_string(),document_id,segment.locator,text,segment.confidence,position as i64])?;}}}
+    let(requirements,prompts)=scholarship_requirement_suggestions(&extraction.segments);let mut warnings=extraction.warnings;if requirements.is_empty()&&prompts.is_empty(){warnings.push("No requirements or essay prompts were recognized. Review the source manually.".into());}
+    let imported_at=Utc::now().to_rfc3339();let link_id=db.query_row("SELECT id FROM scholarship_requirement_documents WHERE opportunity_id=?1 AND document_id=?2",params![opportunity_id,document_id],|row|row.get::<_,String>(0)).optional()?.unwrap_or_else(||Uuid::new_v4().to_string());
+    let payload=serde_json::json!({"id":link_id,"opportunityId":opportunity_id,"documentId":document_id,"fileName":name,"mime":detected.mime(),"importedAt":imported_at,"status":if requirements.is_empty()&&prompts.is_empty(){"needs_attention"}else{"review_required"},"proposedRequirements":requirements,"proposedPrompts":prompts,"warnings":warnings,"selectedRequirements":[],"selectedPromptIds":[]});
+    db.execute("INSERT INTO scholarship_requirement_documents(id,opportunity_id,document_id,payload,imported_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(opportunity_id,document_id) DO UPDATE SET payload=excluded.payload,imported_at=excluded.imported_at",params![link_id,opportunity_id,document_id,payload.to_string(),imported_at])?;
+    scholarship_workspace_in(&db)
+}
+
+#[tauri::command]
+fn apply_scholarship_requirements_review(state:tauri::State<AppState>,document_id:String,requirements:Vec<String>,prompt_ids:Vec<String>)->Result<serde_json::Value>{
+    state.require_unlocked()?;if requirements.len()>25||prompt_ids.len()>12{return Err(AppError::Invalid("Too many imported details were selected".into()));}
+    let db=state.db.lock().unwrap();let(payload,opportunity_id):(String,String)=db.query_row("SELECT payload,opportunity_id FROM scholarship_requirement_documents WHERE id=?1",params![document_id],|row|Ok((row.get(0)?,row.get(1)?))).optional()?.ok_or_else(||AppError::Invalid("Requirements import was not found".into()))?;let mut review:serde_json::Value=serde_json::from_str(&payload).map_err(|_|AppError::Invalid("Requirements import could not be read".into()))?;
+    let proposed_requirements=review.get("proposedRequirements").and_then(|value|value.as_array()).cloned().unwrap_or_default();if requirements.iter().any(|selected|!proposed_requirements.iter().any(|value|value.as_str()==Some(selected))){return Err(AppError::Invalid("A selected requirement is no longer in this import".into()));}
+    let proposed_prompts=review.get("proposedPrompts").and_then(|value|value.as_array()).cloned().unwrap_or_default();if prompt_ids.iter().any(|selected|!proposed_prompts.iter().any(|value|value.get("id").and_then(|value|value.as_str())==Some(selected))){return Err(AppError::Invalid("A selected prompt is no longer in this import".into()));}
+    let opportunity_payload=db.query_row("SELECT payload FROM scholarship_opportunities WHERE id=?1",params![opportunity_id],|row|row.get::<_,String>(0))?;let mut opportunity:serde_json::Value=serde_json::from_str(&opportunity_payload).map_err(|_|AppError::Invalid("Scholarship opportunity could not be read".into()))?;
+    let mut documents=opportunity.get("requiredDocuments").and_then(|value|value.as_array()).cloned().unwrap_or_default();for selected in &requirements{if !documents.iter().any(|value|value.as_str().is_some_and(|value|value.eq_ignore_ascii_case(selected))){documents.push(serde_json::Value::String(selected.clone()));}}
+    let mut prompts=opportunity.get("essayPrompts").and_then(|value|value.as_array()).cloned().unwrap_or_default();for selected in proposed_prompts.iter().filter(|value|value.get("id").and_then(|value|value.as_str()).is_some_and(|id|prompt_ids.contains(&id.to_string()))){if !prompts.iter().any(|value|value.get("prompt").and_then(|value|value.as_str())==selected.get("prompt").and_then(|value|value.as_str())){prompts.push(selected.clone());}}
+    opportunity["requiredDocuments"]=serde_json::Value::Array(documents);opportunity["essayPrompts"]=serde_json::Value::Array(prompts);opportunity["verificationStatus"]=serde_json::Value::String("verified".into());let now=Utc::now().to_rfc3339();
+    review["status"]=serde_json::Value::String("reviewed".into());review["selectedRequirements"]=serde_json::json!(requirements);review["selectedPromptIds"]=serde_json::json!(prompt_ids);
+    let tx=db.unchecked_transaction()?;tx.execute("UPDATE scholarship_opportunities SET payload=?2,updated_at=?3 WHERE id=?1",params![opportunity_id,opportunity.to_string(),now])?;tx.execute("UPDATE scholarship_requirement_documents SET payload=?2 WHERE id=?1",params![document_id,review.to_string()])?;tx.commit()?;mutation(&db,"scholarship_opportunity",&opportunity_id,"requirements_reviewed","{}")?;scholarship_workspace_in(&db)
+}
+
+#[tauri::command]
+fn save_scholarship_opportunity(state: tauri::State<AppState>, opportunity: serde_json::Value) -> Result<serde_json::Value> {
+    state.require_unlocked()?;
+    let id = opportunity.get("id").and_then(|value| value.as_str()).filter(|value| !value.is_empty()).ok_or_else(|| AppError::Invalid("Scholarship id is required".into()))?;
+    let title = opportunity.get("title").and_then(|value| value.as_str()).unwrap_or_default().trim();
+    let url = opportunity.get("canonicalUrl").and_then(|value| value.as_str()).unwrap_or_default();
+    if title.is_empty() || canvas_calendar::validate_url(url).is_err() { return Err(AppError::Invalid("Scholarship title and a public HTTPS source URL are required".into())); }
+    let now = Utc::now().to_rfc3339();
+    let db = state.db.lock().unwrap();
+    db.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at", params![id, opportunity.to_string(), now])?;
+    mutation(&db,"scholarship_opportunity",id,"saved","{}")?;
+    drop(db);
+    get_scholarship_workspace(state)
+}
+
+#[tauri::command]
+fn save_scholarship_application(state: tauri::State<AppState>, application: serde_json::Value) -> Result<serde_json::Value> {
+    state.require_unlocked()?;
+    let id=application.get("id").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Application id is required".into()))?;
+    let opportunity_id=application.get("opportunityId").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Opportunity id is required".into()))?;
+    let now=Utc::now().to_rfc3339(); let db=state.db.lock().unwrap();
+    db.execute("INSERT INTO scholarship_applications(id,opportunity_id,payload,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![id,opportunity_id,application.to_string(),now])?;
+    mutation(&db,"scholarship_application",id,"saved","{}")?; drop(db); get_scholarship_workspace(state)
+}
+
+#[tauri::command]
+fn save_scholarship_draft(state: tauri::State<AppState>, draft: serde_json::Value) -> Result<serde_json::Value> {
+    state.require_unlocked()?;let db=state.db.lock().unwrap();persist_scholarship_draft(&db,draft,true)?;scholarship_workspace_in(&db)
+}
+
+fn persist_scholarship_draft(conn:&Connection,draft:serde_json::Value,create_version:bool)->Result<()>{
+    let id=draft.get("id").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Draft id is required".into()))?.to_string();
+    let opportunity_id=draft.get("opportunityId").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Opportunity id is required".into()))?.to_string();
+    let content=draft.get("content").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Draft content is required".into()))?.to_string();
+    if !create_version&&conn.query_row("SELECT 1 FROM scholarship_drafts WHERE id=?1",params![id],|row|row.get::<_,i64>(0)).optional()?.is_none(){return Err(AppError::Invalid("Save the first draft version before autosave begins".into()));}
+    let now=Utc::now().to_rfc3339();let mut draft=draft;
+    if !create_version{
+        draft["updatedAt"]=serde_json::Value::String(now.clone());
+        conn.execute("UPDATE scholarship_drafts SET opportunity_id=?2,payload=?3,updated_at=?4 WHERE id=?1",params![id,opportunity_id,draft.to_string(),now])?;
+        return mutation(conn,"scholarship_draft",&id,"autosaved","{}");
+    }
+    let version_id=Uuid::new_v4().to_string();let tx=conn.unchecked_transaction()?;
+    let version=serde_json::json!({"id":version_id,"draftId":id,"content":content,"createdAt":now,"source":"student"});
+    if !draft.get("versions").is_some_and(|value|value.is_array()){draft["versions"]=serde_json::json!([]);}
+    draft["versions"].as_array_mut().unwrap().push(version.clone());
+    draft["updatedAt"]=serde_json::Value::String(now.clone());
+    tx.execute("INSERT INTO scholarship_drafts(id,opportunity_id,payload,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![id,opportunity_id,draft.to_string(),now])?;
+    tx.execute("INSERT INTO scholarship_draft_versions(id,draft_id,payload,created_at) VALUES(?1,?2,?3,?4)",params![version_id,id,version.to_string(),now])?;
+    tx.commit()?;mutation(conn,"scholarship_draft",&id,"version_saved","{}")
+}
+
+#[tauri::command]
+fn autosave_scholarship_draft(state:tauri::State<AppState>,draft:serde_json::Value)->Result<serde_json::Value>{
+    state.require_unlocked()?;let db=state.db.lock().unwrap();persist_scholarship_draft(&db,draft,false)?;scholarship_workspace_in(&db)
+}
+
+#[tauri::command]
+fn save_scholarship_story(state:tauri::State<AppState>,story:serde_json::Value)->Result<serde_json::Value>{
+    state.require_unlocked()?;let id=story.get("id").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Story id is required".into()))?.to_string();let title=story.get("title").and_then(|value|value.as_str()).unwrap_or_default().trim();let detail=story.get("detail").and_then(|value|value.as_str()).unwrap_or_default().trim();let tags=story.get("tags").and_then(|value|value.as_array()).ok_or_else(||AppError::Invalid("Story tags are invalid".into()))?;
+    if id.len()>200||title.is_empty()||title.len()>160||detail.is_empty()||detail.len()>6000||tags.len()>20||tags.iter().any(|tag|tag.as_str().is_none_or(|value|value.len()>80)){return Err(AppError::Invalid("Story examples require a title, bounded detail, and up to 20 short tags".into()));}
+    let now=Utc::now().to_rfc3339();let mut story=story;story["updatedAt"]=serde_json::Value::String(now.clone());let db=state.db.lock().unwrap();db.execute("INSERT INTO scholarship_story_examples(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![id,story.to_string(),now])?;mutation(&db,"scholarship_story",&id,"saved","{}")?;scholarship_workspace_in(&db)
+}
+
+#[tauri::command]
+fn delete_scholarship_story(state:tauri::State<AppState>,story_id:String)->Result<serde_json::Value>{state.require_unlocked()?;let db=state.db.lock().unwrap();if db.execute("DELETE FROM scholarship_story_examples WHERE id=?1",params![story_id])?!=1{return Err(AppError::Invalid("Story example was not found".into()));}mutation(&db,"scholarship_story",&story_id,"deleted","{}")?;scholarship_workspace_in(&db)}
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
     let mut query = conn.prepare(&format!("PRAGMA table_info({table})"))?;
@@ -1560,6 +1889,10 @@ fn canonical_entity_snapshot(
         "import_candidate" => ("import_candidates", "id"),
         "source_conflict" => ("source_conflicts", "id"),
         "integration_connection" => ("integration_connections", "id"),
+        "scholarship_opportunity" => ("scholarship_opportunities", "id"),
+        "scholarship_application" => ("scholarship_applications", "id"),
+        "scholarship_draft" => ("scholarship_drafts", "id"),
+        "scholarship_story" => ("scholarship_story_examples", "id"),
         "reminder" => ("reminder_deliveries", "block_id"),
         "plan" => {
             let mut statement = conn.prepare("SELECT * FROM plan_blocks ORDER BY id")?;
@@ -1917,6 +2250,8 @@ fn parse_utc(value: &str) -> Option<DateTime<Utc>> {
         .map(|date| date.with_timezone(&Utc))
 }
 
+fn rotation_week_matches(term_start:NaiveDate,date:NaiveDate,interval:i64,offset:i64)->bool{interval>0&&date.signed_duration_since(term_start).num_days().div_euclid(7).rem_euclid(interval)==offset}
+
 fn planner_snapshot(
     conn: &Connection,
     effective: DateTime<Utc>,
@@ -1995,7 +2330,7 @@ fn planner_snapshot(
         let mut date = first;
         while date <= last {
             let weekday = date.weekday().num_days_from_sunday() as i64;
-            if meeting.weekdays.contains(&weekday) {
+            if meeting.weekdays.contains(&weekday) && rotation_week_matches(term_start,date,meeting.rotation_interval_weeks,meeting.rotation_offset_weeks) {
                 let starts_at = timezone
                     .from_local_datetime(&date.and_time(start_time))
                     .earliest()
@@ -3157,6 +3492,7 @@ fn search_course_suggestions(
             },
             credits: None,
             term_label: String::new(),
+            staleness_warning:String::new(),
             sections: Vec::new(),
         })
         .collect::<Vec<_>>();
@@ -3168,7 +3504,7 @@ fn search_course_suggestions(
         let lowered = needle.to_ascii_lowercase();
         // The term presets already carry the registrar's wording for this id, so
         // the catalog does not repeat it and cannot contradict it.
-        let term_label = institution_setup_providers()?
+        let catalog_term=institution_setup_providers()?
             .iter()
             .find(|provider| provider.institution_id == catalog.institution_id)
             .and_then(|provider| {
@@ -3176,9 +3512,10 @@ fn search_course_suggestions(
                     .terms
                     .iter()
                     .find(|term| term.id == catalog.term_id)
-                    .map(|term| term.name.clone())
-            })
-            .unwrap_or_else(|| catalog.term_id.clone());
+                    .cloned()
+            });
+        let term_label=catalog_term.as_ref().map(|term|term.name.clone()).unwrap_or_else(||catalog.term_id.clone());
+        let staleness_warning=catalog_term.as_ref().and_then(|term|NaiveDate::parse_from_str(&term.ends_on,"%Y-%m-%d").ok()).filter(|ends|*ends<Utc::now().date_naive()).map(|_|format!("These sections are from {term_label}, which has ended. Verify against the current registrar listing.")).unwrap_or_default();
         for course in &catalog.courses {
             if results.len() >= 8 {
                 break;
@@ -3211,6 +3548,7 @@ fn search_course_suggestions(
                 term_label: term_label.clone(),
                 credits: course.credits,
                 sections: course.sections.clone(),
+                staleness_warning:staleness_warning.clone(),
             });
         }
     }
@@ -3241,6 +3579,7 @@ fn search_course_suggestions(
                 credits: None,
                 term_label: String::new(),
                 sections: Vec::new(),
+                staleness_warning:String::new(),
             });
         }
     }
@@ -3964,6 +4303,46 @@ fn update_accent(
     profile::set_accent(&conn, &accent)?;
     Ok(profile::workspace(&conn)?)
 }
+
+#[derive(Debug,Serialize)]
+#[serde(rename_all="camelCase")]
+struct AcademicCleanupPreview{duplicate_course_groups:Vec<Vec<String>>,repeated_commitment_series:Vec<RepeatedCommitmentPreview>}
+#[derive(Debug,Serialize)]
+#[serde(rename_all="camelCase")]
+struct RepeatedCommitmentPreview{title:String,count:usize,weekdays:Vec<u32>,starts_at_local:String,ends_at_local:String}
+
+fn normalized_course_key(code:&str,title:&str)->String{let source=if code.trim().is_empty(){title}else{code};source.chars().filter(|value|value.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect()}
+
+fn academic_cleanup_preview_in(conn:&Connection)->Result<AcademicCleanupPreview>{
+    let mut courses=conn.prepare("SELECT id,title,code FROM courses ORDER BY created_at,id")?;let mut grouped=std::collections::BTreeMap::<String,Vec<String>>::new();for row in courses.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?)))?{let (id,title,code)=row?;let key=normalized_course_key(&code,&title);if !key.is_empty(){grouped.entry(key).or_default().push(id);}}
+    let duplicate_course_groups=grouped.into_values().filter(|ids|ids.len()>1).collect();let timezone=canvas_calendar_timezone(conn);let mut commitments=conn.prepare("SELECT id,title,starts_at,ends_at,location FROM commitments WHERE kind='class' ORDER BY datetime(starts_at),id")?;let mut repeated=std::collections::BTreeMap::<String,Vec<(String,NaiveDate,u32,String,String)>>::new();
+    for row in commitments.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?)))?{let (id,title,start,end,location)=row?;let Some(start)=parse_utc(&start)else{continue};let Some(end)=parse_utc(&end)else{continue};let local_start=start.with_timezone(&timezone);let local_end=end.with_timezone(&timezone);let start_clock=format!("{:02}:{:02}",local_start.hour(),local_start.minute());let end_clock=format!("{:02}:{:02}",local_end.hour(),local_end.minute());let key=format!("{}|{}|{}|{}",title.trim().to_ascii_lowercase(),location.trim().to_ascii_lowercase(),start_clock,end_clock);repeated.entry(key).or_default().push((id,local_start.date_naive(),local_start.weekday().num_days_from_sunday(),title,start_clock+"|"+&end_clock));}
+    let repeated_commitment_series=repeated.into_values().filter_map(|rows|{if rows.len()<3{return None;}let mut by_day=std::collections::BTreeMap::<u32,Vec<NaiveDate>>::new();for (_,date,weekday,_,_) in &rows{by_day.entry(*weekday).or_default().push(*date);}if by_day.values().any(|dates|dates.len()<2||dates.windows(2).any(|pair|pair[1].signed_duration_since(pair[0]).num_days()!=7)){return None;}let clocks=rows[0].4.split('|').collect::<Vec<_>>();Some(RepeatedCommitmentPreview{title:rows[0].3.clone(),count:rows.len(),weekdays:by_day.into_keys().collect(),starts_at_local:clocks[0].into(),ends_at_local:clocks[1].into()})}).collect();
+    Ok(AcademicCleanupPreview{duplicate_course_groups,repeated_commitment_series})
+}
+
+#[tauri::command]
+fn get_academic_cleanup_preview(state:tauri::State<AppState>)->Result<AcademicCleanupPreview>{state.require_unlocked()?;academic_cleanup_preview_in(&state.db.lock().unwrap())}
+
+fn merge_duplicate_courses_in(conn:&Connection)->Result<usize>{
+    let preview=academic_cleanup_preview_in(conn)?;let tx=conn.unchecked_transaction()?;let mut merged=0;
+    for ids in preview.duplicate_course_groups{let keep=&ids[0];for duplicate in ids.iter().skip(1){
+        for table in ["tasks","instructors","class_meeting_series","study_materials","grade_categories","grade_items"]{tx.execute(&format!("UPDATE {table} SET course_id=?1 WHERE course_id=?2"),params![keep,duplicate])?;}
+        tx.execute("DELETE FROM course_grading_scales WHERE course_id=?1 AND EXISTS(SELECT 1 FROM course_grading_scales WHERE course_id=?2)",params![duplicate,keep])?;
+        tx.execute("UPDATE course_grading_scales SET course_id=?1 WHERE course_id=?2",params![keep,duplicate])?;
+        tx.execute("UPDATE provenance_links SET entity_id=?1 WHERE entity_type='course' AND entity_id=?2",params![keep,duplicate])?;
+        tx.execute("UPDATE import_candidates SET canonical_entity_id=?1 WHERE kind='course' AND canonical_entity_id=?2",params![keep,duplicate])?;
+        tx.execute("DELETE FROM courses WHERE id=?1",params![duplicate])?;mutation(&tx,"course",duplicate,"deleted","{}")?;merged+=1;
+    }mutation(&tx,"course",keep,"duplicates_merged","{}")?;}tx.commit()?;Ok(merged)
+}
+
+fn collapse_repeated_commitments_in(conn:&Connection)->Result<usize>{
+    let timezone=canvas_calendar_timezone(conn);let mut statement=conn.prepare("SELECT id,title,starts_at,ends_at,location FROM commitments WHERE kind='class' ORDER BY datetime(starts_at),id")?;let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;drop(statement);let mut groups=std::collections::BTreeMap::<String,Vec<(String,NaiveDate,u32,String,String,String)>>::new();for (id,title,start,end,location) in rows{let Some(start)=parse_utc(&start)else{continue};let Some(end)=parse_utc(&end)else{continue};let local_start=start.with_timezone(&timezone);let local_end=end.with_timezone(&timezone);let start_clock=format!("{:02}:{:02}",local_start.hour(),local_start.minute());let end_clock=format!("{:02}:{:02}",local_end.hour(),local_end.minute());let key=format!("{}|{}|{}|{}",title.trim().to_ascii_lowercase(),location.trim().to_ascii_lowercase(),start_clock,end_clock);groups.entry(key).or_default().push((id,local_start.date_naive(),local_start.weekday().num_days_from_sunday(),title,location,start_clock+"|"+&end_clock));}
+    let tx=conn.unchecked_transaction()?;let mut collapsed=0;for rows in groups.into_values(){let mut by_day=std::collections::BTreeMap::<u32,Vec<NaiveDate>>::new();for (_,date,weekday,_,_,_) in &rows{by_day.entry(*weekday).or_default().push(*date);}if rows.len()<3||by_day.values().any(|dates|dates.len()<2||dates.windows(2).any(|pair|pair[1].signed_duration_since(pair[0]).num_days()!=7)){continue;}let first=rows.iter().map(|row|row.1).min().unwrap();let term_id=tx.query_row("SELECT id FROM academic_terms WHERE starts_on<=?1 AND ends_on>=?1 ORDER BY active DESC,starts_on LIMIT 1",params![first.to_string()],|row|row.get::<_,String>(0)).optional()?;let Some(term_id)=term_id else{continue};let title=rows[0].3.trim();let course_id=tx.query_row("SELECT id FROM courses WHERE title=?1 COLLATE NOCASE OR code=?1 COLLATE NOCASE ORDER BY created_at LIMIT 1",params![title],|row|row.get::<_,String>(0)).optional()?.unwrap_or_else(||Uuid::new_v4().to_string());if tx.query_row("SELECT EXISTS(SELECT 1 FROM courses WHERE id=?1)",params![course_id],|row|row.get::<_,i64>(0))?==0{tx.execute("INSERT INTO courses(id,title,code,created_at,record_origin) VALUES(?1,?2,'',?3,'migration')",params![course_id,title,Utc::now().to_rfc3339()])?;mutation(&tx,"course",&course_id,"legacy_series_created","{}")?;}let clocks=rows[0].5.split('|').collect::<Vec<_>>();let meeting_id=Uuid::new_v4().to_string();let source_uid=format!("legacy-collapse:{}",hex::encode(Sha256::digest(format!("{}|{}|{}",title,clocks[0],clocks[1]).as_bytes())));let weekdays=by_day.keys().map(|value|i64::from(*value)).collect::<Vec<_>>();tx.execute("INSERT INTO class_meeting_series(id,course_id,term_id,timezone,weekdays,starts_at_local,ends_at_local,component,location,source_uid) VALUES(?1,?2,?3,?4,?5,?6,?7,'lecture',?8,?9)",params![meeting_id,course_id,term_id,timezone.to_string(),serde_json::to_string(&weekdays).unwrap_or_else(|_|"[]".into()),clocks[0],clocks[1],rows[0].4,source_uid])?;for (id,_,_,_,_,_) in &rows{tx.execute("UPDATE provenance_links SET entity_type='class_meeting_series',entity_id=?1 WHERE entity_type='commitment' AND entity_id=?2",params![meeting_id,id])?;tx.execute("DELETE FROM commitments WHERE id=?1",params![id])?;mutation(&tx,"commitment",id,"collapsed_to_series","{}")?;}mutation(&tx,"class_meeting_series",&meeting_id,"legacy_commitments_collapsed","{}")?;collapsed+=1;}tx.commit()?;Ok(collapsed)
+}
+
+#[tauri::command]
+fn apply_academic_cleanup(state:tauri::State<AppState>,merge_duplicate_courses:bool,collapse_repeated_commitments:bool)->Result<profile::WorkspaceSnapshot>{state.require_unlocked()?;let db=state.db.lock().unwrap();if merge_duplicate_courses{merge_duplicate_courses_in(&db)?;}if collapse_repeated_commitments{collapse_repeated_commitments_in(&db)?;}regenerate_plan(&db,None)?;Ok(profile::workspace(&db)?)}
 
 #[tauri::command]
 fn list_legacy_quarantine(
@@ -4877,13 +5256,17 @@ struct CanonicalMutationV2 {
 ///
 /// This governs the OUTBOUND direction only. Nothing inbound consults it -- see the note on
 /// `ApplyOutcome::Deferred` for why an unmapped incoming type must be staged rather than dropped.
-const LOCAL_ONLY_ENTITY_TYPES: [&str; 6] = [
+const LOCAL_ONLY_ENTITY_TYPES: [&str; 10] = [
     "plan",
     "plan_block",
     "document",
     "reminder",
     "notification_preferences",
     "integration_connection",
+    "scholarship_opportunity",
+    "scholarship_application",
+    "scholarship_draft",
+    "scholarship_story",
 ];
 
 /// Every entity type that is replicated to other computers, in the form the outbox SQL needs.
@@ -5964,6 +6347,58 @@ async fn check_for_updates(
 }
 
 #[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    expected_version: String,
+    confirmed: bool,
+) -> Result<()> {
+    state.require_unlocked()?;
+    if !confirmed {
+        return Err(AppError::Invalid(
+            "Confirm the signed update and restart before installing.".into(),
+        ));
+    }
+    let expected_version = expected_version.trim();
+    if expected_version.is_empty() || expected_version.len() > 64 {
+        return Err(AppError::Invalid(
+            "Check for updates again before installing.".into(),
+        ));
+    }
+    let Some((endpoint, public_key)) = compiled_updater_configuration() else {
+        return Err(AppError::Invalid(
+            "This build has no signed update channel configured.".into(),
+        ));
+    };
+    let updater = app
+        .updater_builder()
+        .pubkey(public_key)
+        .endpoints(vec![endpoint])
+        .map_err(|_| AppError::Background("Signed update configuration is invalid.".into()))?
+        .build()
+        .map_err(|_| AppError::Background("Signed update configuration is invalid.".into()))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|_| AppError::Background("The signed update channel could not be checked.".into()))?
+        .ok_or_else(|| AppError::Invalid("Student Center is already up to date.".into()))?;
+    if update.version != expected_version {
+        return Err(AppError::Invalid(
+            "The available version changed. Review the new update before installing.".into(),
+        ));
+    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|_| {
+            AppError::Background(
+                "The signed update could not be downloaded or installed safely.".into(),
+            )
+        })?;
+    app.restart()
+}
+
+#[tauri::command]
 fn add_task(
     state: tauri::State<AppState>,
     title: String,
@@ -6312,6 +6747,28 @@ fn canvas_calendar_timezone(conn: &Connection) -> Tz {
     conn.query_row("SELECT value FROM settings WHERE key='timezone'",[],|row| row.get::<_,String>(0)).ok().and_then(|value| value.parse().ok()).unwrap_or(chrono_tz::UTC)
 }
 
+fn canvas_calendar_notice(prefix: &str, created: usize, pull: &canvas_calendar::FeedPull) -> String {
+    let mut message = format!(
+        "{prefix}; {created} changed item{} await review.",
+        if created == 1 { "" } else { "s" }
+    );
+    if pull.diagnostic.events_needing_correction > 0 {
+        message.push_str(&format!(
+            " {} source event{} need confirmation.",
+            pull.diagnostic.events_needing_correction,
+            if pull.diagnostic.events_needing_correction == 1 { "" } else { "s" }
+        ));
+    }
+    if pull.diagnostic.events_skipped > 0 {
+        message.push_str(&format!(
+            " {} unsupported event{} were skipped safely.",
+            pull.diagnostic.events_skipped,
+            if pull.diagnostic.events_skipped == 1 { "" } else { "s" }
+        ));
+    }
+    message
+}
+
 fn connect_canvas_calendar_blocking(state: &AppState, feed_url: String, label: String, refresh_on_startup: bool) -> Result<Dashboard> {
     state.require_unlocked()?;
     let timezone={let db=state.db.lock().unwrap();canvas_calendar_timezone(&db)};
@@ -6322,7 +6779,7 @@ fn connect_canvas_calendar_blocking(state: &AppState, feed_url: String, label: S
         let db=state.db.lock().unwrap();
         db.execute("INSERT INTO integration_connections(id,provider,base_url,account_name,status,created_at,refresh_on_startup,last_attempted_at,credential_ref) VALUES(?1,'canvas_calendar',?2,?3,'connecting',?4,?5,?4,?6)",params![connection_id,pull.origin,if label.trim().is_empty(){"Canvas calendar"}else{label.trim()},Utc::now().to_rfc3339(),i64::from(refresh_on_startup),format!("canvas-calendar-feed:{connection_id}")])?;
         let run_id=begin_sync_run(&db,&connection_id)?; let created=persist_canvas_calendar_pull(&db,&connection_id,&pull,&run_id)?;
-        dashboard_with_notice(&db,&state.ocr,Some(format!("Canvas calendar connected read-only; {created} item{} await review.",if created==1{""}else{"s"})))
+        dashboard_with_notice(&db,&state.ocr,Some(canvas_calendar_notice("Canvas calendar connected read-only",created,&pull)))
     })();
     if result.is_err(){let _=canvas_calendar_entry(&connection_id)?.delete_credential();}
     result
@@ -6338,7 +6795,7 @@ fn refresh_canvas_calendar_blocking(state:&AppState,connection_id:String)->Resul
     state.require_unlocked()?;
     let (origin,timezone,run_id)={let db=state.db.lock().unwrap(); let origin=db.query_row("SELECT base_url FROM integration_connections WHERE id=?1 AND provider='canvas_calendar' AND status IN ('connected','error')",params![connection_id],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("Canvas calendar connection not found".into()))?; let run_id=begin_sync_run(&db,&connection_id)?;(origin,canvas_calendar_timezone(&db),run_id)};
     let feed=match canvas_calendar_entry(&connection_id)?.get_password(){Ok(value)=>Zeroizing::new(value),Err(keyring::Error::NoEntry)=>{let db=state.db.lock().unwrap();fail_sync_run(&db,&connection_id,&run_id,"Calendar link must be connected again",true)?;return Err(AppError::Invalid("Canvas calendar link must be connected again".into()));},Err(error)=>return Err(error.into())};
-    match canvas_calendar::fetch(&feed,timezone){Ok(pull)=>{let db=state.db.lock().unwrap();let created=persist_canvas_calendar_pull(&db,&connection_id,&pull,&run_id)?;dashboard_with_notice(&db,&state.ocr,Some(format!("Canvas calendar refreshed; {created} changed item{} await review.",if created==1{""}else{"s"})))} Err(error)=>{let db=state.db.lock().unwrap();fail_sync_run(&db,&connection_id,&run_id,"Canvas calendar refresh failed",false)?;let _=origin;Err(error.into())}}
+    match canvas_calendar::fetch(&feed,timezone){Ok(pull)=>{let db=state.db.lock().unwrap();let created=persist_canvas_calendar_pull(&db,&connection_id,&pull,&run_id)?;dashboard_with_notice(&db,&state.ocr,Some(canvas_calendar_notice("Canvas calendar refreshed",created,&pull)))} Err(error)=>{let db=state.db.lock().unwrap();fail_sync_run(&db,&connection_id,&run_id,"Canvas calendar refresh failed",false)?;let _=origin;Err(error.into())}}
 }
 
 #[tauri::command]
@@ -6635,15 +7092,20 @@ fn due_canvas_calendar_reconciliations(conn:&Connection,now:DateTime<Utc>)->Resu
     Ok(rows)
 }
 
+fn due_scholarship_refreshes(conn:&Connection,now:DateTime<Utc>)->Result<Vec<String>>{
+    let cutoff=(now-Duration::days(7)).to_rfc3339();let mut statement=conn.prepare("SELECT id FROM scholarship_sources WHERE enabled=1 AND weekly_refresh=1 AND (last_fetched_at IS NULL OR datetime(last_fetched_at)<=datetime(?1)) ORDER BY COALESCE(datetime(last_fetched_at),datetime('1970-01-01')),id LIMIT 2")?;
+    let rows=statement.query_map(params![cutoff],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;Ok(rows)
+}
+
 fn start_canvas_reconciliation_worker(state: AppState) {
     std::thread::spawn(move || loop {
         if state.locked.load(Ordering::Acquire) {
             std::thread::sleep(StdDuration::from_secs(30));
             continue;
         }
-        let (connection_ids,calendar_ids) = {
+        let (connection_ids,calendar_ids,scholarship_ids) = {
             let db = state.db.lock().unwrap();
-            (due_canvas_reconciliations(&db, Utc::now()).unwrap_or_default(),due_canvas_calendar_reconciliations(&db,Utc::now()).unwrap_or_default())
+            (due_canvas_reconciliations(&db, Utc::now()).unwrap_or_default(),due_canvas_calendar_reconciliations(&db,Utc::now()).unwrap_or_default(),due_scholarship_refreshes(&db,Utc::now()).unwrap_or_default())
         };
         for connection_id in connection_ids {
             if state.locked.load(Ordering::Acquire) {
@@ -6652,6 +7114,7 @@ fn start_canvas_reconciliation_worker(state: AppState) {
             let _ = sync_canvas_blocking(&state, connection_id);
         }
         for connection_id in calendar_ids { if state.locked.load(Ordering::Acquire){break;} let _=refresh_canvas_calendar_blocking(&state,connection_id); }
+        for source_id in scholarship_ids { if state.locked.load(Ordering::Acquire){break;} let _=refresh_scholarship_source_blocking(&state,source_id); }
         std::thread::sleep(StdDuration::from_secs(60 * 60));
     });
 }
@@ -6863,7 +7326,7 @@ fn resolve_ai_provider(conn: &Connection, capability: managed_ai::AiCapability) 
 }
 
 fn all_ai_capabilities() -> Vec<String> {
-    ["brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","source_qa","study_guide","flashcards","practice_questions","practice_test"]
+    ["brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","source_qa","study_guide","flashcards","practice_questions","practice_test","scholarship_writing"]
         .into_iter().map(str::to_owned).collect()
 }
 
@@ -9379,6 +9842,8 @@ fn main() {
             delete_academic_event,
             update_appearance,
             update_accent,
+            get_academic_cleanup_preview,
+            apply_academic_cleanup,
             list_legacy_quarantine,
             restore_legacy_quarantine,
             purge_legacy_quarantine,
@@ -9387,6 +9852,7 @@ fn main() {
             take_pending_navigation,
             get_update_status,
             check_for_updates,
+            install_update,
             get_account_status,
             get_sync_protection_status,
             begin_sync_protection,
@@ -9435,6 +9901,23 @@ fn main() {
             save_grade_item,
             calculate_grade_what_if,
             save_grading_scale,
+            get_scholarship_workspace,
+            refresh_scholarship_source,
+            set_scholarship_source_refresh,
+            resolve_scholarship_diff,
+            save_scholarship_profile,
+            plan_scholarship_deadline,
+            preview_scholarship_writing,
+            request_scholarship_writing_feedback,
+            resolve_scholarship_writing_suggestion,
+            import_scholarship_requirements,
+            apply_scholarship_requirements_review,
+            save_scholarship_opportunity,
+            save_scholarship_application,
+            save_scholarship_draft,
+            autosave_scholarship_draft,
+            save_scholarship_story,
+            delete_scholarship_story,
             import_document,
             import_document_bytes,
             launch_schedule_capture,
@@ -9473,6 +9956,71 @@ mod tests {
     /// verification happens at the transport boundary, before apply_canonical_mutation is reached,
     /// and is covered by the sync_transport tests.
     const TEST_SIGNATURE: &str = "G0000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn scholarship_matching_is_explicit_explainable_and_does_not_infer_traits() {
+        let opportunity=serde_json::json!({"id":"s1","studyLevels":["undergraduate"],"fieldsOfStudy":["computer science"],"locations":[],"citizenship":["united states"],"residency":["arizona"],"minimumGpa":3.5});
+        let partial=serde_json::json!({"studyLevel":"Undergraduate","fieldsOfStudy":["Computer Science"],"locations":[],"citizenship":[],"residency":["Arizona"],"gpa":3.7});
+        let result=scholarship_match(&opportunity,&partial);
+        assert_eq!(result["matched"].as_array().unwrap().len(),4);
+        assert!(result["unknown"].as_array().unwrap().iter().any(|value|value.as_str()==Some("Your citizenship is not set")));
+        assert!(result["unknown"].as_array().unwrap().iter().any(|value|value.as_str()==Some("Provider did not publish location criteria")));
+        assert!(result["ineligible"].as_array().unwrap().is_empty());
+
+        let mismatch=serde_json::json!({"studyLevel":"graduate","fieldsOfStudy":["history"],"locations":[],"citizenship":["canada"],"residency":["california"],"gpa":3.0});
+        let result=scholarship_match(&opportunity,&mismatch);
+        assert_eq!(result["ineligible"].as_array().unwrap().len(),5);
+    }
+
+    #[test]
+    fn scholarship_deadline_planning_is_persisted_and_idempotent() {
+        let directory=tempfile::tempdir().unwrap();let conn=open_database(&directory.path().join("scholarship-plan.db"),&random_key()).unwrap();
+        let opportunity=serde_json::json!({"id":"s1","title":"Future Builders","deadline":"2026-10-15","taskIds":[],"state":"saved"});
+        conn.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES('s1',?1,'2026-08-31T00:00:00Z')",params![opportunity.to_string()]).unwrap();
+        plan_scholarship_deadline_in(&conn,"s1").unwrap();plan_scholarship_deadline_in(&conn,"s1").unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM tasks WHERE title='Submit Future Builders'",[],|row|row.get::<_,i64>(0)).unwrap(),1);
+        let payload=conn.query_row("SELECT payload FROM scholarship_opportunities WHERE id='s1'",[],|row|row.get::<_,String>(0)).unwrap();let saved:serde_json::Value=serde_json::from_str(&payload).unwrap();
+        assert_eq!(saved["state"],"preparing");assert_eq!(saved["taskIds"].as_array().unwrap().len(),1);
+    }
+
+    #[test]
+    fn scholarship_autosave_preserves_explicit_version_history() {
+        let directory=tempfile::tempdir().unwrap();let conn=open_database(&directory.path().join("scholarship-drafts.db"),&random_key()).unwrap();
+        conn.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES('s1','{}','2026-08-31T00:00:00Z')",[]).unwrap();
+        let draft=serde_json::json!({"id":"draft-1","opportunityId":"s1","promptId":"general","title":"Essay","outline":"","content":"First text","updatedAt":"2026-08-31T00:00:00Z","versions":[]});
+        assert!(persist_scholarship_draft(&conn,draft.clone(),false).is_err());
+        persist_scholarship_draft(&conn,draft,true).unwrap();
+        let mut autosave:serde_json::Value=serde_json::from_str(&conn.query_row("SELECT payload FROM scholarship_drafts WHERE id='draft-1'",[],|row|row.get::<_,String>(0)).unwrap()).unwrap();
+        autosave["content"]=serde_json::Value::String("Autosaved text".into());persist_scholarship_draft(&conn,autosave,false).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM scholarship_draft_versions WHERE draft_id='draft-1'",[],|row|row.get::<_,i64>(0)).unwrap(),1);
+        let saved:serde_json::Value=serde_json::from_str(&conn.query_row("SELECT payload FROM scholarship_drafts WHERE id='draft-1'",[],|row|row.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(saved["content"],"Autosaved text");assert_eq!(saved["versions"].as_array().unwrap().len(),1);
+        persist_scholarship_draft(&conn,saved,true).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM scholarship_draft_versions WHERE draft_id='draft-1'",[],|row|row.get::<_,i64>(0)).unwrap(),2);
+    }
+
+    #[test]
+    fn scholarship_requirement_extraction_is_bounded_and_reviewable() {
+        let segments=vec![imports::Segment{text:"Official transcript\nTwo letters of recommendation\nEssay prompt: Describe how service shaped your goals. 500 words".into(),locator:"page 1".into(),confidence:1.0,tokens:vec![]}];
+        let(requirements,prompts)=scholarship_requirement_suggestions(&segments);
+        assert_eq!(requirements,vec!["Official transcript","Letter of recommendation"]);
+        assert_eq!(prompts.len(),1);
+        assert_eq!(prompts[0]["wordLimit"],500);
+        assert!(prompts[0]["prompt"].as_str().unwrap().contains("service shaped"));
+    }
+
+    #[test]
+    fn rotating_class_weeks_follow_the_term_anchor(){let start=NaiveDate::from_ymd_opt(2026,8,24).unwrap();assert!(rotation_week_matches(start,start,2,0));assert!(!rotation_week_matches(start,start+Duration::weeks(1),2,0));assert!(rotation_week_matches(start,start+Duration::weeks(1),2,1));assert!(rotation_week_matches(start,start+Duration::weeks(4),4,0));}
+
+    #[test]
+    fn academic_cleanup_preserves_links_and_only_collapses_proven_weekly_series(){
+        let directory=tempfile::tempdir().unwrap();let conn=open_database(&directory.path().join("cleanup.db"),&random_key()).unwrap();
+        conn.execute("INSERT INTO academic_terms(id,name,starts_on,ends_on,active,created_at) VALUES('fall','Fall','2026-08-01','2026-12-20',1,'2026-08-01T00:00:00Z')",[]).unwrap();
+        conn.execute("INSERT INTO courses(id,title,code,created_at) VALUES('keep','Calculus I','MAT 265','2026-08-01T00:00:00Z'),('duplicate','calculus i','MAT-265','2026-08-02T00:00:00Z')",[]).unwrap();
+        conn.execute("INSERT INTO tasks(id,title,minutes,course_id,created_at) VALUES('task','Homework',30,'duplicate','2026-08-02T00:00:00Z')",[]).unwrap();assert_eq!(merge_duplicate_courses_in(&conn).unwrap(),1);assert_eq!(conn.query_row("SELECT course_id FROM tasks WHERE id='task'",[],|row|row.get::<_,String>(0)).unwrap(),"keep");
+        for (index,date) in ["2026-08-24","2026-08-26","2026-08-28","2026-08-31","2026-09-02","2026-09-04"].iter().enumerate(){conn.execute("INSERT INTO commitments(id,title,starts_at,ends_at,kind,location) VALUES(?1,'BIO 181',?2,?3,'class','LSA 101')",params![format!("c{index}"),format!("{date}T16:00:00Z"),format!("{date}T16:50:00Z")]).unwrap();}
+        let preview=academic_cleanup_preview_in(&conn).unwrap();assert_eq!(preview.repeated_commitment_series.len(),1);assert_eq!(collapse_repeated_commitments_in(&conn).unwrap(),1);assert_eq!(conn.query_row("SELECT COUNT(*) FROM commitments",[],|row|row.get::<_,i64>(0)).unwrap(),0);assert_eq!(conn.query_row("SELECT COUNT(*) FROM class_meeting_series",[],|row|row.get::<_,i64>(0)).unwrap(),1);
+    }
 
     #[test]
     fn webdriver_profile_root_is_confined_to_a_dedicated_temporary_directory() {
@@ -9662,6 +10210,7 @@ mod tests {
             "take_pending_navigation",
             "get_update_status",
             "check_for_updates",
+            "install_update",
             "get_account_status",
             "get_sync_protection_status",
             "begin_sync_protection",
@@ -9710,6 +10259,23 @@ mod tests {
             "save_grade_item",
             "calculate_grade_what_if",
             "save_grading_scale",
+            "get_scholarship_workspace",
+            "refresh_scholarship_source",
+            "set_scholarship_source_refresh",
+            "resolve_scholarship_diff",
+            "save_scholarship_profile",
+            "plan_scholarship_deadline",
+            "preview_scholarship_writing",
+            "request_scholarship_writing_feedback",
+            "resolve_scholarship_writing_suggestion",
+            "import_scholarship_requirements",
+            "apply_scholarship_requirements_review",
+            "save_scholarship_opportunity",
+            "save_scholarship_application",
+            "save_scholarship_draft",
+            "autosave_scholarship_draft",
+            "save_scholarship_story",
+            "delete_scholarship_story",
             "launch_schedule_capture",
             "settle_schedule_source",
             "connect_canvas",
@@ -10696,7 +11262,8 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+        assert!(table_columns(&conn,"scholarship_story_examples").is_ok());
         // 12 adds the weekly pattern a class_meeting candidate carries, which
         // the single-instant datetime columns cannot express.
         let candidate_columns = table_columns(&conn, "import_candidates").unwrap();
@@ -10742,7 +11309,7 @@ mod tests {
             .unwrap(),
             1
         );
-        for table in ["document_segments","study_materials","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales"] {
+        for table in ["document_segments","study_materials","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales","scholarship_opportunities","scholarship_applications","scholarship_drafts","scholarship_draft_versions","scholarship_story_examples","scholarship_crawler_runs","scholarship_sources","scholarship_opportunity_diffs","scholarship_profiles","scholarship_writing_suggestions","scholarship_requirement_documents"] {
             assert_eq!(conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",params![table],|row|row.get::<_,i64>(0)).unwrap(),1,"missing {table}");
         }
         drop(conn);
@@ -11353,6 +11920,9 @@ mod tests {
                 params![Utc::now().to_rfc3339()],
             )
             .unwrap();
+        source_db.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES('portable-scholarship',?1,?2)",params![serde_json::json!({"id":"portable-scholarship","title":"Private community scholarship","state":"saved"}).to_string(),Utc::now().to_rfc3339()]).unwrap();
+        source_db.execute("INSERT INTO scholarship_drafts(id,opportunity_id,payload,updated_at) VALUES('portable-draft','portable-scholarship',?1,?2)",params![serde_json::json!({"id":"portable-draft","opportunityId":"portable-scholarship","content":"My private scholarship story"}).to_string(),Utc::now().to_rfc3339()]).unwrap();
+        source_db.execute("INSERT INTO scholarship_story_examples(id,payload,updated_at) VALUES('portable-story',?1,?2)",params![serde_json::json!({"id":"portable-story","title":"Community tutoring","detail":"I organized private weekly tutoring sessions","tags":["leadership"]}).to_string(),Utc::now().to_rfc3339()]).unwrap();
         source_db
             .execute(
                 "INSERT INTO integration_connections(id,provider,base_url,account_name,status,created_at,credential_ref)
@@ -11367,6 +11937,7 @@ mod tests {
             &source_key,
             private_document,
         );
+        source_db.execute("INSERT INTO scholarship_requirement_documents(id,opportunity_id,document_id,payload,imported_at) VALUES('portable-requirements','portable-scholarship',?1,?2,?3)",params![document_id,serde_json::json!({"id":"portable-requirements","opportunityId":"portable-scholarship","documentId":document_id.clone(),"fileName":"private-syllabus.txt","mime":"text/plain","importedAt":Utc::now().to_rfc3339(),"status":"reviewed","proposedRequirements":["Transcript"],"proposedPrompts":[],"warnings":[],"selectedRequirements":["Transcript"],"selectedPromptIds":[]}).to_string(),Utc::now().to_rfc3339()]).unwrap();
         let archive_path = base.path().join("portable.studentcenter");
         let passphrase = "correct horse battery staple";
         let exported = backup::export_archive(
@@ -11385,6 +11956,8 @@ mod tests {
         assert!(!raw_archive
             .windows(private_document.len())
             .any(|window| window == private_document));
+        assert!(!raw_archive.windows("My private scholarship story".len()).any(|window|window==b"My private scholarship story"));
+        assert!(!raw_archive.windows("private weekly tutoring".len()).any(|window|window==b"private weekly tutoring"));
         assert!(!raw_archive
             .windows(source_key.len())
             .any(|window| window == source_key));
@@ -11459,6 +12032,9 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert_eq!(restored.query_row("SELECT COUNT(*) FROM scholarship_drafts WHERE id='portable-draft'",[],|row|row.get::<_,i64>(0)).unwrap(),1);
+        assert_eq!(restored.query_row("SELECT COUNT(*) FROM scholarship_story_examples WHERE id='portable-story'",[],|row|row.get::<_,i64>(0)).unwrap(),1);
+        assert_eq!(restored.query_row("SELECT COUNT(*) FROM scholarship_requirement_documents WHERE id='portable-requirements'",[],|row|row.get::<_,i64>(0)).unwrap(),1);
         assert_eq!(
             restored
                 .query_row(
@@ -12009,9 +12585,9 @@ mod tests {
     fn every_canonical_entity_type_is_either_replicated_or_explicitly_local() {
         // Consumes the production constants rather than restating them, so the test cannot drift
         // away from the lists the outbox and apply path actually use.
-        const LOCAL_ONLY: [&str; 6] = LOCAL_ONLY_ENTITY_TYPES;
+        const LOCAL_ONLY: [&str; 10] = LOCAL_ONLY_ENTITY_TYPES;
         // Every entity type canonical_entity_snapshot can produce a payload for.
-        const SNAPSHOTTABLE: [&str; 20] = [
+        const SNAPSHOTTABLE: [&str; 24] = [
             "task",
             "assignment",
             "exam",
@@ -12032,6 +12608,10 @@ mod tests {
             "reminder",
             "notification_preferences",
             "integration_connection",
+            "scholarship_opportunity",
+            "scholarship_application",
+            "scholarship_draft",
+            "scholarship_story",
         ];
         let directory = tempfile::tempdir().unwrap();
         let conn = open_database(&directory.path().join("classify.db"), &random_key()).unwrap();
@@ -12122,6 +12702,8 @@ mod tests {
                 location: "COOR 170".into(),
                 modality: "in_person".into(),
                 instructor_id: Some(instructor_id.clone()),
+                rotation_interval_weeks:1,
+                rotation_offset_weeks:0,
                 expected_version: None,
             },
         )

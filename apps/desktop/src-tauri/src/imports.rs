@@ -53,6 +53,24 @@ pub enum ImportError {
     Io(#[from] std::io::Error),
 }
 
+/// Privacy-safe summary of a calendar extraction. Reason categories are fixed
+/// identifiers and never contain calendar content, URLs, or event titles.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarImportDiagnostic {
+    pub events_read: usize,
+    pub candidates_created: usize,
+    pub events_needing_correction: usize,
+    pub events_skipped: usize,
+    pub reason_categories: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CalendarExtraction {
+    pub candidates: Vec<ExtractedCandidate>,
+    pub diagnostic: CalendarImportDiagnostic,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentKind {
     Pdf,
@@ -1015,7 +1033,14 @@ fn extract_ics(bytes: &[u8], fallback_tz: Tz) -> Result<Vec<ExtractedCandidate>,
 }
 
 pub fn extract_calendar_bytes(bytes: &[u8], fallback_tz: Tz) -> Result<Vec<ExtractedCandidate>, ImportError> {
-    extract_ics(bytes, fallback_tz)
+    Ok(extract_calendar_bytes_with_diagnostics(bytes, fallback_tz)?.candidates)
+}
+
+pub fn extract_calendar_bytes_with_diagnostics(
+    bytes: &[u8],
+    fallback_tz: Tz,
+) -> Result<CalendarExtraction, ImportError> {
+    extract_ics_at_with_diagnostics(bytes, fallback_tz, Utc::now())
 }
 
 fn extract_ics_at(
@@ -1023,22 +1048,60 @@ fn extract_ics_at(
     fallback_tz: Tz,
     observed_at: DateTime<Utc>,
 ) -> Result<Vec<ExtractedCandidate>, ImportError> {
+    Ok(extract_ics_at_with_diagnostics(bytes, fallback_tz, observed_at)?.candidates)
+}
+
+fn extract_ics_at_with_diagnostics(
+    bytes: &[u8],
+    fallback_tz: Tz,
+    observed_at: DateTime<Utc>,
+) -> Result<CalendarExtraction, ImportError> {
     let reader = BufReader::new(Cursor::new(bytes));
     let mut candidates = Vec::new();
     let mut calendars = 0usize;
+    let mut diagnostic = CalendarImportDiagnostic::default();
     for calendar in IcalParser::new(reader) {
         calendars += 1;
-        let calendar = calendar.map_err(|error| ImportError::Malformed(error.to_string()))?;
+        let calendar = calendar.map_err(|_| {
+            ImportError::Malformed("calendar container could not be parsed".into())
+        })?;
         for event in calendar.events {
-            candidates.extend(candidates_from_event(&event, fallback_tz, observed_at)?);
+            diagnostic.events_read += 1;
+            match candidates_from_event(&event, fallback_tz, observed_at) {
+                Ok(mut event_candidates) => {
+                    if event_candidates.iter().any(|candidate| !candidate.warnings.is_empty()) {
+                        diagnostic.events_needing_correction += 1;
+                        push_reason(&mut diagnostic.reason_categories, "review_required");
+                    }
+                    candidates.append(&mut event_candidates);
+                }
+                Err(_) => {
+                    diagnostic.events_skipped += 1;
+                    push_reason(&mut diagnostic.reason_categories, "unsupported_event");
+                }
+            }
         }
     }
-    if calendars == 0 || candidates.is_empty() {
+    diagnostic.candidates_created = candidates.len();
+    if calendars == 0 {
         return Err(ImportError::Malformed(
-            "calendar contains no importable events".into(),
+            "calendar container was missing".into(),
         ));
     }
-    Ok(candidates)
+    if candidates.is_empty() {
+        return Err(ImportError::Malformed(if diagnostic.events_read == 0 {
+            "calendar contains no events".into()
+        } else {
+            "calendar contains no usable events".into()
+        }));
+    }
+    Ok(CalendarExtraction { candidates, diagnostic })
+}
+
+fn push_reason(reasons: &mut Vec<String>, reason: &str) {
+    if !reasons.iter().any(|value| value == reason) {
+        reasons.push(reason.into());
+    }
 }
 
 /// Weekdays for a plain weekly rule, or None when the rule is anything else.
@@ -1113,6 +1176,8 @@ fn candidates_from_event(
         ImportError::Malformed(format!("calendar event {summary:?} has no DTSTART"))
     })?;
     let start_raw = start_property.value.as_deref().unwrap_or_default();
+    let date_only = start_raw.len() == 8;
+    let location = property_value(&event.properties, "LOCATION").unwrap_or_default();
     let tzid = property_parameter(start_property, "TZID");
     let starts_at = parse_ical_datetime(start_raw, tzid, fallback_tz)?;
     // A modified occurrence keeps its RECURRENCE-ID even when DTSTART moves.
@@ -1136,11 +1201,12 @@ fn candidates_from_event(
     } else {
         starts_at + Duration::hours(1)
     };
-    if end <= starts_at {
+    if end < starts_at {
         return Err(ImportError::Malformed(format!(
             "calendar event {summary:?} ends before it starts"
         )));
     }
+    let zero_duration = end == starts_at;
     let duration = end - starts_at;
     let rrule = property_value(&event.properties, "RRULE");
     let exdates = event
@@ -1151,6 +1217,43 @@ fn candidates_from_event(
         .flat_map(|value| value.split(','))
         .filter_map(|value| parse_ical_datetime(value, tzid, fallback_tz).ok())
         .collect::<HashSet<_>>();
+
+    // Canvas uses date-only events for deadlines and sometimes emits timed
+    // deadline events with equal start/end values. Neither is an appointment.
+    // Keep the exact source instant for identity, but send it to review as a
+    // task so the student can confirm the date, classification, and estimate.
+    if date_only || zero_duration {
+        let due_at = if date_only {
+            (starts_at + Duration::hours(23) + Duration::minutes(59)).to_rfc3339()
+        } else {
+            starts_at.to_rfc3339()
+        };
+        return Ok(vec![ExtractedCandidate {
+            kind: "task".into(),
+            title: summary.into(),
+            course: "Calendar".into(),
+            due_at: Some(due_at),
+            starts_at: None,
+            ends_at: None,
+            duration_minutes: Some(45),
+            evidence: format!("SUMMARY:{summary} · DTSTART:{start_raw}"),
+            source_locator: format!("calendar event {uid} · deadline"),
+            source_uid: format!(
+                "ics:{uid}:{}",
+                recurrence_identity.unwrap_or(starts_at).timestamp()
+            ),
+            confidence: if date_only { 0.86 } else { 0.74 },
+            warnings: vec![if date_only {
+                "The source supplied a date without a time; confirm the deadline before approval"
+                    .into()
+            } else {
+                "The source supplied a deadline without duration; confirm the classification before approval"
+                    .into()
+            }],
+            location: location.into(),
+            ..Default::default()
+        }]);
+    }
 
     // A weekly rule describes a class, and the app already has the right record
     // for that: one class_meeting_series with weekdays and a local clock.
@@ -1184,7 +1287,7 @@ fn candidates_from_event(
                 ends_at_local: local_end.format("%H:%M").to_string(),
                 timezone: tz.name().to_string(),
                 section_number: String::new(),
-                location: String::new(),
+                location: location.into(),
                 modality: String::new(),
             }]);
         }
@@ -1242,6 +1345,7 @@ fn candidates_from_event(
             ),
             confidence: 1.0,
             warnings: Vec::new(),
+            location: location.into(),
             ..Default::default()
         })
         .collect())
@@ -2165,10 +2269,49 @@ mod tests {
         let start = (Utc::now() + Duration::days(2)).date_naive();
         let first = start.format("%Y%m%d").to_string();
         let excluded = (start + Duration::days(1)).format("%Y%m%d").to_string();
-        let ics = format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:class-{year}\r\nSUMMARY:Statistics 201\r\nDTSTART:{first}T090000Z\r\nDTEND:{first}T095000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEXDATE:{excluded}T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+        let ics = format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:class-{year}\r\nSUMMARY:Statistics 201\r\nLOCATION:PSH 150\r\nDTSTART:{first}T090000Z\r\nDTEND:{first}T095000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEXDATE:{excluded}T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
         let rows = extract_ics(ics.as_bytes(), chrono_tz::America::Phoenix).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.kind == "commitment"));
+        assert!(rows.iter().all(|row| row.location == "PSH 150"));
+    }
+
+    #[test]
+    fn canvas_date_only_and_zero_duration_events_become_reviewable_deadlines() {
+        let observed_at = DateTime::parse_from_rfc3339("2026-08-30T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ics = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:date-only\r\nSUMMARY:Research paper due\r\nDTSTART;VALUE=DATE;VALUE=DATE:20260903\r\nDTEND;VALUE=DATE;VALUE=DATE:20260904\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:zero-duration\r\nSUMMARY:Quiz deadline\r\nDTSTART:20260905T170000Z\r\nDTEND:20260905T170000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let extraction = extract_ics_at_with_diagnostics(
+            ics,
+            chrono_tz::America::Phoenix,
+            observed_at,
+        )
+        .unwrap();
+
+        assert_eq!(extraction.diagnostic.events_read, 2);
+        assert_eq!(extraction.diagnostic.events_needing_correction, 2);
+        assert_eq!(extraction.diagnostic.events_skipped, 0);
+        assert_eq!(extraction.candidates.len(), 2);
+        assert!(extraction.candidates.iter().all(|row| row.kind == "task"));
+        assert!(extraction.candidates.iter().all(|row| row.starts_at.is_none()));
+        assert!(extraction.candidates.iter().all(|row| row.due_at.is_some()));
+    }
+
+    #[test]
+    fn one_unsupported_event_does_not_invalidate_a_useful_calendar() {
+        let observed_at = DateTime::parse_from_rfc3339("2026-08-30T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ics = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:bad\r\nSUMMARY:Private title must not enter diagnostics\r\nDTSTART:not-a-date\r\nDTEND:also-not-a-date\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:good\r\nSUMMARY:Office hours\r\nDTSTART:20260905T170000Z\r\nDTEND:20260905T180000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let extraction = extract_ics_at_with_diagnostics(ics, chrono_tz::UTC, observed_at).unwrap();
+
+        assert_eq!(extraction.diagnostic.events_read, 2);
+        assert_eq!(extraction.diagnostic.events_skipped, 1);
+        assert_eq!(extraction.candidates.len(), 1);
+        let serialized = serde_json::to_string(&extraction.diagnostic).unwrap();
+        assert!(!serialized.contains("Private title"));
+        assert_eq!(extraction.diagnostic.reason_categories, vec!["unsupported_event"]);
     }
 
     #[test]

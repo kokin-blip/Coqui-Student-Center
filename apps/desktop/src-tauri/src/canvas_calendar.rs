@@ -12,6 +12,7 @@ pub struct FeedPull {
     pub origin: String,
     pub hash: String,
     pub candidates: Vec<imports::ExtractedCandidate>,
+    pub diagnostic: imports::CalendarImportDiagnostic,
 }
 
 pub fn fetch(raw_url: &str, fallback_tz: Tz) -> Result<FeedPull, CanvasError> {
@@ -45,10 +46,16 @@ pub fn fetch(raw_url: &str, fallback_tz: Tz) -> Result<FeedPull, CanvasError> {
         let mut bytes=Vec::new(); response.take(MAX_FEED_BYTES+1).read_to_end(&mut bytes).map_err(|_| CanvasError::InvalidResponse("calendar feed could not be read".into()))?;
         validate_feed_bytes(media_type.as_deref(),advertised_size,&bytes)?;
         let hash=hex::encode(Sha256::digest(&bytes));
-        let mut candidates=imports::extract_calendar_bytes(&bytes, fallback_tz).map_err(|_| CanvasError::InvalidResponse("calendar feed was malformed".into()))?;
+        let extraction=imports::extract_calendar_bytes_with_diagnostics(&bytes, fallback_tz)
+            .map_err(|error| CanvasError::InvalidResponse(match error {
+                imports::ImportError::Malformed(message) if message == "calendar contains no events" => "calendar feed contained no events".into(),
+                imports::ImportError::Malformed(message) if message == "calendar contains no usable events" => "calendar feed contained no usable events".into(),
+                _ => "calendar feed was malformed".into(),
+            }))?;
+        let imports::CalendarExtraction { mut candidates, diagnostic } = extraction;
         normalize_candidates(&mut candidates);
         let origin=format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
-        return Ok(FeedPull{origin,hash,candidates});
+        return Ok(FeedPull{origin,hash,candidates,diagnostic});
     }
     unreachable!()
 }

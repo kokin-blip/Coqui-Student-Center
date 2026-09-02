@@ -43,6 +43,7 @@ pub enum AiCapability {
     Flashcards,
     PracticeQuestions,
     PracticeTest,
+    ScholarshipWriting,
 }
 
 impl AiCapability {
@@ -58,6 +59,7 @@ impl AiCapability {
             Self::Flashcards => "flashcards",
             Self::PracticeQuestions => "practice_questions",
             Self::PracticeTest => "practice_test",
+            Self::ScholarshipWriting => "scholarship_writing",
         }
     }
 }

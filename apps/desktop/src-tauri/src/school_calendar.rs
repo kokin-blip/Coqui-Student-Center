@@ -513,7 +513,7 @@ fn is_block_tag(tag: &str) -> bool {
 /// Script and style bodies are dropped rather than de-tagged, because their
 /// contents are full of date-shaped strings that would otherwise be read as
 /// calendar rows.
-fn strip_tags(body: &str) -> String {
+pub(crate) fn strip_tags(body: &str) -> String {
     let mut out = String::with_capacity(body.len());
     let mut chars = body.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
@@ -604,7 +604,7 @@ fn decode_entities(value: &str) -> String {
 }
 
 /// Collapse runs of whitespace, so a value split across tags reads as one line.
-fn collapse(value: &str) -> String {
+pub(crate) fn collapse(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
