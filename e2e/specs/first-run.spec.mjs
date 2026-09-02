@@ -42,4 +42,96 @@ describe("installed Student Center", () => {
     const workspace = await browser.tauri.execute(async ({ core }) => core.invoke("get_local_workspace"));
     assert.equal(workspace.courses.length, 0, "skipping courses must not invent one");
   });
+
+  it("navigates every desktop workspace and opens Settings detail pages", async () => {
+    await browser.refresh();
+    const primary = await $('nav[aria-label="Primary navigation"]');
+    const destinations = [
+      ["Today", "Today"],
+      ["Calendar", "Calendar"],
+      ["Work", "Work"],
+      ["Courses", "Courses"],
+      ["Study", "Study"],
+      ["Scholarships", "Scholarships"],
+      ["Settings", "Settings"],
+    ];
+    for (const [label, heading] of destinations) {
+      const button = await primary.$(`button[aria-label="${label}"]`);
+      await button.click();
+      await browser.waitUntil(async () => {
+        const labels = await Promise.all((await $$("h1")).map((item) => item.getText()));
+        return labels.includes(heading);
+      });
+    }
+
+    const canvas = await $('button*=Canvas');
+    await canvas.click();
+    const detail = await $('section[aria-labelledby="settings-detail-title"]');
+    await detail.waitForDisplayed();
+    assert.equal(await detail.$('h1').getText(), "Connect Canvas");
+    await browser.keys(["Escape"]);
+    await detail.waitForDisplayed({ reverse: true });
+  });
+
+  it("persists appearance and Scholarship Center records through native storage", async () => {
+    const result = await browser.tauri.execute(async ({ core }) => {
+      await core.invoke("update_appearance", { appearance: "light" });
+      await core.invoke("update_accent", { accent: "green" });
+      const now = new Date().toISOString();
+      const opportunity = {
+        id: "e2e-scholarship",
+        sourceId: "manual",
+        canonicalUrl: "https://example.edu/scholarships/e2e",
+        provider: "E2E University",
+        title: "Installed-app scholarship",
+        deadline: "2026-12-01T23:59:00-07:00",
+        datePrecision: "date",
+        applicationUrl: "https://example.edu/scholarships/e2e",
+        studyLevels: [],
+        fieldsOfStudy: [],
+        locations: [],
+        citizenship: [],
+        residency: [],
+        essayPrompts: [{ id: "essay", prompt: "Describe your goals", wordLimit: 500 }],
+        requiredDocuments: [],
+        fetchedAt: now,
+        freshness: "unknown",
+        verificationStatus: "unverified",
+        aiPolicy: "unknown",
+        notes: "",
+        priority: "medium",
+        state: "saved",
+        taskIds: [],
+      };
+      await core.invoke("save_scholarship_opportunity", { opportunity });
+      await core.invoke("save_scholarship_draft", {
+        draft: {
+          id: "e2e-draft",
+          opportunityId: opportunity.id,
+          promptId: "essay",
+          title: "Installed-app draft",
+          outline: "Opening; evidence; close",
+          content: "A student-authored draft persisted by the installed application.",
+          wordLimit: 500,
+          updatedAt: now,
+          versions: [],
+        },
+      });
+      await core.invoke("plan_scholarship_deadline", {
+        opportunityId: opportunity.id,
+      });
+      return {
+        workspace: await core.invoke("get_local_workspace"),
+        scholarships: await core.invoke("get_scholarship_workspace"),
+      };
+    });
+    assert.equal(result.workspace.appearance, "light");
+    const opportunity = result.scholarships.opportunities.find(
+      (item) => item.id === "e2e-scholarship",
+    );
+    assert.ok(opportunity, "the saved scholarship must reopen");
+    assert.equal(opportunity.taskIds.length, 1, "deadline planning must be idempotently linked");
+    const draft = result.scholarships.drafts.find((item) => item.id === "e2e-draft");
+    assert.equal(draft.versions.length, 1, "an explicit draft version must persist");
+  });
 });

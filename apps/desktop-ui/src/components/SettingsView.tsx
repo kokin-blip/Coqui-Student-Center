@@ -11,6 +11,16 @@ import type { ReactNode } from "react";
 import { AppearanceSettings } from "./AppearanceSettings";
 import type { AccentPreference, AppearancePreference } from "./ThemeControls";
 
+export type SettingsSection =
+  | "canvas"
+  | "ai"
+  | "account"
+  | "backups"
+  | "security"
+  | "notifications"
+  | "updates"
+  | "recovery";
+
 type SettingsViewProps = {
   appearance: AppearancePreference;
   accent: AccentPreference;

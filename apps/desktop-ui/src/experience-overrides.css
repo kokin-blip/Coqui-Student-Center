@@ -2,6 +2,52 @@
 
 /* ------------------------------------------------------ application shell -- */
 
+.settings-detail-page {
+  position: fixed;
+  z-index: 60;
+  inset: 0 0 0 var(--sidebar-width);
+  overflow: auto;
+  padding: var(--space-8);
+  color: var(--text-primary);
+  background: var(--bg-app);
+}
+
+.settings-detail-header,
+.settings-detail-content {
+  width: min(920px, 100%);
+  margin-inline: auto;
+}
+
+.settings-detail-header {
+  display: grid;
+  gap: var(--space-6);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-detail-header > button {
+  width: max-content;
+}
+
+.settings-detail-header h1,
+.settings-detail-header p {
+  margin: 0;
+}
+
+.settings-detail-header p {
+  max-width: 70ch;
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.settings-detail-content {
+  padding-block: var(--space-6) var(--space-12);
+}
+
+.settings-detail-content > .alert:first-child {
+  margin-top: 0;
+}
+
 body {
   color: var(--text-primary);
   /* Was an amber radial gradient bleeding across the top of every screen. */
@@ -214,6 +260,15 @@ body {
 @media (min-width: 768px) and (max-width: 1199px) {
   .app-shell { grid-template-columns: 78px minmax(0, 1fr); }
   .sidebar { padding: var(--space-5) 11px; }
+  .settings-detail-page { left: 78px; }
+}
+
+@media (max-width: 767px) {
+  .settings-detail-page {
+    left: 0;
+    padding: var(--space-5);
+    padding-bottom: 104px;
+  }
 }
 
 @media (max-width: 400px) {

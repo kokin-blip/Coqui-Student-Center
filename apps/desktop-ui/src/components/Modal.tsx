@@ -1,8 +1,36 @@
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
+import { SettingsDetail } from "./SettingsDetail";
 
 export function Modal({
+  title,
+  subtitle,
+  close,
+  children,
+  presentation = "dialog",
+}: {
+  title: string;
+  subtitle: string;
+  close: () => void;
+  children: ReactNode;
+  presentation?: "dialog" | "settings";
+}) {
+  if (presentation === "settings") {
+    return (
+      <SettingsDetail title={title} subtitle={subtitle} close={close}>
+        {children}
+      </SettingsDetail>
+    );
+  }
+  return (
+    <DialogModal title={title} subtitle={subtitle} close={close}>
+      {children}
+    </DialogModal>
+  );
+}
+
+function DialogModal({
   title,
   subtitle,
   close,

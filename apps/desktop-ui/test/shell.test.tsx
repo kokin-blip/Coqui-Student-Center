@@ -86,7 +86,7 @@ describe("application shell", () => {
     expect(screen.getByText(/Citations are required/)).toBeInTheDocument();
   });
 
-  test("Settings is a route and its focused dialogs restore the opener", async () => {
+  test("Settings uses focused detail routes and restores the opener", async () => {
     const user = userEvent.setup();
     render(<StudentCenter />);
     const settings = await screen.findByRole(
@@ -103,11 +103,13 @@ describe("application shell", () => {
 
     const canvas = screen.getByRole("button", { name: /Canvas/ });
     await user.click(canvas);
-    const dialog = screen.getByRole("dialog", { name: "Connect Canvas" });
-    expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
+    const detail = screen.getByRole("region", { name: "Connect Canvas" });
+    expect(
+      within(detail).getByRole("button", { name: "Back to Settings" }),
+    ).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(
-      screen.queryByRole("dialog", { name: "Connect Canvas" }),
+      screen.queryByRole("region", { name: "Connect Canvas" }),
     ).not.toBeInTheDocument();
     expect(canvas).toHaveFocus();
   });

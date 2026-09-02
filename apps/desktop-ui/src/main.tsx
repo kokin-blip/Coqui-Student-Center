@@ -1,12 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { IonApp } from "@ionic/react";
 import { StudentCenter } from "./StudentCenter";
 import { applyAppearance, initialAppearance } from "./components/ThemeControls";
 import "./tokens.css";
 import "./styles.css";
 import "./experience-overrides.css";
-import "@ionic/react/css/core.css";
 
 async function start() {
   applyAppearance(initialAppearance());
@@ -14,7 +12,7 @@ async function start() {
   if (import.meta.env.VITE_WDIO === "true") await import("@wdio/tauri-plugin");
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <IonApp><StudentCenter /></IonApp>
+      <StudentCenter />
     </StrictMode>,
   );
 }

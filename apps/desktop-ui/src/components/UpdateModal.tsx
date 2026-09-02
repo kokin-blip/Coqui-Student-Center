@@ -11,9 +11,10 @@ import { Modal } from "./Modal";
 
 type UpdateModalProps = {
   close: () => void;
+  presentation?: "dialog" | "settings";
 };
 
-export function UpdateModal({ close }: UpdateModalProps) {
+export function UpdateModal({ close, presentation = "dialog" }: UpdateModalProps) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [installConfirmed, setInstallConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -67,6 +68,7 @@ export function UpdateModal({ close }: UpdateModalProps) {
       title="Student Center updates"
       subtitle="Private-beta builds check only an HTTPS channel and accept installers signed by the public key embedded at build time."
       close={close}
+      presentation={presentation}
     >
       {error && (
         <div className="alert" role="alert">

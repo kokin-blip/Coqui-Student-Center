@@ -56,6 +56,7 @@ export function AccountModal({
   verifyCode,
   refresh,
   signOut,
+  presentation = "dialog",
 }: {
   status: AccountStatus | null;
   mode: "email" | "verify";
@@ -75,6 +76,7 @@ export function AccountModal({
   verifyCode: () => void;
   refresh: () => void;
   signOut: () => void;
+  presentation?: "dialog" | "settings";
 }) {
   const [syncStatus, setSyncStatus] = useState<SyncProtectionStatus | null>(
     null,
@@ -287,6 +289,7 @@ export function AccountModal({
       title="Optional Student Center account"
       subtitle="Your planner and encrypted local data never require an account or internet connection."
       close={closeAccount}
+      presentation={presentation}
     >
       {error && (
         <div className="alert account-alert">

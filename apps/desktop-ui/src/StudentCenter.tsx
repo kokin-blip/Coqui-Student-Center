@@ -50,6 +50,7 @@ import { ScheduleImportReview } from "./components/ScheduleImportReview";
 import { SchedulePhotoEditor } from "./components/SchedulePhotoEditor";
 import { OnboardingExperience } from "./components/OnboardingExperience";
 import { isSetupChecklistDismissed } from "./components/SetupChecklist";
+import type { SettingsSection } from "./components/SettingsView";
 import { TodayView } from "./components/TodayView";
 import { Modal } from "./components/Modal";
 import { BackupSummary, LockScreen } from "./components/SecurityPrimitives";
@@ -208,16 +209,8 @@ type Modal =
   | "replan"
   | "task"
   | "assistant"
-  | "ai"
-  | "canvas"
-  | "backups"
-  | "security"
-  | "notifications"
-  | "updates"
   | "calendar-refresh"
-  | "account"
   | "delete-profile"
-  | "recovery"
   | null;
 const formatTime = (iso: string) =>
   new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(
@@ -255,6 +248,14 @@ export function StudentCenter() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection | null>(null);
+  const showSettingsSection = (section: SettingsSection) => {
+    setView("settings");
+    setModal(null);
+    setSettingsSection(section);
+  };
+  const closeSettingsSection = () => setSettingsSection(null);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -638,10 +639,10 @@ export function StudentCenter() {
   const openBackups = () => {
     switchBackupView("home");
     setError("");
-    setModal("backups");
+    showSettingsSection("backups");
   };
   const openAiSettings = async () => {
-    setModal("ai");
+    showSettingsSection("ai");
     setAiKey("");
     setAiAgeConfirmed(false);
     setError("");
@@ -662,7 +663,7 @@ export function StudentCenter() {
     }
   };
   const openDataRecovery = async () => {
-    setModal("recovery");
+    showSettingsSection("recovery");
     setPurgeConfirmation("");
     setError("");
     try {
@@ -674,7 +675,7 @@ export function StudentCenter() {
   const closeBackups = () => {
     resetBackupFields();
     setBackupView("home");
-    setModal(null);
+    closeSettingsSection();
   };
   const createBackup = async () => {
     setBusy(true);
@@ -731,7 +732,7 @@ export function StudentCenter() {
       setData(next);
       setToast(next.importNotice ?? "Encrypted profile restored.");
       setBackupPassphrase("");
-      setModal(null);
+      closeSettingsSection();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -747,12 +748,12 @@ export function StudentCenter() {
     resetPinFields();
     setPinMode(security?.pinEnabled ? "home" : "enable");
     setError("");
-    setModal("security");
+    showSettingsSection("security");
   };
   const closeSecurity = () => {
     resetPinFields();
     setPinMode("home");
-    setModal(null);
+    closeSettingsSection();
   };
   const savePin = async () => {
     setBusy(true);
@@ -787,6 +788,7 @@ export function StudentCenter() {
       setOnboarding(null);
       setSecurity(next);
       setModal(null);
+      setSettingsSection(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -817,7 +819,7 @@ export function StudentCenter() {
     setQuietEnd(settings.quietEnd);
     setShowNotificationTitles(settings.showTitles);
     setError("");
-    setModal("notifications");
+    showSettingsSection("notifications");
   };
   const saveNotifications = () =>
     run(
@@ -832,12 +834,12 @@ export function StudentCenter() {
       notificationsEnabled
         ? "Private desktop reminders enabled."
         : "Desktop reminders disabled.",
-    ).then(() => setModal(null));
+    ).then(closeSettingsSection);
   const openAccount = async () => {
     setError("");
     setAccountCode("");
     setAccountMode("email");
-    setModal("account");
+    showSettingsSection("account");
     setBusy(true);
     try {
       const status = await getAccountStatus();
@@ -961,6 +963,7 @@ export function StudentCenter() {
   }, [codeRetryAfter]);
   const applyNavigation = (target: NavigationTarget) => {
     setModal(null);
+    setSettingsSection(null);
     if (target.view === "my-day") {
       setView("today");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1105,7 +1108,7 @@ export function StudentCenter() {
   const ocr = ocrStatus ?? data.ocr;
   return (
     <div className="app-shell">
-      {modal === "account" && (
+      {settingsSection === "account" && (
         <Suspense
           fallback={
             <div className="overlay">
@@ -1126,7 +1129,8 @@ export function StudentCenter() {
             setEmail={setAccountEmail}
             setCode={setAccountCode}
             clearError={() => setError("")}
-            close={() => setModal(null)}
+            close={closeSettingsSection}
+            presentation="settings"
             changeEmail={() => {
               setAccountCode("");
               setAccountMode("email");
@@ -1142,7 +1146,10 @@ export function StudentCenter() {
       )}
       <DesktopNavigation
         active={view}
-        onNavigate={setView}
+        onNavigate={(next) => {
+          setSettingsSection(null);
+          setView(next);
+        }}
         onQuickAdd={() => setModal("task")}
         onSettings={() => setView("settings")}
         onSecurity={openSecurity}
@@ -1152,7 +1159,7 @@ export function StudentCenter() {
           setModal("delete-profile");
         }}
       />
-      <main className="main">
+      <main className="main" aria-hidden={settingsSection ? true : undefined}>
         <header className="topbar">
           <div className="crumb">
             <LayoutGrid />
@@ -1244,7 +1251,7 @@ export function StudentCenter() {
               }}
               onConflicts={() => setModal("conflicts")}
               onReview={() => setModal("review")}
-              onCanvas={() => setModal("canvas")}
+              onCanvas={() => showSettingsSection("canvas")}
             />
           ) : view === "study" ? (
             <ModularStudyView onOpenAssistant={() => void openAiSettings()} />
@@ -1253,7 +1260,7 @@ export function StudentCenter() {
               onDashboard={setData}
               onImport={() => setModal("import")}
               onStudy={() => setView("study")}
-              onConnections={() => setModal("canvas")}
+              onConnections={() => showSettingsSection("canvas")}
               canvasConnections={data.canvasConnections}
             />
           ) : view === "work" ? (
@@ -1286,13 +1293,13 @@ export function StudentCenter() {
               }}
               onCanvas={() => {
                 setCanvasMode("calendar");
-                setModal("canvas");
+                showSettingsSection("canvas");
               }}
               onAi={() => void openAiSettings()}
               onAccount={() => void openAccount()}
               onBackups={openBackups}
               onSecurity={openSecurity}
-              onUpdates={() => setModal("updates")}
+              onUpdates={() => showSettingsSection("updates")}
               onAcademic={() => setView("academic-settings")}
               onRecovery={() => void openDataRecovery()}
               onCalendarRefresh={() =>
@@ -1330,7 +1337,10 @@ export function StudentCenter() {
       </button>
       <MobileNavigation
         active={view}
-        onNavigate={setView}
+        onNavigate={(next) => {
+          setSettingsSection(null);
+          setView(next);
+        }}
         onQuickAdd={() => setModal("task")}
         onSettings={() => setView("settings")}
         onSecurity={openSecurity}
@@ -1347,7 +1357,7 @@ export function StudentCenter() {
               className="outline"
               onClick={() => {
                 setCanvasMode("calendar");
-                setModal("canvas");
+                showSettingsSection("canvas");
               }}
             >
               <Link2 />
@@ -2005,14 +2015,15 @@ export function StudentCenter() {
           </div>
         </Modal>
       )}
-      {modal === "ai" && (
+      {settingsSection === "ai" && (
         <Modal
           title="AI providers"
           subtitle="Bring your own key. Requests leave this computer only after you review the provider, model, and data scope."
           close={() => {
             setAiKey("");
-            setModal(null);
+            closeSettingsSection();
           }}
+          presentation="settings"
         >
           <div className="connection-list">
             {aiProviders.map((provider, index) => (
@@ -2243,11 +2254,12 @@ export function StudentCenter() {
           />
         </Suspense>
       )}
-      {modal === "canvas" && (
+      {settingsSection === "canvas" && (
         <Modal
           title="Connect Canvas"
           subtitle="The calendar link is the fastest setup. Every imported fact remains pending until you review it."
-          close={() => setModal(null)}
+          close={closeSettingsSection}
+          presentation="settings"
         >
           <div className="connection-list">
             {data.canvasConnections.map((connection) => (
@@ -2471,11 +2483,12 @@ export function StudentCenter() {
           )}
         </Modal>
       )}
-      {modal === "backups" && (
+      {settingsSection === "backups" && (
         <Modal
           title="Encrypted backups"
           subtitle="Create a portable archive or inspect one before replacing this local profile."
           close={closeBackups}
+          presentation="settings"
         >
           {backupView === "home" && (
             <div className="backup-options">
@@ -2677,11 +2690,12 @@ export function StudentCenter() {
           )}
         </Modal>
       )}
-      {modal === "notifications" && (
+      {settingsSection === "notifications" && (
         <Modal
           title="Desktop reminders"
           subtitle="Choose when Student Center may alert you. Reminder controls stay available here because native toast buttons are not supported consistently on desktop."
-          close={() => setModal(null)}
+          close={closeSettingsSection}
+          presentation="settings"
         >
           <label className="setting-toggle">
             <input
@@ -2822,7 +2836,7 @@ export function StudentCenter() {
             encrypted local database.
           </p>
           <div className="modal-actions">
-            <button className="outline" onClick={() => setModal(null)}>
+            <button className="outline" onClick={closeSettingsSection}>
               Cancel
             </button>
             <button
@@ -2842,11 +2856,12 @@ export function StudentCenter() {
           </div>
         </Modal>
       )}
-      {modal === "security" && (
+      {settingsSection === "security" && (
         <Modal
           title="App lock"
           subtitle="Add a private gate when you step away from this computer."
           close={closeSecurity}
+          presentation="settings"
         >
           {pinMode === "home" && (
             <>
@@ -3061,7 +3076,7 @@ export function StudentCenter() {
           )}
         </Modal>
       )}
-      {modal === "updates" && (
+      {settingsSection === "updates" && (
         <Suspense
           fallback={
             <div className="overlay">
@@ -3071,7 +3086,7 @@ export function StudentCenter() {
             </div>
           }
         >
-          <UpdateModal close={() => setModal(null)} />
+          <UpdateModal close={closeSettingsSection} presentation="settings" />
         </Suspense>
       )}
       {modal === "assistant" && (
@@ -3198,11 +3213,12 @@ export function StudentCenter() {
           </div>
         </Modal>
       )}
-      {modal === "recovery" && (
+      {settingsSection === "recovery" && (
         <Modal
           title="Data recovery"
           subtitle="Untouched legacy mock records are quarantined automatically and never affect your plan."
-          close={() => setModal(null)}
+          close={closeSettingsSection}
+          presentation="settings"
         >
           {error && (
             <div className="alert" role="alert">
