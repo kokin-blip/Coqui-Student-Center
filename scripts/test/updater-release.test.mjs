@@ -59,6 +59,11 @@ test("unsigned prereleases publish only after both packaged desktop lanes", asyn
   assert.match(workflow, /publish-unsigned:\n\s+needs: build-packages/);
   assert.match(workflow, /name: Smoke Windows installer/);
   assert.match(workflow, /name: Smoke mounted macOS package/);
+  assert.match(workflow, /Refusing to touch an existing Coqui profile/);
+  assert.match(workflow, /foreach \(\$launch in 1\.\.2\)/);
+  assert.match(workflow, /for launch in 1 2; do/);
+  assert.match(workflow, /test ! -e "\$profile_root"/);
+  assert.match(workflow, /codesign --verify --deep --strict/);
   const buildJob = workflow.slice(
     workflow.indexOf("  build-packages:"),
     workflow.indexOf("  publish-unsigned:"),
