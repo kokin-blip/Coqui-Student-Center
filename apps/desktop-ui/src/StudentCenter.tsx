@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Bell,
   BookOpen,
   Brain,
-  CalendarDays,
   Check,
   TriangleAlert,
   ChevronRight,
@@ -14,7 +21,6 @@ import {
   HardDrive,
   LayoutGrid,
   Link2,
-  ListChecks,
   Loader,
   LockKeyhole,
   LogOut,
@@ -34,24 +40,19 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { AppearanceSettings } from "./components/AppearanceSettings";
 import {
   DesktopNavigation,
   MobileNavigation,
   StudentDestination,
 } from "./components/AppNavigation";
 import { AppLogo } from "./components/AppLogo";
-import { StudyView as ModularStudyView } from "./components/StudyView";
 import { ScheduleImportReview } from "./components/ScheduleImportReview";
-import { AcademicSettingsView } from "./components/AcademicSettingsView";
-import { CalendarView } from "./components/CalendarView";
-import { CoursesView } from "./components/CoursesView";
-import { WorkView } from "./components/WorkView";
+import { SchedulePhotoEditor } from "./components/SchedulePhotoEditor";
 import { OnboardingExperience } from "./components/OnboardingExperience";
-import {
-  isSetupChecklistDismissed,
-  SetupChecklist,
-} from "./components/SetupChecklist";
+import { isSetupChecklistDismissed } from "./components/SetupChecklist";
+import { TodayView } from "./components/TodayView";
+import { Modal } from "./components/Modal";
+import { BackupSummary, LockScreen } from "./components/SecurityPrimitives";
 import {
   applyAppearance,
   AccentPreference,
@@ -62,15 +63,12 @@ import {
 } from "./components/ThemeControls";
 import {
   AccountStatus,
-  addTask,
   approveCandidates,
   BackupPreview,
   cancelGoogleSignIn,
   changePin,
-  checkForUpdates,
   connectCanvas,
   connectCanvasCalendar,
-  CourseRecord,
   CalendarDiff,
   Dashboard,
   TermChange,
@@ -85,7 +83,6 @@ import {
   getAccountStatus,
   getDocumentEvidence,
   getLocalWorkspace,
-  getUpdateStatus,
   initialize,
   isDesktop,
   importDocumentBytes,
@@ -135,7 +132,6 @@ import {
   updateAccent,
   updateAppearance,
   updateNotificationSettings,
-  UpdateStatus,
   verifyEmailCode,
   WorkspaceSnapshot,
   LegacyQuarantineItem,
@@ -146,30 +142,64 @@ import {
   AiProviderStatus,
   AiUsageSummary,
 } from "./native";
-import {
-  beginSyncProtection,
-  approveSyncDevice,
-  cancelSyncProtection,
-  checkExistingDeviceApproval,
-  confirmSyncProtection,
-  connectEncryptedSync,
-  EncryptedSyncStatus,
-  getEncryptedSyncStatus,
-  getSyncProtectionStatus,
-  listAuthorizedSyncDevices,
-  listPendingSyncDevices,
-  PendingSyncDevice,
-  pullEncryptedMutations,
-  pushEncryptedMutations,
-  recoverSyncProtection,
-  RecoverySetup,
-  requestExistingDeviceApproval,
-  revokeSyncDevice,
-  SyncProtectionStatus,
-} from "./native";
+
+const ModularStudyView = lazy(() =>
+  import("./components/StudyView").then((module) => ({
+    default: module.StudyView,
+  })),
+);
+const AcademicSettingsView = lazy(() =>
+  import("./components/AcademicSettingsView").then((module) => ({
+    default: module.AcademicSettingsView,
+  })),
+);
+const CalendarView = lazy(() =>
+  import("./components/CalendarView").then((module) => ({
+    default: module.CalendarView,
+  })),
+);
+const CoursesView = lazy(() =>
+  import("./components/CoursesView").then((module) => ({
+    default: module.CoursesView,
+  })),
+);
+const WorkView = lazy(() =>
+  import("./components/WorkView").then((module) => ({
+    default: module.WorkView,
+  })),
+);
+const ScholarshipsView = lazy(() =>
+  import("./components/ScholarshipsView").then((module) => ({
+    default: module.ScholarshipsView,
+  })),
+);
+const AccountModal = lazy(() =>
+  import("./components/AccountModal").then((module) => ({
+    default: module.AccountModal,
+  })),
+);
+const SettingsView = lazy(() =>
+  import("./components/SettingsView").then((module) => ({
+    default: module.SettingsView,
+  })),
+);
+const UpdateModal = lazy(() =>
+  import("./components/UpdateModal").then((module) => ({
+    default: module.UpdateModal,
+  })),
+);
+const WorkspaceSearchModal = lazy(() =>
+  import("./components/WorkspaceSearchModal").then((module) => ({
+    default: module.WorkspaceSearchModal,
+  })),
+);
+const QuickAddTaskModal = lazy(() =>
+  import("./components/QuickAddTaskModal").then((module) => ({
+    default: module.QuickAddTaskModal,
+  })),
+);
 
 type Modal =
-  | "settings"
   | "search"
   | "import"
   | "review"
@@ -189,12 +219,6 @@ type Modal =
   | "delete-profile"
   | "recovery"
   | null;
-const greeting = () => {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
-  return "Good evening";
-};
 const formatTime = (iso: string) =>
   new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(
     new Date(iso),
@@ -211,18 +235,17 @@ const minutesBetween = (from: string, to: string) =>
     0,
     Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60000),
   );
-const formatBytes = (bytes: number) =>
-  bytes < 1024 * 1024
-    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
-    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 type BootPhase = "loading" | "ready" | "error";
 const BOOT_WATCHDOG_MS = 15000;
 const BOOT_RECOVERY_DELAY_MS = 1200;
 const BOOT_MAX_ATTEMPTS = 3;
 
 export function StudentCenter() {
-  const [view, setView] = useState<StudentDestination | "academic-settings">("today");
-  const [appearance, setAppearance] = useState<AppearancePreference>(initialAppearance);
+  const [view, setView] = useState<
+    StudentDestination | "academic-settings" | "settings"
+  >("today");
+  const [appearance, setAppearance] =
+    useState<AppearancePreference>(initialAppearance);
   const [accent, setAccent] = useState<AccentPreference>(initialAccent);
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
@@ -237,22 +260,6 @@ export function StudentCenter() {
   const [busy, setBusy] = useState(false);
   const importPasteTarget = useRef<HTMLButtonElement>(null);
   const [replanReason, setReplanReason] = useState("I woke up late");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskMinutes, setTaskMinutes] = useState(30);
-  const [taskDue, setTaskDue] = useState("");
-  const [taskCourseId, setTaskCourseId] = useState("");
-  // Quick capture lives above the workspace view, so the course list is not
-  // already loaded here. Fetched when the modal opens rather than on every
-  // dashboard refresh, since most sessions never open it.
-  const [quickAddCourses, setQuickAddCourses] = useState<CourseRecord[]>([]);
-  useEffect(() => {
-    if (modal !== "task") return;
-    getLocalWorkspace()
-      .then((snapshot) => setQuickAddCourses(snapshot.courses))
-      .catch(() => setQuickAddCourses([]));
-  }, [modal]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchIndex, setSearchIndex] = useState<WorkspaceSnapshot | null>(null);
   const [canvasUrl, setCanvasUrl] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
   const [canvasMode, setCanvasMode] = useState<"calendar" | "full">("calendar");
@@ -263,7 +270,9 @@ export function StudentCenter() {
   const [aiKey, setAiKey] = useState("");
   const [aiModel, setAiModel] = useState("");
   const [aiAgeConfirmed, setAiAgeConfirmed] = useState(false);
-  const [retentionDocumentIds, setRetentionDocumentIds] = useState<string[]>([]);
+  const [retentionDocumentIds, setRetentionDocumentIds] = useState<string[]>(
+    [],
+  );
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [backupView, setBackupView] = useState<"home" | "export" | "restore">(
     "home",
@@ -286,7 +295,6 @@ export function StudentCenter() {
   const [quietStart, setQuietStart] = useState("22:00");
   const [quietEnd, setQuietEnd] = useState("07:00");
   const [showNotificationTitles, setShowNotificationTitles] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(
     null,
   );
@@ -302,7 +310,10 @@ export function StudentCenter() {
     items: Dashboard["candidates"];
   } | null>(null);
   const [assistantCapability, setAssistantCapability] = useState<
-    "brain_dump" | "document_extraction" | "task_decomposition" | "planner_explanation"
+    | "brain_dump"
+    | "document_extraction"
+    | "task_decomposition"
+    | "planner_explanation"
   >("brain_dump");
   const [assistantExcerpt, setAssistantExcerpt] = useState("");
   const [assistantConsent, setAssistantConsent] = useState(false);
@@ -310,12 +321,18 @@ export function StudentCenter() {
   const [legacyItems, setLegacyItems] = useState<LegacyQuarantineItem[]>([]);
   const [purgeConfirmation, setPurgeConfirmation] = useState("");
   const [ocrStatus, setOcrStatus] = useState<OcrStatus | null>(null);
-  const [todayWorkspace, setTodayWorkspace] = useState<WorkspaceSnapshot | null>(null);
-  const [checklistDismissed, setChecklistDismissed] = useState(isSetupChecklistDismissed);
+  const [todayWorkspace, setTodayWorkspace] =
+    useState<WorkspaceSnapshot | null>(null);
+  const [checklistDismissed, setChecklistDismissed] = useState(
+    isSetupChecklistDismissed,
+  );
   const [bootPhase, setBootPhase] = useState<BootPhase>("loading");
   const [bootError, setBootError] = useState("");
   const [bootAttempt, setBootAttempt] = useState(0);
-  const retryBoot = useCallback(() => setBootAttempt((attempt) => attempt + 1), []);
+  const retryBoot = useCallback(
+    () => setBootAttempt((attempt) => attempt + 1),
+    [],
+  );
   useEffect(() => {
     const main = document.querySelector<HTMLElement>(".main");
     if (!main) return;
@@ -342,12 +359,14 @@ export function StudentCenter() {
         setOnboarding(result.onboarding);
         setData(result.dashboard);
         setBootPhase("ready");
-        getLocalWorkspace().then((workspace) => {
-          setTodayWorkspace(workspace);
-          setAppearance(workspace.appearance);
-          setAccent(workspace.accent);
-          applyAppearance(workspace.appearance, workspace.accent);
-        }).catch(() => undefined);
+        getLocalWorkspace()
+          .then((workspace) => {
+            setTodayWorkspace(workspace);
+            setAppearance(workspace.appearance);
+            setAccent(workspace.accent);
+            applyAppearance(workspace.appearance, workspace.accent);
+          })
+          .catch(() => undefined);
       })
       .catch((e) => {
         if (!active) return;
@@ -382,10 +401,18 @@ export function StudentCenter() {
   useEffect(() => {
     let active = true;
     let stop = () => {};
-    listenForOcrStatus((status) => { if (active) setOcrStatus(status); })
-      .then((dispose) => { if (active) stop = dispose; else dispose(); })
+    listenForOcrStatus((status) => {
+      if (active) setOcrStatus(status);
+    })
+      .then((dispose) => {
+        if (active) stop = dispose;
+        else dispose();
+      })
       .catch(() => undefined);
-    return () => { active = false; stop(); };
+    return () => {
+      active = false;
+      stop();
+    };
   }, []);
 
   // Keep the Today checklist honest as the student adds courses and work. Only
@@ -394,9 +421,13 @@ export function StudentCenter() {
     if (checklistDismissed || !data) return;
     let active = true;
     getLocalWorkspace()
-      .then((workspace) => { if (active) setTodayWorkspace(workspace); })
+      .then((workspace) => {
+        if (active) setTodayWorkspace(workspace);
+      })
       .catch(() => undefined);
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [data, checklistDismissed]);
   useEffect(() => {
     if (!security?.locked || security.retryAfterSeconds <= 0) return;
@@ -433,7 +464,8 @@ export function StudentCenter() {
   // that changed under us is not authority to move anyone's finals.
   const [calendarDiff, setCalendarDiff] = useState<CalendarDiff | null>(null);
   const [declinedChanges, setDeclinedChanges] = useState<string[]>([]);
-  const changeKey = (change: TermChange) => `${change.termName}:${change.field}`;
+  const changeKey = (change: TermChange) =>
+    `${change.termName}:${change.field}`;
   // The school on this profile. Empty for a custom or unset school, in which
   // case there is no published calendar to read and the control says so.
   const institutionId = onboarding?.draft.institution.custom
@@ -461,7 +493,10 @@ export function StudentCenter() {
         setError("");
         try {
           const bytes = new Uint8Array(await image.arrayBuffer());
-          const next = await importDocumentBytes(image.name || "pasted-image.png", bytes);
+          const next = await importDocumentBytes(
+            image.name || "pasted-image.png",
+            bytes,
+          );
           setData(next);
           setToast(
             next.importNotice ??
@@ -525,45 +560,45 @@ export function StudentCenter() {
   );
   const activeImportTerm = todayWorkspace?.terms.find((term) => term.active);
   const reviewablePending = pending.filter((candidate) => {
-    if (conflictCandidateIds.has(candidate.id) || !candidate.title.trim()) return false;
+    if (conflictCandidateIds.has(candidate.id) || !candidate.title.trim())
+      return false;
     if (candidate.kind !== "class_meeting") return true;
-    const term = todayWorkspace?.terms.find((item) => item.id === candidate.termId) ?? activeImportTerm;
-    return Boolean(candidate.course.trim() && candidate.weekdays?.length && candidate.startsAtLocal && candidate.endsAtLocal && term);
+    const term =
+      todayWorkspace?.terms.find((item) => item.id === candidate.termId) ??
+      activeImportTerm;
+    return Boolean(
+      candidate.course.trim() &&
+      candidate.weekdays?.length &&
+      candidate.startsAtLocal &&
+      candidate.endsAtLocal &&
+      term,
+    );
   });
   useEffect(() => {
     if (modal === "review")
       setSelectedCandidates(reviewablePending.map((candidate) => candidate.id));
-  }, [modal, data?.candidates.length, data?.conflicts.length, todayWorkspace?.terms.map((term)=>`${term.id}:${term.active}`).join("|")]);
+  }, [
+    modal,
+    data?.candidates.length,
+    data?.conflicts.length,
+    todayWorkspace?.terms.map((term) => `${term.id}:${term.active}`).join("|"),
+  ]);
   useEffect(() => {
     if (modal !== "review") return;
-    getLocalWorkspace().then(setTodayWorkspace).catch((next)=>setError(String(next)));
+    getLocalWorkspace()
+      .then(setTodayWorkspace)
+      .catch((next) => setError(String(next)));
   }, [modal]);
   useEffect(() => {
-    if (modal !== "review" || pending.length || !data?.unsettledScheduleSources.length)
+    if (
+      modal !== "review" ||
+      pending.length ||
+      !data?.unsettledScheduleSources.length
+    )
       return;
     setRetentionDocumentIds(data.unsettledScheduleSources);
     setModal("retention");
   }, [modal, pending.length, data?.unsettledScheduleSources.join("|")]);
-  const remaining = useMemo(
-    () =>
-      data?.blocks
-        .filter((b) => !b.completed)
-        .reduce((sum, b) => sum + minutesBetween(b.startsAt, b.endsAt), 0) ?? 0,
-    [data],
-  );
-  const studyBlocks = useMemo(
-    () => data?.blocks.filter((block) => block.kind === "study").length ?? 0,
-    [data],
-  );
-  const classBlocks = useMemo(
-    () => data?.blocks.filter((block) => block.kind === "class").length ?? 0,
-    [data],
-  );
-  const reflection = useMemo(() => {
-    const started = data?.blocks.filter((block) => block.startedAt) ?? [];
-    const variance = started.map((block) => Math.round((new Date(block.startedAt!).getTime() - new Date(block.startsAt).getTime()) / 60000));
-    return { completed: data?.blocks.filter((block) => block.completed).length ?? 0, started: started.length, averageVariance: variance.length ? Math.round(variance.reduce((sum,value)=>sum+value,0)/variance.length) : 0 };
-  }, [data]);
   const reminderBlocks = useMemo(
     () =>
       data?.blocks
@@ -612,7 +647,10 @@ export function StudentCenter() {
     setError("");
     setBusy(true);
     try {
-      const [providers, usage] = await Promise.all([listAiProviders(), getAiUsage()]);
+      const [providers, usage] = await Promise.all([
+        listAiProviders(),
+        getAiUsage(),
+      ]);
       setAiProviders(providers);
       setAiUsage(usage);
       const selected = providers.find((item) => item.provider === aiProvider);
@@ -795,29 +833,6 @@ export function StudentCenter() {
         ? "Private desktop reminders enabled."
         : "Desktop reminders disabled.",
     ).then(() => setModal(null));
-  const openUpdates = async () => {
-    setError("");
-    setModal("updates");
-    setBusy(true);
-    try {
-      setUpdateStatus(await getUpdateStatus());
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const runUpdateCheck = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      setUpdateStatus(await checkForUpdates());
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
   const openAccount = async () => {
     setError("");
     setAccountCode("");
@@ -1027,7 +1042,9 @@ export function StudentCenter() {
           <>
             <strong>We could not open your workspace.</strong>
             <p role="alert">{bootError || error}</p>
-            <button className="solid" onClick={retryBoot}>Try again</button>
+            <button className="solid" onClick={retryBoot}>
+              Try again
+            </button>
           </>
         ) : (
           <>
@@ -1052,11 +1069,14 @@ export function StudentCenter() {
           // is guaranteed to return one.
           if (result.dashboard) {
             setData(result.dashboard);
-            if (result.dashboard.candidates.some((candidate) => candidate.status === "pending")) {
+            if (
+              result.dashboard.candidates.some(
+                (candidate) => candidate.status === "pending",
+              )
+            ) {
               setModal("review");
             }
-          }
-          else retryBoot();
+          } else retryBoot();
         }}
       />
     );
@@ -1068,7 +1088,9 @@ export function StudentCenter() {
           <>
             <strong>We could not load your plan.</strong>
             <p role="alert">{bootError || error}</p>
-            <button className="solid" onClick={retryBoot}>Reload plan</button>
+            <button className="solid" onClick={retryBoot}>
+              Reload plan
+            </button>
           </>
         ) : (
           <>
@@ -1084,35 +1106,45 @@ export function StudentCenter() {
   return (
     <div className="app-shell">
       {modal === "account" && (
-        <AccountModal
-          status={accountStatus}
-          mode={accountMode}
-          email={accountEmail}
-          code={accountCode}
-          retryAfter={codeRetryAfter}
-          busy={busy}
-          error={error}
-          setEmail={setAccountEmail}
-          setCode={setAccountCode}
-          clearError={() => setError("")}
-          close={() => setModal(null)}
-          changeEmail={() => {
-            setAccountCode("");
-            setAccountMode("email");
-          }}
-          useEmail={useEmailAccount}
-          google={beginGoogleAccount}
-          sendCode={sendAccountCode}
-          verifyCode={confirmAccountCode}
-          refresh={refreshAccount}
-          signOut={disconnectAccount}
-        />
+        <Suspense
+          fallback={
+            <div className="overlay">
+              <div className="modal loading" role="status">
+                Opening account and sync settings…
+              </div>
+            </div>
+          }
+        >
+          <AccountModal
+            status={accountStatus}
+            mode={accountMode}
+            email={accountEmail}
+            code={accountCode}
+            retryAfter={codeRetryAfter}
+            busy={busy}
+            error={error}
+            setEmail={setAccountEmail}
+            setCode={setAccountCode}
+            clearError={() => setError("")}
+            close={() => setModal(null)}
+            changeEmail={() => {
+              setAccountCode("");
+              setAccountMode("email");
+            }}
+            useEmail={useEmailAccount}
+            google={beginGoogleAccount}
+            sendCode={sendAccountCode}
+            verifyCode={confirmAccountCode}
+            refresh={refreshAccount}
+            signOut={disconnectAccount}
+          />
+        </Suspense>
       )}
       <DesktopNavigation
         active={view}
         onNavigate={setView}
         onQuickAdd={() => setModal("task")}
-        onSettings={() => setModal("settings")}
+        onSettings={() => setView("settings")}
         onSecurity={openSecurity}
         onDeleteProfile={() => {
           setDeleteConfirmation("");
@@ -1125,7 +1157,19 @@ export function StudentCenter() {
           <div className="crumb">
             <LayoutGrid />
             <span>
-              {view === "today" ? "Today" : view === "calendar" ? "Calendar" : view === "work" ? "Work" : view === "courses" ? "Courses" : "Study"}
+              {view === "today"
+                ? "Today"
+                : view === "calendar"
+                  ? "Calendar"
+                  : view === "work"
+                    ? "Work"
+                    : view === "courses"
+                      ? "Courses"
+                      : view === "scholarships"
+                        ? "Scholarships"
+                        : view === "settings" || view === "academic-settings"
+                          ? "Settings"
+                          : "Study"}
             </span>
             <ChevronRight />
             <span>{view === "today" ? "Agenda" : "Local workspace"}</span>
@@ -1137,13 +1181,7 @@ export function StudentCenter() {
             <button
               className="icon-btn"
               aria-label="Search"
-              onClick={() => {
-                setSearchQuery("");
-                setModal("search");
-                getLocalWorkspace()
-                  .then(setSearchIndex)
-                  .catch((next) => setError(String(next)));
-              }}
+              onClick={() => setModal("search")}
             >
               <Search />
             </button>
@@ -1163,340 +1201,130 @@ export function StudentCenter() {
             </button>
           </div>
         </header>
-        {view === "today" ? (
-          <div className="content">
-            <div className="page-head">
-              <div>
-                <p className="eyebrow">
-                  {new Intl.DateTimeFormat([], {
-                    weekday: "long",
-                    month: "long",
-                    day: "numeric",
-                  }).format(new Date())}
-                </p>
-                <h1>
-                  {greeting()}, {data.studentName.split(" ")[0]}.
-                </h1>
-                <p>
-                  Your plan is stored locally and ready, even without internet.
-                </p>
+        <Suspense
+          fallback={
+            <div className="content">
+              <div className="loading">
+                <strong>Opening your local workspace…</strong>
               </div>
-              <span className="mode-pill">
-                <HardDrive />{" "}
-                {isDesktop() ? "Desktop workspace" : "UI test mode"}
-              </span>
             </div>
-            {error && (
-              <div className="alert" role="alert">
-                <CircleAlert />
-                <span>{error}</span>
-                <button onClick={() => setError("")}>
-                  <X />
-                </button>
-              </div>
-            )}
-            {!checklistDismissed && todayWorkspace && (
-              <SetupChecklist
-                workspace={todayWorkspace}
-                onOpenCourses={() => setView("courses")}
-                onAddTask={() => setModal("task")}
-                onImport={() => setModal("import")}
-                onDismiss={() => setChecklistDismissed(true)}
-              />
-            )}
-            <div className="hero-grid">
-              <section className="next-card">
-                <div className="next-top">
-                  <span>
-                    <Zap /> Your next best action
-                  </span>
-                  <b>{data.nextAction?.durationMinutes ?? 0} minutes</b>
-                </div>
-                <h2>{data.nextAction?.title ?? "Your plan is clear"}</h2>
-                <p>
-                  {data.nextAction?.explanation ??
-                    "Add a task or import a syllabus to build your plan."}
-                </p>
-                <div className="reason-row">
-                  {data.nextAction?.reasonCodes.map((code) => (
-                    <span key={code}>{code.replaceAll("_", " ")}</span>
-                  ))}
-                </div>
-                {Boolean(data.nextAction?.alternatives.length) && (
-                  <p className="alternatives">
-                    <strong>Other feasible options:</strong>{" "}
-                    {data.nextAction?.alternatives
-                      .map(
-                        (item) => `${item.title} (${item.durationMinutes} min)`,
-                      )
-                      .join(" · ")}
-                  </p>
-                )}
-                <div className="next-actions">
-                  <button
-                    className="primary"
-                    disabled={!data.nextAction || busy}
-                    onClick={() => {
-                      const action = data.nextAction;
-                      if (action)
-                        void run(
-                          () => startPlanBlock(action.blockId),
-                          "Focus session started — you’ve got this.",
-                        );
-                    }}
-                  >
-                    <Play /> Start this now
-                  </button>
-                  <button className="ghost" onClick={() => setModal("replan")}>
-                    Something changed
-                  </button>
-                </div>
-              </section>
-              <aside className="capacity" aria-label="Today's capacity">
-                <p>Capacity</p>
-                {data.blocks.length === 0 ? (
-                  // Zero statistics against an empty plan say nothing; tell the
-                  // student what would make the number meaningful instead.
-                  <div className="capacity-empty">
-                    <strong>No schedule yet</strong>
-                    <span>
-                      Add tasks or classes and Coqui will work out today’s
-                      capacity.
-                    </span>
-                  </div>
-                ) : (
-                  <>
-                    <div>
-                      <strong>
-                        {Math.floor(remaining / 60)}h {remaining % 60}m
-                      </strong>
-                      <span>available today</span>
-                    </div>
-                    <div className="meter">
-                      <i
-                        style={{
-                          width: `${Math.min(100, (remaining / 360) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <ul className="capacity-facts">
-                      <li>
-                        <ListChecks aria-hidden="true" />
-                        {studyBlocks} {studyBlocks === 1 ? "task" : "tasks"}
-                      </li>
-                      <li>
-                        <CalendarDays aria-hidden="true" />
-                        {classBlocks} {classBlocks === 1 ? "class" : "classes"}
-                      </li>
-                      <li className={data.conflicts.length ? "warn" : ""}>
-                        {data.conflicts.length ? (
-                          <TriangleAlert aria-hidden="true" />
-                        ) : (
-                          <Check aria-hidden="true" />
-                        )}
-                        {data.conflicts.length
-                          ? `${data.conflicts.length} ${data.conflicts.length === 1 ? "conflict" : "conflicts"}`
-                          : "No conflicts"}
-                      </li>
-                    </ul>
-                  </>
-                )}
-              </aside>
-            </div>
-            <div className="section-head">
-              <h2>Today’s plan</h2>
-              <button onClick={() => setModal("replan")}>
-                <RefreshCw /> Replan my day
-              </button>
-            </div>
-            <div className="body-grid">
-              <section className="timeline">
-                {data.blocks.length ? (
-                  data.blocks.map((block) => (
-                    <div
-                      className="timeline-row"
-                      id={`plan-block-${block.id}`}
-                      key={block.id}
-                    >
-                      <time>{formatTime(block.startsAt)}</time>
-                      <div className="rail">
-                        <i />
-                      </div>
-                      <article
-                        className={`event ${block.kind} ${block.completed ? "done" : ""} ${block.startedAt ? "started" : ""}`}
-                      >
-                        <div>
-                          <strong>{block.title}</strong>
-                          <p>
-                            {minutesBetween(block.startsAt, block.endsAt)} min ·{" "}
-                            {block.locked ? "Fixed" : "Flexible"}
-                            {block.startedAt ? " · In progress" : ""}
-                          </p>
-                          <div className="reason-row small">
-                            {block.reasonCodes.slice(0, 2).map((code) => (
-                              <span key={code}>
-                                {code.replaceAll("_", " ")}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        <button
-                          className="check"
-                          aria-label={`Mark ${block.title} ${block.completed ? "incomplete" : "complete"}`}
-                          disabled={!block.taskId || busy}
-                          onClick={() =>
-                            run(
-                              () => toggleTask(block.taskId!),
-                              "Progress saved locally.",
-                            )
-                          }
-                        >
-                          {block.completed && <Check />}
-                        </button>
-                      </article>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state">
-                    <CalendarDays />
-                    <strong>Your day is open.</strong>
-                    <p>
-                      Add an assignment, class, or study session and Coqui will
-                      build your plan around the time you actually have.
-                    </p>
-                    <button
-                      className="solid"
-                      onClick={() => setModal("task")}
-                    >
-                      <Plus /> Add something
-                    </button>
-                  </div>
-                )}
-              </section>
-              <aside className="side-stack" aria-label="Today details">
-                <section className="small-card">
-                  <div className="small-head">
-                    <h3>Quick capture</h3>
-                    <span>Local</span>
-                  </div>
-                  <div className="quick-grid">
-                    <button onClick={() => setModal("import")}>
-                      <FileUp /> Import work
-                    </button>
-                    <button
-                      onClick={() => {
-                        setAssistantExplanation("");
-                        setModal("assistant");
-                        listAiProviders()
-                          .then(setAiProviders)
-                          .catch((e) => setError(String(e)));
-                      }}
-                    >
-                      <Brain /> Brain dump
-                    </button>
-                    <button onClick={() => setModal("replan")}>
-                      <RefreshCw /> Adjust day
-                    </button>
-                  </div>
-                </section>
-                <section className="small-card">
-                  <div className="small-head"><h3>Planned vs actual</h3><span>Today</span></div>
-                  {reflection.started ? <><p>{reflection.completed} completed · {reflection.started} started.</p><p>You started {Math.abs(reflection.averageVariance)} minutes {reflection.averageVariance>0?"later":"earlier"} than planned on average.</p></> : <p>Start a focus block to build a private reflection. Coqui records timing locally.</p>}
-                </section>
-                {data.conflicts.length > 0 && (
-                  <section className="small-card vault-card conflict-summary">
-                    <CircleAlert />
-                    <div>
-                      <h3>
-                        {data.conflicts.length} decision
-                        {data.conflicts.length === 1 ? "" : "s"} needed
-                      </h3>
-                      <p>
-                        {data.conflicts.some(
-                          (conflict) => conflict.kind === "source_change",
-                        )
-                          ? "Canvas reported a critical date change. Your current plan remains unchanged until you choose."
-                          : "Some work does not fit without a conflict."}
-                      </p>
-                      <button onClick={() => setModal("conflicts")}>
-                        Review conflicts
-                      </button>
-                    </div>
-                  </section>
-                )}
-                <section className="small-card vault-card">
-                  <FileLock2 />
-                  <div>
-                    <h3>Encrypted vault</h3>
-                    <p>
-                      {pending.length
-                        ? `${pending.length} extracted item${pending.length === 1 ? "" : "s"} awaiting your review.`
-                        : "Imported files and evidence stay encrypted on this device."}
-                    </p>
-                    {pending.length > 0 && (
-                      <button onClick={() => setModal("review")}>
-                        Review candidates
-                      </button>
-                    )}
-                  </div>
-                </section>
-                <section
-                  className={`small-card vault-card ${ocr.phase === "ready" ? "ocr-ready" : ocr.phase === "checking" ? "ocr-checking" : "ocr-attention"}`}
-                >
-                  {ocr.phase === "ready" ? (
-                    <ShieldCheck />
-                  ) : ocr.phase === "checking" ? (
-                    <Loader />
-                  ) : (
-                    <CircleAlert />
-                  )}
-                  <div>
-                    <h3>
-                      {ocr.phase === "ready"
-                        ? "Local OCR ready"
-                        : ocr.phase === "checking"
-                          ? "Checking local OCR"
-                          : "OCR runtime needed"}
-                    </h3>
-                    <p>{ocr.message}</p>
-                    <small>
-                      Engine: {ocr.engineSource} · PDF renderer:{" "}
-                      {ocr.rendererSource}
-                    </small>
-                  </div>
-                </section>
-                <section className="small-card vault-card">
-                  <Link2 />
-                  <div>
-                    <h3>Canvas connections</h3>
-                    <p>
-                      {data.canvasConnections.length
-                        ? `${data.canvasConnections.length} local connection${data.canvasConnections.length === 1 ? "" : "s"}. ${data.canvasConnections.reduce((sum, connection) => sum + connection.pendingCandidates, 0)} changes await review.`
-                        : "Paste the Canvas calendar-feed link for a quick read-only setup, or use the full connection in Advanced."}
-                    </p>
-                    <button onClick={() => setModal("canvas")}>
-                      {data.canvasConnections.length
-                        ? "Manage sync"
-                        : "Connect Canvas"}
-                    </button>
-                  </div>
-                </section>
-              </aside>
-            </div>
-          </div>
-        ) : view === "study" ? (
-          <ModularStudyView onOpenAssistant={() => void openAiSettings()} />
-        ) : view === "calendar" ? (
-          <CalendarView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} onConnections={() => setModal("canvas")} canvasConnections={data.canvasConnections} />
-        ) : view === "work" ? (
-          <WorkView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} />
-        ) : view === "academic-settings" ? (
-          <AcademicSettingsView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} />
-        ) : (
-          <CoursesView onDashboard={setData} onImport={() => setModal("import")} onStudy={() => setView("study")} />
-        )}
+          }
+        >
+          {view === "today" ? (
+            <TodayView
+              data={data}
+              workspace={todayWorkspace}
+              ocr={ocr}
+              desktop={isDesktop()}
+              busy={busy}
+              error={error}
+              checklistDismissed={checklistDismissed}
+              pendingCount={pending.length}
+              onClearError={() => setError("")}
+              onOpenCourses={() => setView("courses")}
+              onAddTask={() => setModal("task")}
+              onImport={() => setModal("import")}
+              onDismissChecklist={() => setChecklistDismissed(true)}
+              onStartBlock={(blockId) =>
+                void run(
+                  () => startPlanBlock(blockId),
+                  "Focus session started — you’ve got this.",
+                )
+              }
+              onReplan={() => setModal("replan")}
+              onToggleTask={(taskId) =>
+                void run(() => toggleTask(taskId), "Progress saved locally.")
+              }
+              onAssistant={() => {
+                setAssistantExplanation("");
+                setModal("assistant");
+                listAiProviders()
+                  .then(setAiProviders)
+                  .catch((next) => setError(String(next)));
+              }}
+              onConflicts={() => setModal("conflicts")}
+              onReview={() => setModal("review")}
+              onCanvas={() => setModal("canvas")}
+            />
+          ) : view === "study" ? (
+            <ModularStudyView onOpenAssistant={() => void openAiSettings()} />
+          ) : view === "calendar" ? (
+            <CalendarView
+              onDashboard={setData}
+              onImport={() => setModal("import")}
+              onStudy={() => setView("study")}
+              onConnections={() => setModal("canvas")}
+              canvasConnections={data.canvasConnections}
+            />
+          ) : view === "work" ? (
+            <WorkView
+              onDashboard={setData}
+              onImport={() => setModal("import")}
+              onStudy={() => setView("study")}
+            />
+          ) : view === "scholarships" ? (
+            <ScholarshipsView />
+          ) : view === "settings" ? (
+            <SettingsView
+              appearance={appearance}
+              accent={accent}
+              busy={busy}
+              institutionConfigured={Boolean(institutionId)}
+              onAppearance={(next) => {
+                setAppearance(next);
+                applyAppearance(next, accent);
+                void updateAppearance(next).catch((value) =>
+                  setError(String(value)),
+                );
+              }}
+              onAccent={(next) => {
+                setAccent(next);
+                applyAppearance(appearance, next);
+                void updateAccent(next).catch((value) =>
+                  setError(String(value)),
+                );
+              }}
+              onCanvas={() => {
+                setCanvasMode("calendar");
+                setModal("canvas");
+              }}
+              onAi={() => void openAiSettings()}
+              onAccount={() => void openAccount()}
+              onBackups={openBackups}
+              onSecurity={openSecurity}
+              onUpdates={() => setModal("updates")}
+              onAcademic={() => setView("academic-settings")}
+              onRecovery={() => void openDataRecovery()}
+              onCalendarRefresh={() =>
+                void run(async () => {
+                  const diff = await refreshSchoolCalendar(institutionId);
+                  setCalendarDiff(diff);
+                  setDeclinedChanges([]);
+                  setModal("calendar-refresh");
+                  return null;
+                }, "")
+              }
+            />
+          ) : view === "academic-settings" ? (
+            <AcademicSettingsView
+              onDashboard={setData}
+              onImport={() => setModal("import")}
+              onStudy={() => setView("study")}
+            />
+          ) : (
+            <CoursesView
+              onDashboard={setData}
+              onImport={() => setModal("import")}
+              onStudy={() => setView("study")}
+            />
+          )}
+        </Suspense>
       </main>
-      <button className="fab" onClick={() => setModal("task")} aria-label="Quick add">
+      <button
+        className="fab"
+        onClick={() => setModal("task")}
+        aria-label="Quick add"
+      >
         <Plus />
         <span>Quick add</span>
       </button>
@@ -1504,7 +1332,7 @@ export function StudentCenter() {
         active={view}
         onNavigate={setView}
         onQuickAdd={() => setModal("task")}
-        onSettings={() => setModal("settings")}
+        onSettings={() => setView("settings")}
         onSecurity={openSecurity}
         onDeleteProfile={() => setModal("delete-profile")}
       />
@@ -1515,13 +1343,52 @@ export function StudentCenter() {
           close={() => setModal(null)}
         >
           <div className="import-choice-grid">
-            <button className="outline" onClick={() => { setCanvasMode("calendar"); setModal("canvas"); }}>
-              <Link2 /><strong>Canvas calendar link</strong><span>Paste the one link Canvas provides</span>
+            <button
+              className="outline"
+              onClick={() => {
+                setCanvasMode("calendar");
+                setModal("canvas");
+              }}
+            >
+              <Link2 />
+              <strong>Canvas calendar link</strong>
+              <span>Paste the one link Canvas provides</span>
             </button>
-            <button className="outline" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { setToast(await launchScheduleCapture()); window.setTimeout(() => importPasteTarget.current?.focus(), 0); } catch (next) { setError(String(next)); } finally { setBusy(false); } }}>
-              <LayoutGrid /><strong>Capture screen area</strong><span>Use the system snipping tool, then paste</span>
+            <button
+              className="outline"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  setToast(await launchScheduleCapture());
+                  window.setTimeout(
+                    () => importPasteTarget.current?.focus(),
+                    0,
+                  );
+                } catch (next) {
+                  setError(String(next));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <LayoutGrid />
+              <strong>Capture screen area</strong>
+              <span>Use the system snipping tool, then paste</span>
             </button>
           </div>
+          <SchedulePhotoEditor
+            disabled={busy}
+            onError={setError}
+            onImported={(next, count) => {
+              setData(next);
+              setToast(
+                `${count} corrected photo${count === 1 ? "" : "s"} encrypted and extracted.`,
+              );
+              setModal("review");
+            }}
+          />
           <button
             ref={importPasteTarget}
             className="dropzone"
@@ -1539,7 +1406,13 @@ export function StudentCenter() {
             <span>PDF, image, ICS, Word, Excel, CSV, PowerPoint, or text</span>
             <span>Or paste a screenshot of your schedule with Ctrl/Cmd+V</span>
           </button>
-          <button className="quick-add-detailed" onClick={() => { setModal(null); setView("courses"); }}>
+          <button
+            className="quick-add-detailed"
+            onClick={() => {
+              setModal(null);
+              setView("courses");
+            }}
+          >
             <BookOpen /> Enter classes manually <ChevronRight />
           </button>
           <p className="privacy-note">
@@ -1582,8 +1455,8 @@ export function StudentCenter() {
                       <strong>{document.fileName}</strong>
                       <small>
                         {new Date(document.importedAt).toLocaleString()} ·{" "}
-                        {document.approvedCount} approved · {document.pendingCount}{" "}
-                        pending
+                        {document.approvedCount} approved ·{" "}
+                        {document.pendingCount} pending
                       </small>
                       {document.extractionError && (
                         <em>{document.extractionError}</em>
@@ -1635,13 +1508,17 @@ export function StudentCenter() {
                   const source = documents.find(
                     (document) => document.id === vaultEvidence.documentId,
                   );
-                  return source?.mime.startsWith("image/") && source.originalAvailable;
+                  return (
+                    source?.mime.startsWith("image/") &&
+                    source.originalAvailable
+                  );
                 })() && (
                   <div className="ai-reread">
                     <p>
                       <ShieldCheck aria-hidden="true" /> Coqui read this
                       screenshot on your computer. If the class times came out
-                      wrong, it can ask your selected AI provider to try again — that sends{" "}
+                      wrong, it can ask your selected AI provider to try again —
+                      that sends{" "}
                       <strong>this image and the text read from it</strong> off
                       your computer. Everything it proposes still needs your
                       review, and you never have to do this.
@@ -1652,9 +1529,16 @@ export function StudentCenter() {
                       onClick={() =>
                         run(async () => {
                           const available = await listAiProviders();
-                          const resolved = available.find((item) => item.connected && item.healthy);
-                          if (!resolved) throw new Error("Connect and test an AI provider in Settings first.");
-                          const approved = window.confirm(`Send this screenshot and its locally extracted text to ${resolved.provider} (${resolved.model})? Nothing else in your vault is included.`);
+                          const resolved = available.find(
+                            (item) => item.connected && item.healthy,
+                          );
+                          if (!resolved)
+                            throw new Error(
+                              "Connect and test an AI provider in Settings first.",
+                            );
+                          const approved = window.confirm(
+                            `Send this screenshot and its locally extracted text to ${resolved.provider} (${resolved.model})? Nothing else in your vault is included.`,
+                          );
                           if (!approved) return null;
                           const result = await readScheduleWithAi(
                             vaultEvidence.documentId,
@@ -1702,16 +1586,22 @@ export function StudentCenter() {
                       `${selectedCandidates.length} candidates rejected.`,
                     ).then((next) => {
                       if (!next) return;
-                      const selectedSources = [...new Set(
-                        pending
-                          .filter((item) => selectedCandidates.includes(item.id))
-                          .map((item) => item.documentId),
-                      )];
+                      const selectedSources = [
+                        ...new Set(
+                          pending
+                            .filter((item) =>
+                              selectedCandidates.includes(item.id),
+                            )
+                            .map((item) => item.documentId),
+                        ),
+                      ];
                       const ready = selectedSources.filter(
                         (id) =>
                           next.unsettledScheduleSources.includes(id) &&
                           !next.candidates.some(
-                            (item) => item.documentId === id && item.status === "pending",
+                            (item) =>
+                              item.documentId === id &&
+                              item.status === "pending",
                           ),
                       );
                       if (ready.length) {
@@ -1746,16 +1636,22 @@ export function StudentCenter() {
                       `${selectedCandidates.length} items approved and planned.`,
                     ).then((next) => {
                       if (!next) return;
-                      const selectedSources = [...new Set(
-                        pending
-                          .filter((item) => selectedCandidates.includes(item.id))
-                          .map((item) => item.documentId),
-                      )];
+                      const selectedSources = [
+                        ...new Set(
+                          pending
+                            .filter((item) =>
+                              selectedCandidates.includes(item.id),
+                            )
+                            .map((item) => item.documentId),
+                        ),
+                      ];
                       const ready = selectedSources.filter(
                         (id) =>
                           next.unsettledScheduleSources.includes(id) &&
                           !next.candidates.some(
-                            (item) => item.documentId === id && item.status === "pending",
+                            (item) =>
+                              item.documentId === id &&
+                              item.status === "pending",
                           ),
                       );
                       if (ready.length) {
@@ -1778,12 +1674,68 @@ export function StudentCenter() {
         </Modal>
       )}
       {modal === "retention" && (
-        <Modal title="Keep the schedule source?" subtitle="Your approved classes and evidence stay either way." close={() => setModal(null)}>
-          <div className="consent-box"><ShieldCheck /><div><strong>Your choice, every import</strong><p>Keep the original image or document encrypted for later review, or delete the source now. Coqui never makes this choice silently.</p></div></div>
-          {retentionDocumentIds.length > 1 && <p className="field-help">Source 1 of {retentionDocumentIds.length}. You will choose separately for every imported source file.</p>}
+        <Modal
+          title="Keep the schedule source?"
+          subtitle="Your approved classes and evidence stay either way."
+          close={() => setModal(null)}
+        >
+          <div className="consent-box">
+            <ShieldCheck />
+            <div>
+              <strong>Your choice, every import</strong>
+              <p>
+                Keep the original image or document encrypted for later review,
+                or delete the source now. Coqui never makes this choice
+                silently.
+              </p>
+            </div>
+          </div>
+          {retentionDocumentIds.length > 1 && (
+            <p className="field-help">
+              Source 1 of {retentionDocumentIds.length}. You will choose
+              separately for every imported source file.
+            </p>
+          )}
           <div className="modal-actions">
-            <button className="outline danger" disabled={busy || !retentionDocumentIds.length} onClick={() => run(() => settleScheduleSource(retentionDocumentIds[0],"delete_now"),"Schedule source deleted.").then((next) => { if (!next) return; const remaining = retentionDocumentIds.slice(1); setRetentionDocumentIds(remaining); if (!remaining.length) setModal(null); })}>Delete source now</button>
-            <button className="solid" disabled={busy || !retentionDocumentIds.length} onClick={() => run(() => settleScheduleSource(retentionDocumentIds[0],"keep_encrypted"),"Schedule source kept encrypted.").then((next) => { if (!next) return; const remaining = retentionDocumentIds.slice(1); setRetentionDocumentIds(remaining); if (!remaining.length) setModal(null); })}>Keep encrypted source</button>
+            <button
+              className="outline danger"
+              disabled={busy || !retentionDocumentIds.length}
+              onClick={() =>
+                run(
+                  () =>
+                    settleScheduleSource(retentionDocumentIds[0], "delete_now"),
+                  "Schedule source deleted.",
+                ).then((next) => {
+                  if (!next) return;
+                  const remaining = retentionDocumentIds.slice(1);
+                  setRetentionDocumentIds(remaining);
+                  if (!remaining.length) setModal(null);
+                })
+              }
+            >
+              Delete source now
+            </button>
+            <button
+              className="solid"
+              disabled={busy || !retentionDocumentIds.length}
+              onClick={() =>
+                run(
+                  () =>
+                    settleScheduleSource(
+                      retentionDocumentIds[0],
+                      "keep_encrypted",
+                    ),
+                  "Schedule source kept encrypted.",
+                ).then((next) => {
+                  if (!next) return;
+                  const remaining = retentionDocumentIds.slice(1);
+                  setRetentionDocumentIds(remaining);
+                  if (!remaining.length) setModal(null);
+                })
+              }
+            >
+              Keep encrypted source
+            </button>
           </div>
         </Modal>
       )}
@@ -1793,17 +1745,21 @@ export function StudentCenter() {
           subtitle={`Read from ${calendarDiff.sourceLabel || "the registrar"} just now. Nothing changes until you approve it.`}
           close={() => setModal(null)}
         >
-          {calendarDiff.changedTerms.length || calendarDiff.addedNoClassDates.length ? (
+          {calendarDiff.changedTerms.length ||
+          calendarDiff.addedNoClassDates.length ? (
             <>
               {calendarDiff.changedTerms.length > 0 && (
                 <div className="candidate-list">
                   <p className="field-help">
-                    A term date is a critical academic date, so each one is shown
-                    with the value you have now beside the one the registrar
-                    publishes. Anything you have edited yourself is left alone.
+                    A term date is a critical academic date, so each one is
+                    shown with the value you have now beside the one the
+                    registrar publishes. Anything you have edited yourself is
+                    left alone.
                   </p>
                   {calendarDiff.changedTerms.map((change) => {
-                    const declined = declinedChanges.includes(changeKey(change));
+                    const declined = declinedChanges.includes(
+                      changeKey(change),
+                    );
                     return (
                       <label key={changeKey(change)}>
                         <input
@@ -1812,7 +1768,9 @@ export function StudentCenter() {
                           onChange={(event) =>
                             setDeclinedChanges((current) =>
                               event.target.checked
-                                ? current.filter((key) => key !== changeKey(change))
+                                ? current.filter(
+                                    (key) => key !== changeKey(change),
+                                  )
                                 : [...current, changeKey(change)],
                             )
                           }
@@ -1820,7 +1778,8 @@ export function StudentCenter() {
                         <span>
                           <strong>{change.termName}</strong>
                           <small>
-                            {change.field} · {change.current || "unset"} → {change.proposed}
+                            {change.field} · {change.current || "unset"} →{" "}
+                            {change.proposed}
                           </small>
                           <q>{change.evidence}</q>
                         </span>
@@ -1862,7 +1821,8 @@ export function StudentCenter() {
                       () =>
                         applyCalendarDiff({
                           termChanges: calendarDiff.changedTerms.filter(
-                            (change) => !declinedChanges.includes(changeKey(change)),
+                            (change) =>
+                              !declinedChanges.includes(changeKey(change)),
                           ),
                           noClassDates: calendarDiff.addedNoClassDates,
                         }),
@@ -1880,7 +1840,8 @@ export function StudentCenter() {
             </>
           ) : (
             <div className="empty compact-empty">
-              Your calendar already matches what {calendarDiff.sourceLabel || "your school"} publishes.
+              Your calendar already matches what{" "}
+              {calendarDiff.sourceLabel || "your school"} publishes.
             </div>
           )}
         </Modal>
@@ -2044,324 +2005,243 @@ export function StudentCenter() {
           </div>
         </Modal>
       )}
-      {modal === "settings" && (
-        <Modal
-          title="Settings"
-          subtitle="Appearance is stored in your encrypted profile and applies immediately."
-          close={() => setModal(null)}
-        >
-          <AppearanceSettings
-            theme={appearance}
-            accent={accent}
-            onTheme={(next) => {
-              setAppearance(next);
-              applyAppearance(next, accent);
-              void updateAppearance(next).catch((value) =>
-                setError(String(value)),
-              );
-            }}
-            onAccent={(next) => {
-              setAccent(next);
-              applyAppearance(appearance, next);
-              void updateAccent(next).catch((value) => setError(String(value)));
-            }}
-          />
-          <section className="setup-fieldset">
-            <h3>Integrations</h3>
-            <div className="settings-link-grid">
-              <button className="outline" onClick={() => { setCanvasMode("calendar"); setModal("canvas"); }}><Link2 /> Canvas calendar and full connection</button>
-              <button className="outline" onClick={() => void openAiSettings()}><Brain /> OpenAI, Anthropic, and Gemini</button>
-              <button className="outline" onClick={openAccount}><UserRound /> Account & encrypted sync</button>
-              <button className="outline" onClick={openBackups}><HardDrive /> Backup & recovery</button>
-              <button className="outline" onClick={openSecurity}><LockKeyhole /> Privacy & security</button>
-              <button className="outline" onClick={openUpdates}><RefreshCw /> Updates</button>
-              <button className="outline" onClick={() => { setModal(null); setView("academic-settings"); }}><CalendarDays /> Academic & planning settings</button>
-              <button className="outline" onClick={() => void openDataRecovery()}><RefreshCw /> Advanced data recovery</button>
-            </div>
-          </section>
-          {/* Optional in every sense: it runs only when asked, it proposes
-              rather than applies, and every failure — no network, a blocked
-              host, a school that publishes nothing — leaves the dates you have
-              exactly as they are. */}
-          <section className="setup-fieldset">
-            <h3>Your school's calendar</h3>
-            <p className="field-help">
-              Coqui can read the term dates and holidays your school publishes
-              and show you what has changed. Nothing is applied until you approve
-              it, and dates you have edited yourself are never overwritten.
-            </p>
-            <button
-              className="outline"
-              disabled={busy || !institutionId}
-              onClick={() =>
-                run(async () => {
-                  const diff = await refreshSchoolCalendar(institutionId);
-                  setCalendarDiff(diff);
-                  setDeclinedChanges([]);
-                  setModal("calendar-refresh");
-                  return null;
-                }, "")
-              }
-            >
-              Check for calendar updates
-            </button>
-            {!institutionId && (
-              <small className="source-note">
-                Add your school in setup first, or enter dates by hand from
-                Records — both work with no network at all.
-              </small>
-            )}
-          </section>
-        </Modal>
-      )}
       {modal === "ai" && (
-        <Modal title="AI providers" subtitle="Bring your own key. Requests leave this computer only after you review the provider, model, and data scope." close={() => { setAiKey(""); setModal(null); }}>
+        <Modal
+          title="AI providers"
+          subtitle="Bring your own key. Requests leave this computer only after you review the provider, model, and data scope."
+          close={() => {
+            setAiKey("");
+            setModal(null);
+          }}
+        >
           <div className="connection-list">
             {aiProviders.map((provider, index) => (
               <article className="connection" key={provider.provider}>
-                <div className="connection-head"><span><Brain /><strong>{provider.provider === "openai" ? "OpenAI" : provider.provider === "anthropic" ? "Anthropic" : "Google Gemini"}</strong><small>{provider.model} · {provider.maskedKey ?? "Not connected"}</small></span><b className={`status ${provider.healthy ? "connected" : provider.connected ? "error" : "disconnected"}`}>{provider.healthy ? "ready" : provider.connected ? "check needed" : "not connected"}</b></div>
+                <div className="connection-head">
+                  <span>
+                    <Brain />
+                    <strong>
+                      {provider.provider === "openai"
+                        ? "OpenAI"
+                        : provider.provider === "anthropic"
+                          ? "Anthropic"
+                          : "Google Gemini"}
+                    </strong>
+                    <small>
+                      {provider.model} · {provider.maskedKey ?? "Not connected"}
+                    </small>
+                  </span>
+                  <b
+                    className={`status ${provider.healthy ? "connected" : provider.connected ? "error" : "disconnected"}`}
+                  >
+                    {provider.healthy
+                      ? "ready"
+                      : provider.connected
+                        ? "check needed"
+                        : "not connected"}
+                  </b>
+                </div>
                 <p>Priority {index + 1}. Usage never changes this order.</p>
                 <div className="connection-actions">
-                  <button className="outline" disabled={index === 0 || busy} onClick={() => { const order=aiProviders.map((item)=>item.provider); [order[index-1],order[index]]=[order[index],order[index-1]]; void setAiProviderOrder(order).then(setAiProviders).catch((next)=>setError(String(next))); }}>Move up</button>
-                  {provider.connected && <button className="outline" disabled={busy} onClick={() => void testAiProvider(provider.provider).then(setAiProviders).catch((next)=>setError(String(next)))}>Test</button>}
-                  {provider.connected && <button className="outline danger" disabled={busy} onClick={() => void removeAiProvider(provider.provider).then(setAiProviders).catch((next)=>setError(String(next)))}>Disconnect</button>}
-                  <button className="outline" onClick={() => { setAiProvider(provider.provider); setAiModel(provider.model); setAiKey(""); }}>Configure</button>
+                  <button
+                    className="outline"
+                    disabled={index === 0 || busy}
+                    onClick={() => {
+                      const order = aiProviders.map((item) => item.provider);
+                      [order[index - 1], order[index]] = [
+                        order[index],
+                        order[index - 1],
+                      ];
+                      void setAiProviderOrder(order)
+                        .then(setAiProviders)
+                        .catch((next) => setError(String(next)));
+                    }}
+                  >
+                    Move up
+                  </button>
+                  {provider.connected && (
+                    <button
+                      className="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        void testAiProvider(provider.provider)
+                          .then(setAiProviders)
+                          .catch((next) => setError(String(next)))
+                      }
+                    >
+                      Test
+                    </button>
+                  )}
+                  {provider.connected && (
+                    <button
+                      className="outline danger"
+                      disabled={busy}
+                      onClick={() =>
+                        void removeAiProvider(provider.provider)
+                          .then(setAiProviders)
+                          .catch((next) => setError(String(next)))
+                      }
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                  <button
+                    className="outline"
+                    onClick={() => {
+                      setAiProvider(provider.provider);
+                      setAiModel(provider.model);
+                      setAiKey("");
+                    }}
+                  >
+                    Configure
+                  </button>
                 </div>
               </article>
             ))}
           </div>
           <section className="setup-fieldset">
-            <h3>Connect {aiProvider === "openai" ? "OpenAI" : aiProvider === "anthropic" ? "Anthropic" : "Gemini"}</h3>
-            <label className="field">API key<input type="password" value={aiKey} onChange={(event)=>setAiKey(event.target.value)} autoComplete="off" placeholder="Saved only in the OS credential vault" /></label>
-            <label className="field">Model<input value={aiModel} onChange={(event)=>setAiModel(event.target.value)} placeholder="Recommended default" /></label>
-            <label className="check-row"><input type="checkbox" checked={aiAgeConfirmed} onChange={(event)=>setAiAgeConfirmed(event.target.checked)} /><span>I am 18 or older and understand that my own provider account, billing, and data terms apply.</span></label>
-            <p className="field-help">Coqui sends only the scope shown before each request. It never silently retries with another provider. <a href={aiProviders.find((item)=>item.provider===aiProvider)?.disclosureUrl} target="_blank" rel="noreferrer">Review this provider’s data terms</a>.</p>
-            <button className="solid" disabled={busy || aiKey.length < 20 || !aiAgeConfirmed} onClick={async()=>{const submittedKey=aiKey;setAiKey("");setBusy(true);setError("");try{const next=await saveAiProviderKey(aiProvider,submittedKey,aiModel||undefined,aiAgeConfirmed);setAiProviders(next);setToast(`${aiProvider} connected securely.`);}catch(next){setError(String(next));}finally{setBusy(false);}}}>Validate and connect</button>
+            <h3>
+              Connect{" "}
+              {aiProvider === "openai"
+                ? "OpenAI"
+                : aiProvider === "anthropic"
+                  ? "Anthropic"
+                  : "Gemini"}
+            </h3>
+            <label className="field">
+              API key
+              <input
+                type="password"
+                value={aiKey}
+                onChange={(event) => setAiKey(event.target.value)}
+                autoComplete="off"
+                placeholder="Saved only in the OS credential vault"
+              />
+            </label>
+            <label className="field">
+              Model
+              <input
+                value={aiModel}
+                onChange={(event) => setAiModel(event.target.value)}
+                placeholder="Recommended default"
+              />
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={aiAgeConfirmed}
+                onChange={(event) => setAiAgeConfirmed(event.target.checked)}
+              />
+              <span>
+                I am 18 or older and understand that my own provider account,
+                billing, and data terms apply.
+              </span>
+            </label>
+            <p className="field-help">
+              Coqui sends only the scope shown before each request. It never
+              silently retries with another provider.{" "}
+              <a
+                href={
+                  aiProviders.find((item) => item.provider === aiProvider)
+                    ?.disclosureUrl
+                }
+                target="_blank"
+                rel="noreferrer"
+              >
+                Review this provider’s data terms
+              </a>
+              .
+            </p>
+            <button
+              className="solid"
+              disabled={busy || aiKey.length < 20 || !aiAgeConfirmed}
+              onClick={async () => {
+                const submittedKey = aiKey;
+                setAiKey("");
+                setBusy(true);
+                setError("");
+                try {
+                  const next = await saveAiProviderKey(
+                    aiProvider,
+                    submittedKey,
+                    aiModel || undefined,
+                    aiAgeConfirmed,
+                  );
+                  setAiProviders(next);
+                  setToast(`${aiProvider} connected securely.`);
+                } catch (next) {
+                  setError(String(next));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Validate and connect
+            </button>
           </section>
-          <section className="setup-fieldset"><h3>Local usage</h3>{aiUsage.length ? aiUsage.map((item)=><p className="field-help" key={`${item.provider}:${item.model}`}><strong>{item.provider} · {item.model}</strong> — {item.requests} requests, {item.inputTokens.toLocaleString()} input tokens, {item.outputTokens.toLocaleString()} output tokens, {item.failures} failures.</p>) : <p className="field-help">No AI requests recorded on this device.</p>}</section>
+          <section className="setup-fieldset">
+            <h3>Local usage</h3>
+            {aiUsage.length ? (
+              aiUsage.map((item) => (
+                <p
+                  className="field-help"
+                  key={`${item.provider}:${item.model}`}
+                >
+                  <strong>
+                    {item.provider} · {item.model}
+                  </strong>{" "}
+                  — {item.requests} requests,{" "}
+                  {item.inputTokens.toLocaleString()} input tokens,{" "}
+                  {item.outputTokens.toLocaleString()} output tokens,{" "}
+                  {item.failures} failures.
+                </p>
+              ))
+            ) : (
+              <p className="field-help">
+                No AI requests recorded on this device.
+              </p>
+            )}
+          </section>
         </Modal>
       )}
       {modal === "search" && (
-        <Modal
-          title="Search"
-          subtitle="Find a course, assignment, or commitment. Everything is searched locally."
-          close={() => setModal(null)}
-        >
-          <label className="field">
-            Search
-            <input
-              autoFocus
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Statistics, ENG 102, midterm…"
-            />
-          </label>
-          {(() => {
-            if (!searchIndex)
-              return (
-                <div className="empty-state">
-                  <Search />
-                  <strong>Loading your local records…</strong>
-                </div>
-              );
-            const needle = searchQuery.trim().toLowerCase();
-            if (!needle)
-              return (
-                <div className="empty-state">
-                  <Search />
-                  <strong>Search your workspace</strong>
-                  <p>
-                    {searchIndex.courses.length} courses,{" "}
-                    {searchIndex.tasks.length} assignments, and{" "}
-                    {searchIndex.commitments.length} commitments.
-                  </p>
-                </div>
-              );
-            const matches = (value: string) =>
-              value.toLowerCase().includes(needle);
-            const courses = searchIndex.courses.filter(
-              (item) => matches(item.title) || matches(item.code),
-            );
-            const tasks = searchIndex.tasks.filter((item) =>
-              matches(item.title),
-            );
-            const commitments = searchIndex.commitments.filter(
-              (item) => matches(item.title) || matches(item.location),
-            );
-            if (!courses.length && !tasks.length && !commitments.length)
-              return (
-                <div className="empty-state">
-                  <Search />
-                  <strong>No matches</strong>
-                  <p>Nothing local matches “{searchQuery.trim()}”.</p>
-                </div>
-              );
-            const go = (destination: "courses" | "work" | "calendar") => {
-              setModal(null);
-              setView(destination);
-            };
-            return (
-              <div className="record-list compact">
-                {courses.map((item) => (
-                  <article key={item.id}>
-                    <div className="record-icon course">
-                      <BookOpen />
-                    </div>
-                    <div>
-                      <strong>{item.code || item.title}</strong>
-                      <small>{item.title}</small>
-                    </div>
-                    <div className="record-actions">
-                      <button className="outline" onClick={() => go("courses")}>
-                        Open
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                {tasks.map((item) => (
-                  <article
-                    className={item.completed ? "record-complete" : ""}
-                    key={item.id}
-                  >
-                    <div className="record-icon task">
-                      <ListChecks />
-                    </div>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>
-                        {item.minutes} min
-                        {item.dueAt ? ` · Due ${formatDateTime(item.dueAt)}` : ""}
-                      </small>
-                    </div>
-                    <div className="record-actions">
-                      <button
-                        className="outline"
-                        onClick={() => go("work")}
-                      >
-                        Open
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                {commitments.map((item) => (
-                  <article key={item.id}>
-                    <div className="record-icon commitment">
-                      <CalendarDays />
-                    </div>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>
-                        {formatDateTime(item.startsAt)}
-                        {item.location ? ` · ${item.location}` : ""}
-                      </small>
-                    </div>
-                    <div className="record-actions">
-                      <button
-                        className="outline"
-                        onClick={() => go("calendar")}
-                      >
-                        Open
-                      </button>
-                    </div>
-                  </article>
-                ))}
+        <Suspense
+          fallback={
+            <div className="overlay">
+              <div className="modal loading" role="status">
+                Loading your local records…
               </div>
-            );
-          })()}
-        </Modal>
+            </div>
+          }
+        >
+          <WorkspaceSearchModal
+            close={() => setModal(null)}
+            navigate={setView}
+          />
+        </Suspense>
       )}
       {modal === "task" && (
-        <Modal
-          title="Quick add"
-          subtitle="Capture an assignment now, or use the detailed editor for exams and constraints."
-          close={() => setModal(null)}
+        <Suspense
+          fallback={
+            <div className="overlay">
+              <div className="modal loading" role="status">
+                Opening quick add…
+              </div>
+            </div>
+          }
         >
-          <label className="field">
-            Assignment title
-            <input
-              autoFocus
-              value={taskTitle}
-              onChange={(e) => setTaskTitle(e.target.value)}
-              placeholder="Finish statistics problem set"
-            />
-          </label>
-          <label className="field">
-            Estimate in minutes
-            <input
-              type="number"
-              min="5"
-              max="480"
-              step="5"
-              value={taskMinutes}
-              onChange={(e) => setTaskMinutes(Number(e.target.value))}
-            />
-          </label>
-          <label className="field">
-            Due (optional)
-            <input
-              type="datetime-local"
-              value={taskDue}
-              onChange={(e) => setTaskDue(e.target.value)}
-            />
-          </label>
-          {/* Quick capture dropped the course even when the student knew it,
-              leaving assignments unattached. Only enrolled courses are offered:
-              an assignment for a class you are not taking is not a real case. */}
-          {quickAddCourses.length > 0 && (
-            <label className="field">
-              Course (optional)
-              <select
-                value={taskCourseId}
-                onChange={(e) => setTaskCourseId(e.target.value)}
-              >
-                <option value="">No course</option>
-                {quickAddCourses.map((record) => (
-                  <option key={record.id} value={record.id}>
-                    {record.code ? `${record.code} · ${record.title}` : record.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <div className="modal-actions">
-            <button className="outline" onClick={() => setModal(null)}>
-              Cancel
-            </button>
-            <button
-              className="solid"
-              disabled={!taskTitle.trim() || busy}
-              onClick={() =>
-                run(
-                  () =>
-                    addTask(
-                      taskTitle.trim(),
-                      taskMinutes,
-                      taskDue ? new Date(taskDue).toISOString() : undefined,
-                      taskCourseId || undefined,
-                    ),
-                  "Assignment saved and planned locally.",
-                ).then(() => {
-                  setTaskTitle("");
-                  setTaskDue("");
-                  setTaskCourseId("");
-                  setModal(null);
-                })
-              }
-            >
-              Add assignment
-            </button>
-          </div>
-          <button
-            className="quick-add-detailed"
-            onClick={() => {
+          <QuickAddTaskModal
+            close={() => setModal(null)}
+            openDetailed={() => {
               setModal(null);
               setView("work");
             }}
-          >
-            <ListChecks /> Add an exam or detailed assignment
-            <ChevronRight />
-          </button>
-        </Modal>
+            saved={(dashboard) => {
+              setData(dashboard);
+              setToast("Assignment saved and planned locally.");
+            }}
+          />
+        </Suspense>
       )}
       {modal === "canvas" && (
         <Modal
@@ -2378,7 +2258,12 @@ export function StudentCenter() {
                     <strong>
                       {connection.accountName || connection.baseUrl}
                     </strong>
-                    <small>{connection.provider === "canvas_calendar" ? "Calendar link · secret path hidden" : "Canvas Full Connection"} · {connection.baseUrl}</small>
+                    <small>
+                      {connection.provider === "canvas_calendar"
+                        ? "Calendar link · secret path hidden"
+                        : "Canvas Full Connection"}{" "}
+                      · {connection.baseUrl}
+                    </small>
                   </span>
                   <b className={`status ${connection.status}`}>
                     {connection.status.replaceAll("_", " ")}
@@ -2392,7 +2277,8 @@ export function StudentCenter() {
                 </p>
                 {connection.provider === "canvas_calendar" && (
                   <small>
-                    Automatic refresh {connection.refreshOnStartup ? "on" : "off"}
+                    Automatic refresh{" "}
+                    {connection.refreshOnStartup ? "on" : "off"}
                     {connection.nextEligibleRefreshAt
                       ? ` · next eligible ${new Date(connection.nextEligibleRefreshAt).toLocaleString()}`
                       : ""}
@@ -2408,33 +2294,46 @@ export function StudentCenter() {
                     }
                     onClick={() =>
                       run(
-                        () => connection.provider === "canvas_calendar" ? refreshCanvasCalendar(connection.id) : syncCanvas(connection.id),
+                        () =>
+                          connection.provider === "canvas_calendar"
+                            ? refreshCanvasCalendar(connection.id)
+                            : syncCanvas(connection.id),
                         "Canvas refresh completed.",
                       )
                     }
                   >
                     <RefreshCw /> Refresh
                   </button>
-                  {connection.provider === "canvas_calendar" && connection.status !== "disconnected" && (
-                    <button
-                      className="outline"
-                      disabled={busy}
-                      onClick={() =>
-                        run(
-                          () => setCanvasCalendarRefresh(connection.id, !connection.refreshOnStartup),
-                          `Automatic Canvas refresh ${connection.refreshOnStartup ? "disabled" : "enabled"}.`,
-                        )
-                      }
-                    >
-                      {connection.refreshOnStartup ? "Turn auto refresh off" : "Turn auto refresh on"}
-                    </button>
-                  )}
+                  {connection.provider === "canvas_calendar" &&
+                    connection.status !== "disconnected" && (
+                      <button
+                        className="outline"
+                        disabled={busy}
+                        onClick={() =>
+                          run(
+                            () =>
+                              setCanvasCalendarRefresh(
+                                connection.id,
+                                !connection.refreshOnStartup,
+                              ),
+                            `Automatic Canvas refresh ${connection.refreshOnStartup ? "disabled" : "enabled"}.`,
+                          )
+                        }
+                      >
+                        {connection.refreshOnStartup
+                          ? "Turn auto refresh off"
+                          : "Turn auto refresh on"}
+                      </button>
+                    )}
                   <button
                     className="outline danger"
                     disabled={busy || connection.status === "disconnected"}
                     onClick={() =>
                       run(
-                        () => connection.provider === "canvas_calendar" ? disconnectCanvasCalendar(connection.id) : disconnectCanvas(connection.id),
+                        () =>
+                          connection.provider === "canvas_calendar"
+                            ? disconnectCanvasCalendar(connection.id)
+                            : disconnectCanvas(connection.id),
                         "Canvas disconnected.",
                       )
                     }
@@ -2461,24 +2360,73 @@ export function StudentCenter() {
             ["connected", "error"].includes(connection.status),
           ) && (
             <>
-              <div className="segmented" role="group" aria-label="Canvas connection type">
-                <button className={canvasMode === "calendar" ? "active" : ""} onClick={() => setCanvasMode("calendar")}>Calendar link</button>
-                <button className={canvasMode === "full" ? "active" : ""} onClick={() => setCanvasMode("full")}>Full connection · Advanced</button>
+              <div
+                className="segmented"
+                role="group"
+                aria-label="Canvas connection type"
+              >
+                <button
+                  className={canvasMode === "calendar" ? "active" : ""}
+                  onClick={() => setCanvasMode("calendar")}
+                >
+                  Calendar link
+                </button>
+                <button
+                  className={canvasMode === "full" ? "active" : ""}
+                  onClick={() => setCanvasMode("full")}
+                >
+                  Full connection · Advanced
+                </button>
               </div>
               <label className="field">
-                {canvasMode === "calendar" ? "Canvas calendar feed link" : "Canvas address"}
+                {canvasMode === "calendar"
+                  ? "Canvas calendar feed link"
+                  : "Canvas address"}
                 <input
                   value={canvasUrl}
                   onChange={(event) => setCanvasUrl(event.target.value)}
-                  placeholder={canvasMode === "calendar" ? "https://canvas.yourcollege.edu/feeds/calendars/…ics" : "https://canvas.yourcollege.edu"}
+                  placeholder={
+                    canvasMode === "calendar"
+                      ? "https://canvas.yourcollege.edu/feeds/calendars/…ics"
+                      : "https://canvas.yourcollege.edu"
+                  }
                   autoComplete="url"
                 />
               </label>
-              {canvasMode === "full" && <label className="field">
+              {canvasMode === "full" && (
+                <label className="field">
                   Personal access token
-                  <input type="password" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} placeholder="Stored only in the OS credential vault" autoComplete="off" />
-                </label>}
-              {canvasMode === "calendar" && <><p className="field-help">In Canvas, open Calendar → Calendar Feed, copy the link, and paste it here. Coqui stores the complete link only in your operating system’s credential vault.</p><label className="check-row"><input type="checkbox" checked={canvasRefreshOnStartup} onChange={(event)=>setCanvasRefreshOnStartup(event.target.checked)} /><span>Refresh automatically after unlock when at least 24 hours have passed</span></label></>}
+                  <input
+                    type="password"
+                    value={canvasToken}
+                    onChange={(event) => setCanvasToken(event.target.value)}
+                    placeholder="Stored only in the OS credential vault"
+                    autoComplete="off"
+                  />
+                </label>
+              )}
+              {canvasMode === "calendar" && (
+                <>
+                  <p className="field-help">
+                    In Canvas, open Calendar → Calendar Feed, copy the link, and
+                    paste it here. Coqui stores the complete link only in your
+                    operating system’s credential vault.
+                  </p>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={canvasRefreshOnStartup}
+                      onChange={(event) =>
+                        setCanvasRefreshOnStartup(event.target.checked)
+                      }
+                    />
+                    <span>
+                      Refresh automatically after unlock when at least 24 hours
+                      have passed
+                    </span>
+                  </label>
+                </>
+              )}
               <div className="consent-box">
                 <ShieldCheck />
                 <div>
@@ -2494,7 +2442,9 @@ export function StudentCenter() {
                 <button
                   className="solid"
                   disabled={
-                    busy || !canvasUrl.trim() || (canvasMode === "full" && canvasToken.length < 16)
+                    busy ||
+                    !canvasUrl.trim() ||
+                    (canvasMode === "full" && canvasToken.length < 16)
                   }
                   onClick={() => {
                     const submittedUrl = canvasUrl.trim();
@@ -2502,9 +2452,14 @@ export function StudentCenter() {
                     setCanvasUrl("");
                     setCanvasToken("");
                     void run(
-                      () => canvasMode === "calendar"
-                        ? connectCanvasCalendar(submittedUrl, "Canvas calendar", canvasRefreshOnStartup)
-                        : connectCanvas(submittedUrl, submittedToken),
+                      () =>
+                        canvasMode === "calendar"
+                          ? connectCanvasCalendar(
+                              submittedUrl,
+                              "Canvas calendar",
+                              canvasRefreshOnStartup,
+                            )
+                          : connectCanvas(submittedUrl, submittedToken),
                       "Canvas connected; review the imported facts.",
                     );
                   }}
@@ -2678,7 +2633,8 @@ export function StudentCenter() {
                       <strong>Replace this local profile</strong>
                       <small>
                         I understand the current database and document vault
-                        will be replaced. Integration and AI credentials are not restored.
+                        will be replaced. Integration and AI credentials are not
+                        restored.
                       </small>
                     </span>
                   </label>
@@ -3106,67 +3062,17 @@ export function StudentCenter() {
         </Modal>
       )}
       {modal === "updates" && (
-        <Modal
-          title="Student Center updates"
-          subtitle="Private-beta builds check only an HTTPS channel and accept installers signed by the public key embedded at build time."
-          close={() => setModal(null)}
+        <Suspense
+          fallback={
+            <div className="overlay">
+              <div className="modal loading" role="status">
+                Loading update configuration…
+              </div>
+            </div>
+          }
         >
-          {updateStatus ? (
-            <>
-              <div
-                className={`update-state ${updateStatus.available ? "available" : updateStatus.configured ? "current" : "unconfigured"}`}
-              >
-                <RefreshCw />
-                <span>
-                  <strong>
-                    {updateStatus.available
-                      ? `Version ${updateStatus.latestVersion} is available`
-                      : `Student Center ${updateStatus.currentVersion}`}
-                  </strong>
-                  <small>{updateStatus.message}</small>
-                </span>
-              </div>
-              {updateStatus.notes && (
-                <div className="release-notes">
-                  <strong>Release notes</strong>
-                  <p>{updateStatus.notes}</p>
-                </div>
-              )}
-              <div className="consent-box">
-                <ShieldCheck />
-                <div>
-                  <strong>Signed artifacts only</strong>
-                  <p>
-                    Checking does not install anything. Download and
-                    installation remain disabled in this alpha interface until
-                    signed release infrastructure is configured and exercised on
-                    both target platforms.
-                  </p>
-                </div>
-              </div>
-              {updateStatus.checkedAt && (
-                <p className="privacy-note">
-                  Last checked{" "}
-                  {new Date(updateStatus.checkedAt).toLocaleString()}
-                </p>
-              )}
-              <div className="modal-actions">
-                <button className="outline" onClick={() => setModal(null)}>
-                  Close
-                </button>
-                <button
-                  className="solid"
-                  disabled={busy || !isDesktop() || !updateStatus.configured}
-                  onClick={runUpdateCheck}
-                >
-                  <RefreshCw /> {busy ? "Checking…" : "Check for updates"}
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="empty">Loading update configuration…</div>
-          )}
-        </Modal>
+          <UpdateModal close={() => setModal(null)} />
+        </Suspense>
       )}
       {modal === "assistant" && (
         <Modal
@@ -3185,7 +3091,8 @@ export function StudentCenter() {
               <p>
                 Data scope: only the excerpt shown below is sent over TLS.
                 Responses become reviewable candidates and can’t directly alter
-                your plan. A failure is never retried with another provider without asking.
+                your plan. A failure is never retried with another provider
+                without asking.
               </p>
             </div>
           </div>
@@ -3200,7 +3107,9 @@ export function StudentCenter() {
               }
             >
               <option value="brain_dump">Structure a brain dump</option>
-              <option value="task_decomposition">Break down an assignment</option>
+              <option value="task_decomposition">
+                Break down an assignment
+              </option>
               <option value="document_extraction">Clarify an excerpt</option>
               <option value="planner_explanation">Explain planner facts</option>
             </select>
@@ -3214,7 +3123,9 @@ export function StudentCenter() {
               rows={7}
               placeholder="Paste only the brain dump, assignment excerpt, or deterministic facts needed for this request."
             />
-            <small>{assistantExcerpt.length.toLocaleString()} / 12,000 characters</small>
+            <small>
+              {assistantExcerpt.length.toLocaleString()} / 12,000 characters
+            </small>
           </label>
           <label className="check-row consent-check">
             <input
@@ -3223,7 +3134,8 @@ export function StudentCenter() {
               onChange={(event) => setAssistantConsent(event.target.checked)}
             />
             <span>
-              I consent to sending only this excerpt to the provider and model shown above for this request.
+              I consent to sending only this excerpt to the provider and model
+              shown above for this request.
             </span>
           </label>
           {assistantExplanation && (
@@ -3269,9 +3181,13 @@ export function StudentCenter() {
                   setAssistantExplanation(result.explanation ?? "");
                   if (result.candidatesCreated > 0) setModal("review");
                 } catch (e) {
-                  setAiProviders(await listAiProviders().catch(() => aiProviders));
+                  setAiProviders(
+                    await listAiProviders().catch(() => aiProviders),
+                  );
                   setAssistantConsent(false);
-                  setError(`${String(e)} Nothing was sent to another provider. Review the resolved provider and consent again to retry.`);
+                  setError(
+                    `${String(e)} Nothing was sent to another provider. Review the resolved provider and consent again to retry.`,
+                  );
                 } finally {
                   setBusy(false);
                 }
@@ -3288,28 +3204,94 @@ export function StudentCenter() {
           subtitle="Untouched legacy mock records are quarantined automatically and never affect your plan."
           close={() => setModal(null)}
         >
-          {error && <div className="alert" role="alert">{error}</div>}
+          {error && (
+            <div className="alert" role="alert">
+              {error}
+            </div>
+          )}
           {legacyItems.length ? (
             <div className="record-list compact">
               {legacyItems.map((item) => (
                 <article key={item.id}>
-                  <div className="record-icon protected"><RefreshCw /></div>
-                  <div><strong>{item.title}</strong><small>{item.entityType} · quarantined {formatDateTime(item.quarantinedAt)}</small></div>
-                  <button className="outline" disabled={busy} onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await restoreLegacyQuarantine([item.id]);
-                      setLegacyItems(await listLegacyQuarantine());
-                      const next = await initialize();
-                      setData(next.dashboard);
-                      setToast("Legacy record restored to your local workspace.");
-                    } catch (next) { setError(String(next)); } finally { setBusy(false); }
-                  }}>Restore</button>
+                  <div className="record-icon protected">
+                    <RefreshCw />
+                  </div>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>
+                      {item.entityType} · quarantined{" "}
+                      {formatDateTime(item.quarantinedAt)}
+                    </small>
+                  </div>
+                  <button
+                    className="outline"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await restoreLegacyQuarantine([item.id]);
+                        setLegacyItems(await listLegacyQuarantine());
+                        const next = await initialize();
+                        setData(next.dashboard);
+                        setToast(
+                          "Legacy record restored to your local workspace.",
+                        );
+                      } catch (next) {
+                        setError(String(next));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Restore
+                  </button>
                 </article>
               ))}
             </div>
-          ) : <div className="empty-state"><ShieldCheck /><strong>No quarantined records</strong><p>Fresh installations and completed cleanups have nothing to recover.</p></div>}
-          {legacyItems.length > 0 && <><label className="field">Type PURGE LEGACY DATA to permanently remove recovery snapshots<input value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} /></label><div className="modal-actions"><button className="solid danger-solid" disabled={busy || purgeConfirmation !== "PURGE LEGACY DATA"} onClick={async () => { setBusy(true); try { await purgeLegacyQuarantine(purgeConfirmation); setLegacyItems([]); setPurgeConfirmation(""); setToast("Legacy recovery snapshots permanently removed."); } catch (next) { setError(String(next)); } finally { setBusy(false); } }}>Permanently purge snapshots</button></div></>}
+          ) : (
+            <div className="empty-state">
+              <ShieldCheck />
+              <strong>No quarantined records</strong>
+              <p>
+                Fresh installations and completed cleanups have nothing to
+                recover.
+              </p>
+            </div>
+          )}
+          {legacyItems.length > 0 && (
+            <>
+              <label className="field">
+                Type PURGE LEGACY DATA to permanently remove recovery snapshots
+                <input
+                  value={purgeConfirmation}
+                  onChange={(event) => setPurgeConfirmation(event.target.value)}
+                />
+              </label>
+              <div className="modal-actions">
+                <button
+                  className="solid danger-solid"
+                  disabled={busy || purgeConfirmation !== "PURGE LEGACY DATA"}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await purgeLegacyQuarantine(purgeConfirmation);
+                      setLegacyItems([]);
+                      setPurgeConfirmation("");
+                      setToast(
+                        "Legacy recovery snapshots permanently removed.",
+                      );
+                    } catch (next) {
+                      setError(String(next));
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Permanently purge snapshots
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
       {modal === "delete-profile" && (
@@ -3359,993 +3341,5 @@ export function StudentCenter() {
         </div>
       )}
     </div>
-  );
-}
-
-function AccountModal({
-  status,
-  mode,
-  email,
-  code,
-  retryAfter,
-  busy,
-  error,
-  setEmail,
-  setCode,
-  clearError,
-  close,
-  changeEmail,
-  useEmail,
-  google,
-  sendCode,
-  verifyCode,
-  refresh,
-  signOut,
-}: {
-  status: AccountStatus | null;
-  mode: "email" | "verify";
-  email: string;
-  code: string;
-  retryAfter: number;
-  busy: boolean;
-  error: string;
-  setEmail: (value: string) => void;
-  setCode: (value: string) => void;
-  clearError: () => void;
-  close: () => void;
-  changeEmail: () => void;
-  useEmail: () => void;
-  google: () => void;
-  sendCode: () => void;
-  verifyCode: () => void;
-  refresh: () => void;
-  signOut: () => void;
-}) {
-  const [syncStatus, setSyncStatus] = useState<SyncProtectionStatus | null>(
-    null,
-  );
-  const [cloudSyncStatus, setCloudSyncStatus] =
-    useState<EncryptedSyncStatus | null>(null);
-  const [syncMode, setSyncMode] = useState<
-    "home" | "words" | "confirm" | "recover" | "approval"
-  >("home");
-  const [recoverySetup, setRecoverySetup] = useState<RecoverySetup | null>(
-    null,
-  );
-  const [recoveryConfirmations, setRecoveryConfirmations] = useState<
-    Record<number, string>
-  >({});
-  const [recoveryPhrase, setRecoveryPhrase] = useState("");
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncError, setSyncError] = useState("");
-  const [pendingDevices, setPendingDevices] = useState<PendingSyncDevice[]>([]);
-  const [authorizedDevices, setAuthorizedDevices] = useState<PendingSyncDevice[]>([]);
-  useEffect(() => {
-    let active = true;
-    if (!status?.signedIn) {
-      setSyncStatus(null);
-      setCloudSyncStatus(null);
-      return () => {
-        active = false;
-      };
-    }
-    Promise.all([getSyncProtectionStatus(), getEncryptedSyncStatus()])
-      .then(([protection, cloud]) => {
-        if (active) {
-          setSyncStatus(protection);
-          setCloudSyncStatus(cloud);
-          if (cloud.connected) {
-            void Promise.all([listPendingSyncDevices(), listAuthorizedSyncDevices()])
-              .then(([pending, authorized]) => {
-                if (active) {
-                  setPendingDevices(pending);
-                  setAuthorizedDevices(authorized);
-                }
-              })
-              .catch(() => {
-                if (active) {
-                  setPendingDevices([]);
-                  setAuthorizedDevices([]);
-                }
-              });
-          }
-        }
-      })
-      .catch((next) => {
-        if (active) setSyncError(String(next));
-      });
-    return () => {
-      active = false;
-    };
-  }, [status?.signedIn, status?.accountId]);
-  const resetRecovery = () => {
-    setSyncMode("home");
-    setRecoverySetup(null);
-    setRecoveryConfirmations({});
-    setRecoveryPhrase("");
-    setSyncError("");
-  };
-  const closeAccount = () => {
-    void cancelSyncProtection();
-    resetRecovery();
-    close();
-  };
-  const createRecovery = async () => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      const setup = await beginSyncProtection();
-      setRecoverySetup(setup);
-      setRecoveryConfirmations({});
-      setSyncMode("words");
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const confirmRecovery = async () => {
-    if (!recoverySetup) return;
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      const confirmations = recoverySetup.confirmationPositions.map(
-        (position) => ({
-          position,
-          word: recoveryConfirmations[position] ?? "",
-        }),
-      );
-      setSyncStatus(await confirmSyncProtection(confirmations));
-      setCloudSyncStatus(await getEncryptedSyncStatus());
-      resetRecovery();
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const restoreRecovery = async () => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      setSyncStatus(await recoverSyncProtection(recoveryPhrase));
-      setCloudSyncStatus(await getEncryptedSyncStatus());
-      resetRecovery();
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const requestDeviceApproval = async () => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      await requestExistingDeviceApproval();
-      setSyncMode("approval");
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const checkDeviceApproval = async () => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      setSyncStatus(await checkExistingDeviceApproval());
-      setCloudSyncStatus(await getEncryptedSyncStatus());
-      resetRecovery();
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const connectCloudSync = async () => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      setCloudSyncStatus(await connectEncryptedSync());
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const pushCloudSync = async () => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      await pushEncryptedMutations();
-      setCloudSyncStatus(await pullEncryptedMutations());
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const approvePendingDevice = async (deviceId: string) => {
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      setPendingDevices(await approveSyncDevice(deviceId));
-      setAuthorizedDevices(await listAuthorizedSyncDevices());
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const revokeAuthorizedDevice = async (device: PendingSyncDevice) => {
-    if (
-      !window.confirm(
-        `Revoke ${device.displayName}? It will immediately lose access to new encrypted changes and documents. It keeps whatever it already downloaded, so revoking does not undo past access.`,
-      )
-    )
-      return;
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      const next = await revokeSyncDevice(device.deviceId);
-      setCloudSyncStatus(next);
-      if (next.connected) setAuthorizedDevices(await listAuthorizedSyncDevices());
-      else setAuthorizedDevices([]);
-    } catch (next) {
-      setSyncError(String(next));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-  const leaveRecovery = () => {
-    void cancelSyncProtection();
-    resetRecovery();
-  };
-  return (
-    <Modal
-      title="Optional Student Center account"
-      subtitle="Your planner and encrypted local data never require an account or internet connection."
-      close={closeAccount}
-    >
-      {error && (
-        <div className="alert account-alert">
-          <CircleAlert />
-          <span>{error}</span>
-          <button onClick={clearError}>
-            <X />
-          </button>
-        </div>
-      )}
-      {!status ? (
-        <div className="empty">Loading account security…</div>
-      ) : !status.credentialAvailable ? (
-        <div className="consent-box security-warning">
-          <CircleAlert />
-          <div>
-            <strong>Credential vault unavailable</strong>
-            <p>{status.message}</p>
-          </div>
-        </div>
-      ) : !status.configured ? (
-        <div className="update-state unconfigured">
-          <UserRound />
-          <span>
-            <strong>No account service in this build</strong>
-            <small>{status.message}</small>
-          </span>
-        </div>
-      ) : status.signedIn ? (
-        <>
-          <div className="account-identity">
-            <UserRound />
-            <span>
-              <strong>{status.email}</strong>
-              <small>
-                Account ID {status.accountId?.slice(0, 8)}… · Refresh token
-                protected by the operating-system credential vault
-              </small>
-            </span>
-            <b>{status.accessReady ? "Ready" : "Refresh needed"}</b>
-          </div>
-          {syncError && (
-            <div className="alert account-alert">
-              <CircleAlert />
-              <span>{syncError}</span>
-              <button onClick={() => setSyncError("")}>
-                <X />
-              </button>
-            </div>
-          )}
-          {!syncStatus ? (
-            <div className="empty">Checking recovery protection…</div>
-          ) : syncStatus.protected ? (
-            <>
-              <div className="update-state current">
-                <ShieldCheck />
-                <span>
-                  <strong>Recovery protected on this device</strong>
-                  <small>
-                    {syncStatus.message} Device{" "}
-                    {syncStatus.deviceId?.slice(0, 8)}…
-                  </small>
-                </span>
-              </div>
-              <div className="consent-box">
-                <LockKeyhole />
-                <div>
-                  <strong>Keys stay in the operating-system vault</strong>
-                  <p>
-                    The account key and this computer&apos;s X25519 private key
-                    are never stored in SQLite or returned to the interface. A
-                    separate Ed25519 identity signs device approvals. Mutation
-                    content is encrypted locally before upload.
-                  </p>
-                </div>
-              </div>
-              {cloudSyncStatus && (
-                <div
-                  className={`update-state ${cloudSyncStatus.connected ? "current" : "unconfigured"}`}
-                >
-                  <RefreshCw />
-                  <span>
-                    <strong>
-                      {cloudSyncStatus.connected
-                        ? "Encrypted sync connected"
-                        : cloudSyncStatus.configured
-                          ? "Device registration required"
-                          : "No sync service in this build"}
-                    </strong>
-                    <small>
-                      {cloudSyncStatus.message}
-                      {cloudSyncStatus.connected
-                        ? ` ${cloudSyncStatus.pendingMutations} local change${cloudSyncStatus.pendingMutations === 1 ? "" : "s"} pending.`
-                        : ""}
-                    </small>
-                  </span>
-                </div>
-              )}
-              {!!cloudSyncStatus?.unsupportedDownloadedMutations && (
-                <div className="consent-box">
-                  <CircleAlert />
-                  <div>
-                    <strong>Changes from a newer version are waiting</strong>
-                    <p>
-                      Student Center saved{" "}
-                      {cloudSyncStatus.unsupportedDownloadedMutations} encrypted
-                      change
-                      {cloudSyncStatus.unsupportedDownloadedMutations === 1
-                        ? ""
-                        : "s"}{" "}
-                      that this version does not understand yet. They stay
-                      encrypted on this computer and are applied automatically
-                      after you update.
-                    </p>
-                  </div>
-                </div>
-              )}
-              {cloudSyncStatus?.connected && pendingDevices.length > 0 && (
-                <section className="account-device-review" aria-label="Pending devices">
-                  <h3>Devices awaiting approval</h3>
-                  <p className="privacy-note">
-                    Approve only a computer you recognize. The account key is
-                    encrypted to that device and the envelope expires after 15
-                    minutes.
-                  </p>
-                  {pendingDevices.map((device) => (
-                    <div className="update-state unconfigured" key={device.deviceId}>
-                      <HardDrive />
-                      <span>
-                        <strong>{device.displayName}</strong>
-                        <small>
-                          {device.platform} · {device.deviceId.slice(0, 8)}…
-                        </small>
-                      </span>
-                      <button
-                        disabled={syncBusy}
-                        onClick={() => approvePendingDevice(device.deviceId)}
-                      >
-                        Approve
-                      </button>
-                    </div>
-                  ))}
-                </section>
-              )}
-              {cloudSyncStatus?.connected && authorizedDevices.length > 0 && (
-                <section className="account-device-review" aria-label="Authorized devices">
-                  <h3>Authorized devices</h3>
-                  <p className="privacy-note">
-                    Revoke a lost or retired computer to block new sync,
-                    approval-envelope, and document access immediately.
-                  </p>
-                  {authorizedDevices.map((device) => {
-                    const current = device.deviceId === cloudSyncStatus.deviceId;
-                    return (
-                      <div className="update-state configured" key={device.deviceId}>
-                        <HardDrive />
-                        <span>
-                          <strong>
-                            {device.displayName}{current ? " · This device" : ""}
-                          </strong>
-                          <small>
-                            {device.platform} · {device.deviceId.slice(0, 8)}…
-                          </small>
-                        </span>
-                        <button
-                          disabled={syncBusy}
-                          onClick={() => revokeAuthorizedDevice(device)}
-                        >
-                          {current ? "Disconnect" : "Revoke"}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </section>
-              )}
-              {cloudSyncStatus?.connected && cloudSyncStatus.lastPushedAt && (
-                <p className="privacy-note">
-                  Last encrypted upload{" "}
-                  {new Date(cloudSyncStatus.lastPushedAt).toLocaleString()}
-                </p>
-              )}
-              <div className="modal-actions">
-                {cloudSyncStatus?.connected ? (
-                  <button
-                    className="solid"
-                    disabled={syncBusy}
-                    onClick={pushCloudSync}
-                  >
-                    <RefreshCw />{" "}
-                    {cloudSyncStatus.pendingMutations === 0
-                      ? "Check encrypted sync"
-                      : "Encrypt and sync now"}
-                  </button>
-                ) : (
-                  <button
-                    className="solid"
-                    disabled={syncBusy || !cloudSyncStatus?.configured}
-                    onClick={connectCloudSync}
-                  >
-                    <Link2 /> Register this device
-                  </button>
-                )}
-              </div>
-            </>
-          ) : syncMode === "home" ? (
-            <>
-              <div className="consent-box">
-                <ShieldCheck />
-                <div>
-                  <strong>Protect encrypted sync before connecting it</strong>
-                  <p>
-                    Create a one-time 24-word recovery code or enter the code
-                    from another authorized computer. Losing every device and
-                    this code makes synced data unrecoverable.
-                  </p>
-                </div>
-              </div>
-              <div className="backup-options">
-                <button disabled={syncBusy} onClick={createRecovery}>
-                  <LockKeyhole />
-                  <span>
-                    <strong>Create recovery code</strong>
-                    <small>
-                      Generate an account key and a separate device key locally.
-                    </small>
-                  </span>
-                  <ChevronRight />
-                </button>
-                <button
-                  disabled={syncBusy}
-                  onClick={() => {
-                    setSyncError("");
-                    setSyncMode("recover");
-                  }}
-                >
-                  <RefreshCw />
-                  <span>
-                    <strong>Use an existing code</strong>
-                    <small>
-                      Recover the account key and create a new key for this
-                      computer.
-                    </small>
-                  </span>
-                  <ChevronRight />
-                </button>
-                <button disabled={syncBusy} onClick={requestDeviceApproval}>
-                  <HardDrive />
-                  <span>
-                    <strong>Ask an existing device</strong>
-                    <small>
-                      Approve this computer without typing the recovery code.
-                    </small>
-                  </span>
-                  <ChevronRight />
-                </button>
-              </div>
-            </>
-          ) : syncMode === "words" && recoverySetup ? (
-            <>
-              <div className="consent-box security-warning">
-                <CircleAlert />
-                <div>
-                  <strong>Write these words down now</strong>
-                  <p>
-                    Keep them offline and in order. Student Center will not
-                    display them again after confirmation, and support cannot
-                    recover them.
-                  </p>
-                </div>
-              </div>
-              <ol className="recovery-words">
-                {recoverySetup.words.map((word, index) => (
-                  <li key={`${index}-${word}`}>
-                    <span>{index + 1}</span>
-                    <strong>{word}</strong>
-                  </li>
-                ))}
-              </ol>
-              <div className="modal-actions">
-                <button
-                  className="outline"
-                  disabled={syncBusy}
-                  onClick={leaveRecovery}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="solid"
-                  disabled={syncBusy}
-                  onClick={() => setSyncMode("confirm")}
-                >
-                  I saved all 24 words
-                </button>
-              </div>
-            </>
-          ) : syncMode === "confirm" && recoverySetup ? (
-            <>
-              <div className="consent-box">
-                <ShieldCheck />
-                <div>
-                  <strong>Confirm your written copy</strong>
-                  <p>
-                    Enter the requested words. The account key is saved to the
-                    OS credential vault only after all three match.
-                  </p>
-                </div>
-              </div>
-              <div className="recovery-confirmations">
-                {recoverySetup.confirmationPositions.map((position) => (
-                  <label className="field" key={position}>
-                    Word {position}
-                    <input
-                      autoFocus={
-                        position === recoverySetup.confirmationPositions[0]
-                      }
-                      value={recoveryConfirmations[position] ?? ""}
-                      onChange={(event) =>
-                        setRecoveryConfirmations((current) => ({
-                          ...current,
-                          [position]: event.target.value,
-                        }))
-                      }
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="modal-actions">
-                <button
-                  className="outline"
-                  disabled={syncBusy}
-                  onClick={() => setSyncMode("words")}
-                >
-                  Back to words
-                </button>
-                <button
-                  className="solid"
-                  disabled={
-                    syncBusy ||
-                    recoverySetup.confirmationPositions.some(
-                      (position) =>
-                        !(recoveryConfirmations[position] ?? "").trim(),
-                    )
-                  }
-                  onClick={confirmRecovery}
-                >
-                  Confirm and protect sync
-                </button>
-              </div>
-            </>
-          ) : syncMode === "recover" ? (
-            <>
-              <div className="consent-box">
-                <RefreshCw />
-                <div>
-                  <strong>Recover on this computer</strong>
-                  <p>
-                    Enter all 24 words in order. Validation and key recovery
-                    happen locally; the phrase is never sent to the account
-                    service.
-                  </p>
-                </div>
-              </div>
-              <label className="field">
-                24-word recovery code
-                <textarea
-                  autoFocus
-                  value={recoveryPhrase}
-                  onChange={(event) => setRecoveryPhrase(event.target.value)}
-                  rows={5}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="word1 word2 word3 …"
-                />
-              </label>
-              <div className="modal-actions">
-                <button
-                  className="outline"
-                  disabled={syncBusy}
-                  onClick={leaveRecovery}
-                >
-                  Back
-                </button>
-                <button
-                  className="solid"
-                  disabled={
-                    syncBusy || recoveryPhrase.trim().split(/\s+/).length !== 24
-                  }
-                  onClick={restoreRecovery}
-                >
-                  Recover account key
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="consent-box security-warning">
-                <HardDrive />
-                <div>
-                  <strong>Approval requested</strong>
-                  <p>
-                    On an already connected Student Center computer, open this
-                    account panel and approve the pending device. The signed,
-                    encrypted account-key envelope expires after 15 minutes.
-                  </p>
-                </div>
-              </div>
-              <div className="modal-actions">
-                <button className="outline" disabled={syncBusy} onClick={leaveRecovery}>
-                  Back
-                </button>
-                <button className="solid" disabled={syncBusy} onClick={checkDeviceApproval}>
-                  <RefreshCw /> Check for approval
-                </button>
-              </div>
-            </>
-          )}
-          {(syncStatus?.protected || syncMode === "home") && (
-            <div className="modal-actions">
-              <button
-                className="outline danger"
-                disabled={busy || syncBusy}
-                onClick={signOut}
-              >
-                <LogOut /> Sign out on this computer
-              </button>
-              <button
-                className="solid"
-                disabled={busy || syncBusy || status.accessReady}
-                onClick={refresh}
-              >
-                <RefreshCw /> Refresh session
-              </button>
-            </div>
-          )}
-        </>
-      ) : status.googleSignInPending ? (
-        <>
-          <div className="account-browser-wait">
-            <ExternalLink />
-            <span>
-              <strong>Finish in your system browser</strong>
-              <small>{status.message}</small>
-            </span>
-          </div>
-          <div className="consent-box">
-            <ShieldCheck />
-            <div>
-              <strong>Native PKCE return</strong>
-              <p>
-                The browser receives no local student data. A one-time
-                authorization code returns through the registered Student Center
-                deep link and is exchanged only by the native app.
-              </p>
-            </div>
-          </div>
-          <div className="modal-actions">
-            <button className="outline" disabled={busy} onClick={useEmail}>
-              Use email code
-            </button>
-            <button className="solid" disabled={busy} onClick={google}>
-              <ExternalLink /> Open Google again
-            </button>
-          </div>
-        </>
-      ) : mode === "email" ? (
-        <>
-          <button className="google-auth" disabled={busy} onClick={google}>
-            <ExternalLink />
-            <span>
-              <strong>Continue with Google</strong>
-              <small>
-                Opens your system browser and returns securely to this app.
-              </small>
-            </span>
-            <ChevronRight />
-          </button>
-          <div className="account-divider">
-            <span>or use an email code</span>
-          </div>
-          <div className="consent-box">
-            <Mail />
-            <div>
-              <strong>Email one-time code</strong>
-              <p>
-                Student Center asks Supabase to send a 6-digit code. The code is
-                entered directly here and is never stored.
-              </p>
-            </div>
-          </div>
-          <label className="field">
-            College or personal email
-            <input
-              type="email"
-              autoFocus
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              placeholder="alex@example.edu"
-            />
-          </label>
-          <p className="privacy-note">
-            <ShieldCheck /> Only the refresh token is persisted, inside the operating-system
-            credential vault. Access tokens stay in
-            native-process memory.
-          </p>
-          <div className="modal-actions">
-            <button className="outline" onClick={close}>
-              Not now
-            </button>
-            <button
-              className="solid"
-              disabled={busy || !email.includes("@") || retryAfter > 0}
-              onClick={sendCode}
-            >
-              <Mail />{" "}
-              {retryAfter > 0
-                ? `Try again in ${retryAfter}s`
-                : "Send sign-in code"}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="account-code-destination">
-            <Mail />
-            <span>
-              <strong>Check {email}</strong>
-              <small>Enter the six digits from the Student Center email.</small>
-            </span>
-          </div>
-          <label className="field">
-            6-digit code
-            <input
-              className="otp-input"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={6}
-              autoFocus
-              value={code}
-              onChange={(event) =>
-                setCode(event.target.value.replace(/\D/g, "").slice(0, 6))
-              }
-              autoComplete="one-time-code"
-              placeholder="000000"
-            />
-          </label>
-          <div className="modal-actions">
-            <button className="outline" disabled={busy} onClick={changeEmail}>
-              Change email
-            </button>
-            <button
-              className="solid"
-              disabled={busy || code.length !== 6}
-              onClick={verifyCode}
-            >
-              Verify and sign in
-            </button>
-          </div>
-        </>
-      )}
-    </Modal>
-  );
-}
-
-function Modal({
-  title,
-  subtitle,
-  close,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  close: () => void;
-  children: React.ReactNode;
-}) {
-  const modalRef = useRef<HTMLElement>(null);
-  const closeRef = useRef(close);
-  closeRef.current = close;
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    const root = modalRef.current;
-    const focusable = () => Array.from(root?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') ?? []);
-    focusable()[0]?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; }
-      if (event.key !== "Tab") return;
-      const items = focusable(); if (!items.length) return;
-      const first = items[0]; const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => { document.removeEventListener("keydown", onKeyDown); previous?.focus(); };
-  }, []);
-  return (
-    <div
-      className="overlay"
-      onMouseDown={(e) => e.target === e.currentTarget && close()}
-    >
-      <section
-        ref={modalRef}
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-      >
-        <header>
-          <div>
-            <h2 id="modal-title">{title}</h2>
-            <p>{subtitle}</p>
-          </div>
-          <button onClick={close} aria-label="Close">
-            <X />
-          </button>
-        </header>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-function LockScreen({
-  security,
-  unlock,
-}: {
-  security: SecurityStatus;
-  unlock: (pin: string) => Promise<void>;
-}) {
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await unlock(pin);
-      setPin("");
-    } catch (e) {
-      setPin("");
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <main className="lock-screen">
-      <section className="lock-card" aria-labelledby="lock-title">
-        <AppLogo className="brand-mark" />
-        <p className="eyebrow">Private local workspace</p>
-        <h1 id="lock-title">Student Center is locked</h1>
-        <p>
-          Your plan, documents, and connected services stay unavailable until
-          you enter your PIN.
-        </p>
-        <form onSubmit={submit}>
-          <label className="field">
-            Student Center PIN
-            <input
-              type="password"
-              autoFocus
-              value={pin}
-              onChange={(event) => setPin(event.target.value)}
-              autoComplete="current-password"
-              disabled={busy || security.retryAfterSeconds > 0}
-            />
-          </label>
-          {error && (
-            <div className="alert" role="alert">
-              <CircleAlert />
-              <span>{error}</span>
-            </div>
-          )}
-          <button
-            className="solid unlock-button"
-            disabled={busy || pin.length < 6 || security.retryAfterSeconds > 0}
-          >
-            {busy
-              ? "Checking…"
-              : security.retryAfterSeconds > 0
-                ? `Try again in ${security.retryAfterSeconds}s`
-                : "Unlock Student Center"}
-          </button>
-        </form>
-        <div className="lock-foot">
-          <ShieldCheck />
-          <span>
-            <strong>Encrypted on this device</strong>
-            <small>The PIN never leaves this computer.</small>
-          </span>
-        </div>
-      </section>
-    </main>
-  );
-}
-
-function BackupSummary({
-  preview,
-  title,
-}: {
-  preview: BackupPreview;
-  title: string;
-}) {
-  return (
-    <section className="backup-summary">
-      <div>
-        <ShieldCheck />
-        <span>
-          <strong>{title}</strong>
-          <small>SHA-256 {preview.fingerprint.slice(0, 16)}…</small>
-        </span>
-      </div>
-      <dl>
-        <div>
-          <dt>{preview.studentName}</dt>
-          <dd>Profile</dd>
-        </div>
-        <div>
-          <dt>{new Date(preview.createdAt).toLocaleString()}</dt>
-          <dd>Created</dd>
-        </div>
-        <div>
-          <dt>{preview.counts.tasks}</dt>
-          <dd>Tasks</dd>
-        </div>
-        <div>
-          <dt>{preview.counts.documents}</dt>
-          <dd>Sources</dd>
-        </div>
-        <div>
-          <dt>{formatBytes(preview.encryptedBytes)}</dt>
-          <dd>Encrypted size</dd>
-        </div>
-        <div>
-          <dt>v{preview.appVersion}</dt>
-          <dd>App version</dd>
-        </div>
-      </dl>
-    </section>
   );
 }

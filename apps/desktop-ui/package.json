@@ -11,6 +11,7 @@
     "test": "vitest run --config vitest.config.mjs"
   },
   "dependencies": {
+    "@ionic/react": "^8.8.19",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "lucide-react": "^0.468.0",

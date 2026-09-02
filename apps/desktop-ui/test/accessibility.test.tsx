@@ -25,7 +25,11 @@ const expectNoAccessibilityViolations = async () => {
 
 test("Today and the primary navigation pass automated accessibility checks", async () => {
   render(<StudentCenter />);
-  await screen.findByRole("navigation", { name: "Primary navigation" }, { timeout: 8000 });
+  await screen.findByRole(
+    "navigation",
+    { name: "Primary navigation" },
+    { timeout: 8000 },
+  );
   await expectNoAccessibilityViolations();
 });
 
@@ -37,8 +41,14 @@ test("Calendar and keyboard-operable planning controls pass automated accessibil
     { name: "Primary navigation" },
     { timeout: 8000 },
   );
-  await user.click(within(navigation).getByRole("button", { name: "Calendar" }));
-  await screen.findByRole("group", { name: "Calendar range" }, { timeout: 8000 });
+  await user.click(
+    within(navigation).getByRole("button", { name: "Calendar" }),
+  );
+  await screen.findByRole(
+    "group",
+    { name: "Calendar range" },
+    { timeout: 8000 },
+  );
   await expectNoAccessibilityViolations();
 });
 
@@ -46,14 +56,20 @@ test("modal focus handling and schedule review pass automated accessibility chec
   const user = userEvent.setup();
   render(<StudentCenter />);
   await user.click(
-    await screen.findByRole("button", { name: "Review candidates" }, { timeout: 8000 }),
+    await screen.findByRole(
+      "button",
+      { name: "Review candidates" },
+      { timeout: 8000 },
+    ),
   );
-  const dialog = await screen.findByRole("dialog", undefined, { timeout: 8000 });
+  const dialog = await screen.findByRole("dialog", undefined, {
+    timeout: 8000,
+  });
   expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
   await expectNoAccessibilityViolations();
 });
 
-test("Work, Courses, Study, and Settings pass automated accessibility checks", async () => {
+test("Work, Courses, Study, Scholarships, and Settings pass automated accessibility checks", async () => {
   const user = userEvent.setup();
   render(<StudentCenter />);
   const navigation = await screen.findByRole(
@@ -61,12 +77,22 @@ test("Work, Courses, Study, and Settings pass automated accessibility checks", a
     { name: "Primary navigation" },
     { timeout: 8000 },
   );
-  for (const destination of ["Work", "Courses", "Study"]) {
-    await user.click(within(navigation).getByRole("button", { name: destination }));
-    await screen.findByRole("heading", { name: destination, level: 1 }, { timeout: 8000 });
+  for (const destination of ["Work", "Courses", "Study", "Scholarships"]) {
+    await user.click(
+      within(navigation).getByRole("button", { name: destination }),
+    );
+    await screen.findByRole(
+      "heading",
+      { name: destination, level: 1 },
+      { timeout: 8000 },
+    );
+    if (destination === "Study")
+      await screen.findByText(/Citations are required/);
+    if (destination === "Scholarships")
+      await screen.findByText("Trusted sources");
     await expectNoAccessibilityViolations();
   }
   await user.click(screen.getByRole("button", { name: "Settings" }));
-  await screen.findByRole("dialog", { name: "Settings" });
+  await screen.findByRole("heading", { name: "Settings", level: 1 });
   await expectNoAccessibilityViolations();
 });

@@ -6,10 +6,11 @@ import {
   ListChecks,
   LockKeyhole,
   LogOut,
-  Plus,
   Settings,
+  GraduationCap,
   ShieldCheck,
 } from "lucide-react";
+import { useState } from "react";
 import { AppLogo } from "./AppLogo";
 
 export type StudentDestination =
@@ -17,10 +18,11 @@ export type StudentDestination =
   | "calendar"
   | "work"
   | "courses"
-  | "study";
+  | "study"
+  | "scholarships";
 
 type AppNavigationProps = {
-  active: StudentDestination | "academic-settings";
+  active: StudentDestination | "academic-settings" | "settings";
   onNavigate: (destination: StudentDestination) => void;
   onQuickAdd: () => void;
   onSettings: () => void;
@@ -34,6 +36,7 @@ const destinations = [
   { id: "work", label: "Work", icon: ListChecks },
   { id: "courses", label: "Courses", icon: BookOpen },
   { id: "study", label: "Study", icon: Brain },
+  { id: "scholarships", label: "Scholarships", icon: GraduationCap },
 ] as const;
 
 export function DesktopNavigation({
@@ -63,7 +66,11 @@ export function DesktopNavigation({
         ))}
       </nav>
       <div className="sidebar-foot">
-        <button className="nav-item" aria-label="Settings" onClick={onSettings}>
+        <button
+          className={`nav-item ${active === "settings" ? "active" : ""}`}
+          aria-label="Settings"
+          onClick={onSettings}
+        >
           <Settings />
           <span>Settings</span>
         </button>
@@ -94,34 +101,76 @@ export function DesktopNavigation({
 export function MobileNavigation({
   active,
   onNavigate,
-  onQuickAdd,
+  onSettings,
 }: AppNavigationProps) {
+  const [moreOpen, setMoreOpen] = useState(false);
   return (
-    <nav className="mobile-nav" aria-label="Mobile navigation">
-      {destinations.slice(0, 3).map(({ id, label, icon: Icon }) => (
+    <>
+      <nav className="mobile-nav" aria-label="Mobile navigation">
+        {destinations
+          .filter(({ id }) =>
+            ["today", "calendar", "work", "study"].includes(id),
+          )
+          .map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              className={active === id ? "active" : ""}
+              onClick={() => onNavigate(id)}
+            >
+              <Icon />
+              {label}
+            </button>
+          ))}
         <button
-          key={id}
-          className={active === id ? "active" : ""}
-          onClick={() => onNavigate(id)}
+          aria-expanded={moreOpen}
+          className={
+            active === "courses" ||
+            active === "scholarships" ||
+            active === "settings" ||
+            active === "academic-settings"
+              ? "active"
+              : ""
+          }
+          onClick={() => setMoreOpen((value) => !value)}
         >
-          <Icon />
-          {label}
+          <BookOpen />
+          More
         </button>
-      ))}
-      <button onClick={onQuickAdd}>
-        <Plus />
-        Add
-      </button>
-      {destinations.slice(3).map(({ id, label, icon: Icon }) => (
-        <button
-          key={id}
-          className={active === id ? "active" : ""}
-          onClick={() => onNavigate(id)}
-        >
-          <Icon />
-          {label}
-        </button>
-      ))}
-    </nav>
+      </nav>
+      {moreOpen && (
+        <div className="mobile-more" role="menu" aria-label="More destinations">
+          <button
+            role="menuitem"
+            onClick={() => {
+              onNavigate("courses");
+              setMoreOpen(false);
+            }}
+          >
+            <BookOpen />
+            Courses
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              onNavigate("scholarships");
+              setMoreOpen(false);
+            }}
+          >
+            <GraduationCap />
+            Scholarships
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              onSettings();
+              setMoreOpen(false);
+            }}
+          >
+            <Settings />
+            Settings
+          </button>
+        </div>
+      )}
+    </>
   );
 }

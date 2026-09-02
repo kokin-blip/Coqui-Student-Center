@@ -15,6 +15,8 @@
  */
 
 :root {
+  --coqui-green: oklch(42% 0.105 157);
+  --coqui-mint: oklch(84% 0.105 151);
   /* Spacing */
   --space-1: 4px;
   --space-2: 8px;
@@ -54,6 +56,15 @@
   /* Layout */
   --sidebar-width: 232px;
   --content-max: 1240px;
+}
+
+[data-density="power"] {
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --text-body: 14px;
+  --text-nav: 13px;
 }
 
 /* ---------------------------------------------------------------- themes -- */

@@ -15,11 +15,13 @@ beforeEach(() => {
 const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const stylesheets = [
   withoutComments(readFileSync(resolve("src/styles.css"), "utf8")),
-  withoutComments(readFileSync(resolve("src/experience-overrides.css"), "utf8")),
+  withoutComments(
+    readFileSync(resolve("src/experience-overrides.css"), "utf8"),
+  ),
 ];
 
 describe("application shell", () => {
-  test("navigation exposes the five student destinations and keeps administration in Settings", async () => {
+  test("navigation exposes the six student destinations and keeps administration in Settings", async () => {
     render(<StudentCenter />);
 
     const plan = await screen.findByRole(
@@ -27,12 +29,27 @@ describe("application shell", () => {
       { name: "Primary navigation" },
       { timeout: 8000 },
     );
-    for (const item of ["Today", "Calendar", "Work", "Courses", "Study"]) {
-      expect(within(plan).getByRole("button", { name: item })).toBeInTheDocument();
+    for (const item of [
+      "Today",
+      "Calendar",
+      "Work",
+      "Courses",
+      "Study",
+      "Scholarships",
+    ]) {
+      expect(
+        within(plan).getByRole("button", { name: item }),
+      ).toBeInTheDocument();
     }
-    expect(screen.queryByRole("navigation", { name: "Tools" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", { name: "Tools" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", { name: "Account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Settings" }),
+    ).toBeInTheDocument();
   });
 
   test("the selected destination is marked on exactly one nav item", async () => {
@@ -58,23 +75,41 @@ describe("application shell", () => {
       { timeout: 8000 },
     );
     await user.click(within(plan).getByRole("button", { name: "Study" }));
-    expect(await screen.findByRole("heading", { name: "Study" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Study" }),
+    ).toBeInTheDocument();
     const sections = screen.getByRole("navigation", { name: "Study sections" });
     for (const item of ["Learn", "Materials", "Grades"])
-      expect(within(sections).getByRole("button", { name: item })).toBeInTheDocument();
+      expect(
+        within(sections).getByRole("button", { name: item }),
+      ).toBeInTheDocument();
     expect(screen.getByText(/Citations are required/)).toBeInTheDocument();
   });
 
-  test("dialogs trap focus, close with Escape, and restore the opener", async () => {
+  test("Settings is a route and its focused dialogs restore the opener", async () => {
     const user = userEvent.setup();
     render(<StudentCenter />);
-    const settings = await screen.findByRole("button", { name: "Settings" }, { timeout: 8000 });
+    const settings = await screen.findByRole(
+      "button",
+      { name: "Settings" },
+      { timeout: 8000 },
+    );
     await user.click(settings);
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const route = await screen.findByRole("heading", {
+      name: "Settings",
+      level: 1,
+    });
+    expect(route.closest('[data-route="settings"]')).toBeInTheDocument();
+
+    const canvas = screen.getByRole("button", { name: /Canvas/ });
+    await user.click(canvas);
+    const dialog = screen.getByRole("dialog", { name: "Connect Canvas" });
     expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
-    expect(settings).toHaveFocus();
+    expect(
+      screen.queryByRole("dialog", { name: "Connect Canvas" }),
+    ).not.toBeInTheDocument();
+    expect(canvas).toHaveFocus();
   });
 
   test("changing destinations resets the content scroll position", async () => {
@@ -94,15 +129,28 @@ describe("application shell", () => {
 });
 
 describe("stylesheets", () => {
+  test("the shell breakpoints cover wide, icon-rail, and 320px mobile layouts", () => {
+    expect(stylesheets.join("\n")).toMatch(/@media\s*\(max-width:\s*1199px\)/);
+    expect(stylesheets.join("\n")).toMatch(/@media\s*\(max-width:\s*767px\)/);
+    expect(stylesheets.join("\n")).toMatch(
+      /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1199px\)/,
+    );
+    const tauri = JSON.parse(
+      readFileSync(resolve("../desktop/src-tauri/tauri.conf.json"), "utf8"),
+    );
+    expect(tauri.app.windows[0].minWidth).toBe(320);
+  });
+
   // Rules were pinned to [data-theme="dark"], which stopped matching entirely
   // once the themes were renamed — they applied to no theme and nothing failed.
   test("no rule targets a theme that is not shipped", () => {
     const shipped = new Set(THEMES.map((theme) => theme.value));
     for (const sheet of stylesheets) {
       for (const [, theme] of sheet.matchAll(/\[data-theme="([^"]+)"\]/g)) {
-        expect(shipped, `[data-theme="${theme}"] is not a shipped theme`).toContain(
-          theme,
-        );
+        expect(
+          shipped,
+          `[data-theme="${theme}"] is not a shipped theme`,
+        ).toContain(theme);
       }
     }
   });
@@ -117,14 +165,17 @@ describe("stylesheets", () => {
   // value on a dark surface. The brand mark and the onboarding splash are
   // deliberately fixed and are allowed.
   test("colour comes from tokens, not literals", () => {
-    const allowed = /^\.(logo-|coqui-|onboarding-story|setup-steps|local-promise)/;
+    const allowed =
+      /^\.(logo-|coqui-|onboarding-story|setup-steps|local-promise)/;
     for (const sheet of stylesheets) {
       const offenders: string[] = [];
       for (const block of sheet.split("}")) {
         const [selector = "", body = ""] = block.split("{");
         if (!body || allowed.test(selector.trim())) continue;
         if (/#[0-9a-fA-F]{3,8}\b/.test(body)) {
-          offenders.push(`${selector.trim().slice(0, 60)} →${body.trim().slice(0, 60)}`);
+          offenders.push(
+            `${selector.trim().slice(0, 60)} →${body.trim().slice(0, 60)}`,
+          );
         }
       }
       expect(offenders, offenders.join("\n")).toHaveLength(0);

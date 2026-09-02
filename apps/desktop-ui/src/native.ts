@@ -138,17 +138,272 @@ export type AiUsageSummary = {
   outputTokens: number;
   averageLatencyMs: number;
 };
-export type GroundedCitation = { sourceId: string; locator: string; quote: string };
-export type StudyMaterial = { id: string; fileName: string; mime: string; courseIds: string[]; segmentCount: number };
-export type StudyArtifact = { id: string; courseId: string; kind: string; title: string; content: string; citations: GroundedCitation[]; provider: string; model: string; updatedAt: string };
-export type StudyReview = { id: string; artifactId: string; confidence: number; misses: number; intervalDays: number; nextReviewAt: string; lastReviewedAt?: string };
-export type GradeCategory = { id: string; courseId: string; name: string; weight: number };
-export type GradeItem = { id: string; courseId: string; categoryId?: string; title: string; score?: number; pointsPossible: number; dueAt?: string; status: "graded" | "missing" | "planned" };
-export type CourseGrade = { courseId: string; currentPercent?: number; missingWorkImpact: number; projectedLetter?: string; creditHours: number };
-export type CourseGradingScale = { courseId: string; bands: { label: string; minimumPercent: number; gradePoints: number }[]; creditHours: number };
-export type StudyWorkspace = { materials: StudyMaterial[]; artifacts: StudyArtifact[]; reviews: StudyReview[]; gradeCategories: GradeCategory[]; gradeItems: GradeItem[]; courseGrades: CourseGrade[]; gradingScales: CourseGradingScale[]; gpaProjection?: number };
-export type GroundedStudyInput = { capability: "source_qa" | "study_guide" | "flashcards" | "practice_questions" | "practice_test"; courseIds: string[]; documentIds: string[]; prompt: string; title: string; consent: boolean };
-export type GradeBand = { label: string; minimumPercent: number; gradePoints: number };
+export type ScholarshipSource = {
+  id: string;
+  name: string;
+  kind: string;
+  origin: string;
+  enabled: boolean;
+  weeklyRefresh?: boolean;
+  requiresCredential: boolean;
+  status: string;
+  attribution: string;
+  parserVersion: string;
+  lastFetchedAt?: string;
+  lastError?: string;
+};
+export type ScholarshipOpportunity = {
+  id: string;
+  sourceId: string;
+  canonicalUrl: string;
+  provider: string;
+  title: string;
+  awardMinimum?: number;
+  awardMaximum?: number;
+  currency?: string;
+  deadline?: string;
+  deadlineLabel?: string;
+  datePrecision?: "date" | "date_time";
+  applicationUrl: string;
+  summary?: string;
+  studyLevels: string[];
+  fieldsOfStudy: string[];
+  locations: string[];
+  citizenship: string[];
+  residency: string[];
+  minimumGpa?: number;
+  essayPrompts: { id: string; prompt: string; wordLimit?: number }[];
+  requiredDocuments: string[];
+  recommendationsRequired?: number;
+  fetchedAt: string;
+  freshness: "fresh" | "stale" | "unknown";
+  verificationStatus: "unverified" | "verified" | "changed";
+  aiPolicy: "allowed" | "restricted" | "prohibited" | "unknown";
+  notes: string;
+  priority: "low" | "medium" | "high";
+  state:
+    | "discovered"
+    | "saved"
+    | "researching"
+    | "preparing"
+    | "submitted"
+    | "awarded"
+    | "declined"
+    | "archived";
+  taskIds: string[];
+};
+export type ScholarshipRequirementDocument = {
+  id: string;
+  opportunityId: string;
+  documentId: string;
+  fileName: string;
+  mime: string;
+  importedAt: string;
+  status: "review_required" | "reviewed" | "needs_attention";
+  proposedRequirements: string[];
+  proposedPrompts: { id: string; prompt: string; wordLimit?: number }[];
+  warnings: string[];
+  selectedRequirements: string[];
+  selectedPromptIds: string[];
+};
+export type ScholarshipApplication = {
+  id: string;
+  opportunityId: string;
+  status:
+    | "saved"
+    | "researching"
+    | "preparing"
+    | "submitted"
+    | "awarded"
+    | "declined"
+    | "archived";
+  checklist: { id: string; label: string; completed: boolean }[];
+  notes: string;
+  updatedAt: string;
+};
+export type ScholarshipDraft = {
+  id: string;
+  opportunityId: string;
+  promptId: string;
+  title: string;
+  outline: string;
+  content: string;
+  wordLimit?: number;
+  updatedAt: string;
+  versions: {
+    id: string;
+    draftId: string;
+    content: string;
+    createdAt: string;
+    source: "student" | "ai_suggestion_applied";
+  }[];
+};
+export type ScholarshipStoryExample = {
+  id: string;
+  title: string;
+  detail: string;
+  tags: string[];
+  updatedAt: string;
+};
+export type ScholarshipCrawlerRun = {
+  id: string;
+  sourceId: string;
+  startedAt: string;
+  completedAt?: string;
+  status: "running" | "complete" | "partial" | "failed";
+  discovered: number;
+  changed: number;
+  skipped: number;
+  reasonCategories: string[];
+};
+export type ScholarshipDiff = {
+  id: string;
+  opportunityId: string;
+  sourceId: string;
+  kind: "source_changed" | "missing_from_source";
+  detectedAt: string;
+  before?: ScholarshipOpportunity;
+  after?: ScholarshipOpportunity;
+};
+export type ScholarshipProfile = {
+  studyLevel: string;
+  fieldsOfStudy: string[];
+  locations: string[];
+  citizenship: string[];
+  residency: string[];
+  gpa: number | null;
+};
+export type ScholarshipMatchExplanation = {
+  opportunityId: string;
+  matched: { attribute: string; profileValue: string; requirement: string }[];
+  unknown: string[];
+  ineligible: string[];
+  score: number;
+};
+export type ScholarshipWritingSuggestion = {
+  id: string;
+  draftId: string;
+  kind: "grammar" | "structure" | "specificity" | "shortening" | "brainstorm";
+  originalQuote: string;
+  replacement: string;
+  rationale: string;
+  supportingProfileQuotes: string[];
+  provider: string;
+  model: string;
+  policy: string;
+  status: "pending";
+  createdAt: string;
+};
+export type ScholarshipWritingPreview = {
+  draftId: string;
+  provider: string;
+  model: string;
+  policy: string;
+  draftScope: { characters: number; words: number };
+  profileSnippets: string[];
+  disclosureUrl: string;
+};
+export type ScholarshipWorkspace = {
+  sources: ScholarshipSource[];
+  opportunities: ScholarshipOpportunity[];
+  documents: ScholarshipRequirementDocument[];
+  applications: ScholarshipApplication[];
+  drafts: ScholarshipDraft[];
+  stories: ScholarshipStoryExample[];
+  runs: ScholarshipCrawlerRun[];
+  diffs: ScholarshipDiff[];
+  profile: ScholarshipProfile;
+  matches: ScholarshipMatchExplanation[];
+  suggestions: ScholarshipWritingSuggestion[];
+};
+export type GroundedCitation = {
+  sourceId: string;
+  locator: string;
+  quote: string;
+};
+export type StudyMaterial = {
+  id: string;
+  fileName: string;
+  mime: string;
+  courseIds: string[];
+  segmentCount: number;
+};
+export type StudyArtifact = {
+  id: string;
+  courseId: string;
+  kind: string;
+  title: string;
+  content: string;
+  citations: GroundedCitation[];
+  provider: string;
+  model: string;
+  updatedAt: string;
+};
+export type StudyReview = {
+  id: string;
+  artifactId: string;
+  confidence: number;
+  misses: number;
+  intervalDays: number;
+  nextReviewAt: string;
+  lastReviewedAt?: string;
+};
+export type GradeCategory = {
+  id: string;
+  courseId: string;
+  name: string;
+  weight: number;
+};
+export type GradeItem = {
+  id: string;
+  courseId: string;
+  categoryId?: string;
+  title: string;
+  score?: number;
+  pointsPossible: number;
+  dueAt?: string;
+  status: "graded" | "missing" | "planned";
+};
+export type CourseGrade = {
+  courseId: string;
+  currentPercent?: number;
+  missingWorkImpact: number;
+  projectedLetter?: string;
+  creditHours: number;
+};
+export type CourseGradingScale = {
+  courseId: string;
+  bands: { label: string; minimumPercent: number; gradePoints: number }[];
+  creditHours: number;
+};
+export type StudyWorkspace = {
+  materials: StudyMaterial[];
+  artifacts: StudyArtifact[];
+  reviews: StudyReview[];
+  gradeCategories: GradeCategory[];
+  gradeItems: GradeItem[];
+  courseGrades: CourseGrade[];
+  gradingScales: CourseGradingScale[];
+  gpaProjection?: number;
+};
+export type GroundedStudyInput = {
+  capability:
+    | "source_qa"
+    | "study_guide"
+    | "flashcards"
+    | "practice_questions"
+    | "practice_test";
+  courseIds: string[];
+  documentIds: string[];
+  prompt: string;
+  title: string;
+  consent: boolean;
+};
+export type GradeBand = {
+  label: string;
+  minimumPercent: number;
+  gradePoints: number;
+};
 export type CanvasSyncRun = {
   id: string;
   connectionId: string;
@@ -383,7 +638,12 @@ export type CalendarDiff = {
   addedNoClassDates: NoClassDate[];
   // Rows that were read but matched no term boundary. Shown rather than dropped,
   // so a school worded differently looks unmatched instead of looking silent.
-  unmatched: { label: string; startsOn: string; endsOn: string; sessionCode: string }[];
+  unmatched: {
+    label: string;
+    startsOn: string;
+    endsOn: string;
+    sessionCode: string;
+  }[];
 };
 export type CatalogSection = {
   lineNumber: string;
@@ -409,6 +669,7 @@ export type CourseSuggestion = {
   // Which term the sections describe. Bundled sections go stale when the term
   // turns over and the meeting times alone do not reveal that.
   termLabel?: string;
+  stalenessWarning?: string;
 };
 export type TimezoneSuggestion = {
   timezone: string;
@@ -428,6 +689,8 @@ export type ClassMeetingInput = {
   component: string;
   location: string;
   instructorName: string;
+  rotationIntervalWeeks?: number;
+  rotationOffsetWeeks?: number;
 };
 export type LegacyQuarantineStatus = {
   detectedCount: number;
@@ -514,6 +777,8 @@ export type ClassMeetingSeriesRecord = {
   location: string;
   modality: string;
   instructorId?: string;
+  rotationIntervalWeeks: number;
+  rotationOffsetWeeks: number;
   version: number;
 };
 export type AcademicCalendarEventRecord = {
@@ -589,6 +854,16 @@ export type ClassMeetingSeriesInput = Omit<
   ClassMeetingSeriesRecord,
   "id" | "version"
 > & { expectedVersion?: number };
+export type AcademicCleanupPreview = {
+  duplicateCourseGroups: string[][];
+  repeatedCommitmentSeries: {
+    title: string;
+    count: number;
+    weekdays: number[];
+    startsAtLocal: string;
+    endsAtLocal: string;
+  }[];
+};
 export type AcademicCalendarEventInput = Omit<
   AcademicCalendarEventRecord,
   "id" | "version"
@@ -883,8 +1158,10 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 17,
-      onboarding: onboardingMode ? structuredClone(browserOnboardingState) : null,
+      schemaVersion: 25,
+      onboarding: onboardingMode
+        ? structuredClone(browserOnboardingState)
+        : null,
       dashboard: onboardingMode ? null : structuredClone(browserSeed),
     };
   }
@@ -905,55 +1182,173 @@ export async function getOnboardingState() {
 export async function getTimezoneSuggestion(): Promise<TimezoneSuggestion> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   if (!isDesktop()) {
-    const zone = new Intl.DateTimeFormat([], { timeZone: timezone, timeZoneName: "short" })
+    const zone = new Intl.DateTimeFormat([], {
+      timeZone: timezone,
+      timeZoneName: "short",
+    })
       .formatToParts(new Date())
       .find((part) => part.type === "timeZoneName")?.value;
-    return { timezone, displayName: `${timezone.split("/").at(-1)?.replaceAll("_", " ")} — ${zone ?? timezone}`, source: "operating_system" };
+    return {
+      timezone,
+      displayName: `${timezone.split("/").at(-1)?.replaceAll("_", " ")} — ${zone ?? timezone}`,
+      source: "operating_system",
+    };
   }
   return call<TimezoneSuggestion>("get_timezone_suggestion");
 }
 const browserInstitutions: InstitutionSelection[] = [
-  { id: "104151", name: "Arizona State University", country: "US", source: "college_scorecard", officialDomain: "asu.edu", catalogProviderStatus: "unavailable", custom: false },
-  { id: "104179", name: "University of Arizona", country: "US", source: "college_scorecard", officialDomain: "arizona.edu", catalogProviderStatus: "unavailable", custom: false },
-  { id: "105330", name: "Northern Arizona University", country: "US", source: "college_scorecard", officialDomain: "nau.edu", catalogProviderStatus: "unavailable", custom: false },
-  { id: "105154", name: "Phoenix College", country: "US", source: "college_scorecard", officialDomain: "phoenixcollege.edu", catalogProviderStatus: "unavailable", custom: false },
+  {
+    id: "104151",
+    name: "Arizona State University",
+    country: "US",
+    source: "college_scorecard",
+    officialDomain: "asu.edu",
+    catalogProviderStatus: "unavailable",
+    custom: false,
+  },
+  {
+    id: "104179",
+    name: "University of Arizona",
+    country: "US",
+    source: "college_scorecard",
+    officialDomain: "arizona.edu",
+    catalogProviderStatus: "unavailable",
+    custom: false,
+  },
+  {
+    id: "105330",
+    name: "Northern Arizona University",
+    country: "US",
+    source: "college_scorecard",
+    officialDomain: "nau.edu",
+    catalogProviderStatus: "unavailable",
+    custom: false,
+  },
+  {
+    id: "105154",
+    name: "Phoenix College",
+    country: "US",
+    source: "college_scorecard",
+    officialDomain: "phoenixcollege.edu",
+    catalogProviderStatus: "unavailable",
+    custom: false,
+  },
 ];
-export async function searchInstitutions(query: string): Promise<InstitutionSelection[]> {
+export async function searchInstitutions(
+  query: string,
+): Promise<InstitutionSelection[]> {
   if (isDesktop()) return call("search_institutions", { query });
   const needle = query.trim().toLowerCase();
   // Campus names are searchable natively, so the browser fallback matches them
   // too; without this a developer typing "Tempe" sees nothing here and a
   // pre-selected ASU campus in the packaged app.
-  const campusFor = (item: InstitutionSelection) => (item.id === asuSetupOptions.institutionId ? asuSetupOptions.campuses : []).find((campus) => needle && campus.name.toLowerCase().includes(needle));
+  const campusFor = (item: InstitutionSelection) =>
+    (item.id === asuSetupOptions.institutionId
+      ? asuSetupOptions.campuses
+      : []
+    ).find((campus) => needle && campus.name.toLowerCase().includes(needle));
   const matches = browserInstitutions
-    .filter((item) => !needle || item.name.toLowerCase().includes(needle) || Boolean(campusFor(item)))
-    .map((item) => { const campus = campusFor(item); return campus ? { ...item, matchedCampusId: campus.id, matchedCampusName: campus.name } : item; });
-  if (needle && !matches.some((item) => item.name.toLowerCase() === needle)) matches.push({ id: `custom:${needle.replaceAll(" ", "-")}`, name: query.trim(), country: "Other", source: "custom", catalogProviderStatus: "local_fallback", custom: true });
+    .filter(
+      (item) =>
+        !needle ||
+        item.name.toLowerCase().includes(needle) ||
+        Boolean(campusFor(item)),
+    )
+    .map((item) => {
+      const campus = campusFor(item);
+      return campus
+        ? {
+            ...item,
+            matchedCampusId: campus.id,
+            matchedCampusName: campus.name,
+          }
+        : item;
+    });
+  if (needle && !matches.some((item) => item.name.toLowerCase() === needle))
+    matches.push({
+      id: `custom:${needle.replaceAll(" ", "-")}`,
+      name: query.trim(),
+      country: "Other",
+      source: "custom",
+      catalogProviderStatus: "local_fallback",
+      custom: true,
+    });
   return structuredClone(matches.slice(0, 12));
 }
-export async function searchCourseSuggestions(institutionId: string, query: string): Promise<CourseSuggestion[]> {
-  if (isDesktop()) return call("search_course_suggestions", { institutionId, query });
+export async function searchCourseSuggestions(
+  institutionId: string,
+  query: string,
+): Promise<CourseSuggestion[]> {
+  if (isDesktop())
+    return call("search_course_suggestions", { institutionId, query });
   const needle = query.trim().toUpperCase();
   // Two real ASU sections so the section picker can be exercised in the browser;
   // the packaged app reads the bundled catalog instead. Kept small on purpose —
   // this is a development fixture, not a second catalog to maintain.
-  const catalog: CourseSuggestion[] = institutionId === asuSetupOptions.institutionId ? [{
-    code: "CSE 240",
-    title: "Introduction to Programming Languages",
-    source: "catalog",
-    sourceLabel: "ASU Class Search",
-    confidence: 0.99,
-    credits: 3,
-    termLabel: "Fall 2026 — Session C",
-    sections: [
-      { lineNumber: "66923", component: "lecture", weekdays: [1, 3], startsAtLocal: "13:30", endsAtLocal: "14:45", campusId: "tempe", location: "ISTBX101", instructor: "Justin Selgrad", modality: "in-person" },
-      { lineNumber: "77625", component: "lecture", weekdays: [2, 4], startsAtLocal: "10:30", endsAtLocal: "11:45", campusId: "west-valley", location: "SANDS131", instructor: "Eric Eckert", modality: "in-person" },
-    ],
-  }] : [];
-  const patterns = [["MAT 142", "College Mathematics"], ["ENG 101", "First-Year Composition"], ["ENG 102", "Research and Writing"], ["BIO 181", "General Biology I"], ["PSY 101", "Introduction to Psychology"], ["STA 201", "Introduction to Statistics"]];
+  const catalog: CourseSuggestion[] =
+    institutionId === asuSetupOptions.institutionId
+      ? [
+          {
+            code: "CSE 240",
+            title: "Introduction to Programming Languages",
+            source: "catalog",
+            sourceLabel: "ASU Class Search",
+            confidence: 0.99,
+            credits: 3,
+            termLabel: "Fall 2026 — Session C",
+            sections: [
+              {
+                lineNumber: "66923",
+                component: "lecture",
+                weekdays: [1, 3],
+                startsAtLocal: "13:30",
+                endsAtLocal: "14:45",
+                campusId: "tempe",
+                location: "ISTBX101",
+                instructor: "Justin Selgrad",
+                modality: "in-person",
+              },
+              {
+                lineNumber: "77625",
+                component: "lecture",
+                weekdays: [2, 4],
+                startsAtLocal: "10:30",
+                endsAtLocal: "11:45",
+                campusId: "west-valley",
+                location: "SANDS131",
+                instructor: "Eric Eckert",
+                modality: "in-person",
+              },
+            ],
+          },
+        ]
+      : [];
+  const patterns = [
+    ["MAT 142", "College Mathematics"],
+    ["ENG 101", "First-Year Composition"],
+    ["ENG 102", "Research and Writing"],
+    ["BIO 181", "General Biology I"],
+    ["PSY 101", "Introduction to Psychology"],
+    ["STA 201", "Introduction to Statistics"],
+  ];
   return [
-    ...catalog.filter((course) => course.code.includes(needle) || course.title.toUpperCase().includes(needle)),
-    ...patterns.filter(([code, title]) => code.includes(needle) || title.toUpperCase().includes(needle)).map(([code, title]) => ({ code, title, source: "generic", sourceLabel: "General course pattern", confidence: 0.62 })),
+    ...catalog.filter(
+      (course) =>
+        course.code.includes(needle) ||
+        course.title.toUpperCase().includes(needle),
+    ),
+    ...patterns
+      .filter(
+        ([code, title]) =>
+          code.includes(needle) || title.toUpperCase().includes(needle),
+      )
+      .map(([code, title]) => ({
+        code,
+        title,
+        source: "generic",
+        sourceLabel: "General course pattern",
+        confidence: 0.62,
+      })),
   ];
 }
 const asuSetupOptions: InstitutionSetupOptions = {
@@ -962,21 +1357,93 @@ const asuSetupOptions: InstitutionSetupOptions = {
   sourceLabel: "ASU University Registrar",
   sourceUrl: "https://registrar.asu.edu/academic-calendar",
   campuses: [
-    { id: "tempe", name: "Tempe", city: "Tempe", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
-    { id: "downtown-phoenix", name: "Downtown Phoenix", city: "Phoenix", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
-    { id: "west-valley", name: "West Valley", city: "Phoenix", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
-    { id: "polytechnic", name: "Polytechnic", city: "Mesa", timezone: "America/Phoenix", sourceLabel: "ASU Campuses and Locations", sourceUrl: "https://campus.asu.edu/" },
-    { id: "flexible", name: "Online or multiple campuses", city: "Flexible", timezone: "America/Phoenix", sourceLabel: "Student selection", sourceUrl: "" },
+    {
+      id: "tempe",
+      name: "Tempe",
+      city: "Tempe",
+      timezone: "America/Phoenix",
+      sourceLabel: "ASU Campuses and Locations",
+      sourceUrl: "https://campus.asu.edu/",
+    },
+    {
+      id: "downtown-phoenix",
+      name: "Downtown Phoenix",
+      city: "Phoenix",
+      timezone: "America/Phoenix",
+      sourceLabel: "ASU Campuses and Locations",
+      sourceUrl: "https://campus.asu.edu/",
+    },
+    {
+      id: "west-valley",
+      name: "West Valley",
+      city: "Phoenix",
+      timezone: "America/Phoenix",
+      sourceLabel: "ASU Campuses and Locations",
+      sourceUrl: "https://campus.asu.edu/",
+    },
+    {
+      id: "polytechnic",
+      name: "Polytechnic",
+      city: "Mesa",
+      timezone: "America/Phoenix",
+      sourceLabel: "ASU Campuses and Locations",
+      sourceUrl: "https://campus.asu.edu/",
+    },
+    {
+      id: "flexible",
+      name: "Online or multiple campuses",
+      city: "Flexible",
+      timezone: "America/Phoenix",
+      sourceLabel: "Student selection",
+      sourceUrl: "",
+    },
   ],
   terms: [
-    { id: "asu-fall-2026-c", name: "Fall 2026 — Session C", startsOn: "2026-08-20", endsOn: "2026-12-12", classEndsOn: "2026-12-04", examStartsOn: "2026-12-07", details: "Classes Aug 20–Dec 4 · Finals Dec 7–12", sourceLabel: "ASU University Registrar", sourceUrl: "https://registrar.asu.edu/academic-calendar" },
-    { id: "asu-spring-2027-c", name: "Spring 2027 — Session C", startsOn: "2027-01-11", endsOn: "2027-05-08", classEndsOn: "2027-04-30", examStartsOn: "2027-05-03", details: "Classes Jan 11–Apr 30 · Finals May 3–8", sourceLabel: "ASU University Registrar", sourceUrl: "https://registrar.asu.edu/academic-calendar" },
-    { id: "asu-fall-2027-c", name: "Fall 2027 — Session C", startsOn: "2027-08-19", endsOn: "2027-12-11", classEndsOn: "2027-12-03", examStartsOn: "2027-12-06", details: "Classes Aug 19–Dec 3 · Finals Dec 6–11", sourceLabel: "ASU University Registrar", sourceUrl: "https://registrar.asu.edu/academic-calendar" },
+    {
+      id: "asu-fall-2026-c",
+      name: "Fall 2026 — Session C",
+      startsOn: "2026-08-20",
+      endsOn: "2026-12-12",
+      classEndsOn: "2026-12-04",
+      examStartsOn: "2026-12-07",
+      details: "Classes Aug 20–Dec 4 · Finals Dec 7–12",
+      sourceLabel: "ASU University Registrar",
+      sourceUrl: "https://registrar.asu.edu/academic-calendar",
+    },
+    {
+      id: "asu-spring-2027-c",
+      name: "Spring 2027 — Session C",
+      startsOn: "2027-01-11",
+      endsOn: "2027-05-08",
+      classEndsOn: "2027-04-30",
+      examStartsOn: "2027-05-03",
+      details: "Classes Jan 11–Apr 30 · Finals May 3–8",
+      sourceLabel: "ASU University Registrar",
+      sourceUrl: "https://registrar.asu.edu/academic-calendar",
+    },
+    {
+      id: "asu-fall-2027-c",
+      name: "Fall 2027 — Session C",
+      startsOn: "2027-08-19",
+      endsOn: "2027-12-11",
+      classEndsOn: "2027-12-03",
+      examStartsOn: "2027-12-06",
+      details: "Classes Aug 19–Dec 3 · Finals Dec 6–11",
+      sourceLabel: "ASU University Registrar",
+      sourceUrl: "https://registrar.asu.edu/academic-calendar",
+    },
   ],
 };
-export async function getInstitutionSetupOptions(institutionId: string): Promise<InstitutionSetupOptions> {
-  if (isDesktop()) return call("get_institution_setup_options", { institutionId });
-  return structuredClone(institutionId === asuSetupOptions.institutionId ? asuSetupOptions : { institutionId, campuses: [], terms: [] });
+export async function getInstitutionSetupOptions(
+  institutionId: string,
+): Promise<InstitutionSetupOptions> {
+  if (isDesktop())
+    return call("get_institution_setup_options", { institutionId });
+  return structuredClone(
+    institutionId === asuSetupOptions.institutionId
+      ? asuSetupOptions
+      : { institutionId, campuses: [], terms: [] },
+  );
 }
 /**
  * Apply the parts of a calendar refresh the student approved, and only those.
@@ -1000,7 +1467,9 @@ export async function applyCalendarDiff(approval: {
  * bundled dates exactly as before. Callers should treat a rejection as "nothing
  * to show" rather than as an error worth interrupting anyone over.
  */
-export async function refreshSchoolCalendar(institutionId: string): Promise<CalendarDiff> {
+export async function refreshSchoolCalendar(
+  institutionId: string,
+): Promise<CalendarDiff> {
   if (isDesktop()) return call("refresh_school_calendar", { institutionId });
   // Browser test mode has no network path at all, so it reports the same shape a
   // school with nothing to refresh reports.
@@ -1040,7 +1509,15 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     };
     browserWorkspace.institution = structuredClone(draft.institution);
     browserWorkspace.appearance = draft.appearance;
-    browserWorkspace.courses = draft.courses.map((course) => ({ id: crypto.randomUUID(), title: course.title, code: course.code, termId: "term", version: 1, recordOrigin: "user", color: course.color || "#3155B7" }));
+    browserWorkspace.courses = draft.courses.map((course) => ({
+      id: crypto.randomUUID(),
+      title: course.title,
+      code: course.code,
+      termId: "term",
+      version: 1,
+      recordOrigin: "user",
+      color: course.color || "#3155B7",
+    }));
     browserWorkspace.tasks = [];
     browserWorkspace.commitments = [];
     browserWorkspace.instructors = [];
@@ -1052,7 +1529,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 17,
+      schemaVersion: 25,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -1180,11 +1657,26 @@ export async function setPlanBlockLock(blockId: string, locked: boolean) {
   }
   return call<Dashboard>("set_plan_block_lock", { blockId, locked });
 }
-export async function movePlanBlock(blockId: string, startsAt: string, endsAt: string) {
-  if (!isDesktop()) { browserSeed.blocks = browserSeed.blocks.map((block) => block.id === blockId ? { ...block, startsAt, endsAt, locked: true } : block); return structuredClone(browserSeed); }
+export async function movePlanBlock(
+  blockId: string,
+  startsAt: string,
+  endsAt: string,
+) {
+  if (!isDesktop()) {
+    browserSeed.blocks = browserSeed.blocks.map((block) =>
+      block.id === blockId
+        ? { ...block, startsAt, endsAt, locked: true }
+        : block,
+    );
+    return structuredClone(browserSeed);
+  }
   return call<Dashboard>("move_plan_block", { blockId, startsAt, endsAt });
 }
-export async function undoCalendarChange() { return isDesktop() ? call<Dashboard>("undo_calendar_change") : structuredClone(browserSeed); }
+export async function undoCalendarChange() {
+  return isDesktop()
+    ? call<Dashboard>("undo_calendar_change")
+    : structuredClone(browserSeed);
+}
 export async function createAcademicTerm(input: AcademicTermInput) {
   return call<WorkspaceSnapshot>("create_academic_term", { input });
 }
@@ -1258,9 +1750,7 @@ export async function createLocalTask(input: TaskInput) {
 export async function updateLocalTask(id: string, input: TaskInput) {
   if (!isDesktop()) {
     browserWorkspace.tasks = browserWorkspace.tasks.map((task) =>
-      task.id === id
-        ? { ...task, ...input, version: task.version + 1 }
-        : task,
+      task.id === id ? { ...task, ...input, version: task.version + 1 } : task,
     );
     return structuredClone(browserWorkspace);
   }
@@ -1272,7 +1762,9 @@ export async function deleteLocalTask(id: string, expectedVersion: number) {
       .filter((task) => task.id !== id)
       .map((task) => ({
         ...task,
-        dependencies: task.dependencies.filter((dependency) => dependency !== id),
+        dependencies: task.dependencies.filter(
+          (dependency) => dependency !== id,
+        ),
       }));
     return structuredClone(browserWorkspace);
   }
@@ -1342,23 +1834,71 @@ export async function updateAccent(accent: AccentPreference) {
   return call<WorkspaceSnapshot>("update_accent", { accent });
 }
 export async function listLegacyQuarantine() {
-  return isDesktop() ? call<LegacyQuarantineItem[]>("list_legacy_quarantine") : [];
+  return isDesktop()
+    ? call<LegacyQuarantineItem[]>("list_legacy_quarantine")
+    : [];
 }
 export async function restoreLegacyQuarantine(ids: string[]) {
   return call<WorkspaceSnapshot>("restore_legacy_quarantine", { ids });
 }
 export async function purgeLegacyQuarantine(confirmation: string) {
-  return call<LegacyQuarantineStatus>("purge_legacy_quarantine", { confirmation });
+  return call<LegacyQuarantineStatus>("purge_legacy_quarantine", {
+    confirmation,
+  });
 }
-export async function createInstructor(input: InstructorInput) { return call<WorkspaceSnapshot>("create_instructor", { input }); }
-export async function updateInstructor(id: string, input: InstructorInput) { return call<WorkspaceSnapshot>("update_instructor", { id, input }); }
-export async function deleteInstructor(id: string, expectedVersion: number) { return call<WorkspaceSnapshot>("delete_instructor", { id, expectedVersion }); }
-export async function createClassMeeting(input: ClassMeetingSeriesInput) { return call<WorkspaceSnapshot>("create_class_meeting", { input }); }
-export async function updateClassMeeting(id: string, input: ClassMeetingSeriesInput) { return call<WorkspaceSnapshot>("update_class_meeting", { id, input }); }
-export async function deleteClassMeeting(id: string, expectedVersion: number) { return call<WorkspaceSnapshot>("delete_class_meeting", { id, expectedVersion }); }
-export async function createAcademicEvent(input: AcademicCalendarEventInput) { return call<WorkspaceSnapshot>("create_academic_event", { input }); }
-export async function updateAcademicEvent(id: string, input: AcademicCalendarEventInput) { return call<WorkspaceSnapshot>("update_academic_event", { id, input }); }
-export async function deleteAcademicEvent(id: string, expectedVersion: number) { return call<WorkspaceSnapshot>("delete_academic_event", { id, expectedVersion }); }
+export async function createInstructor(input: InstructorInput) {
+  return call<WorkspaceSnapshot>("create_instructor", { input });
+}
+export async function updateInstructor(id: string, input: InstructorInput) {
+  return call<WorkspaceSnapshot>("update_instructor", { id, input });
+}
+export async function deleteInstructor(id: string, expectedVersion: number) {
+  return call<WorkspaceSnapshot>("delete_instructor", { id, expectedVersion });
+}
+export async function createClassMeeting(input: ClassMeetingSeriesInput) {
+  return call<WorkspaceSnapshot>("create_class_meeting", { input });
+}
+export async function getAcademicCleanupPreview() {
+  return isDesktop()
+    ? call<AcademicCleanupPreview>("get_academic_cleanup_preview")
+    : { duplicateCourseGroups: [], repeatedCommitmentSeries: [] };
+}
+export async function applyAcademicCleanup(
+  mergeDuplicateCourses: boolean,
+  collapseRepeatedCommitments: boolean,
+) {
+  return call<WorkspaceSnapshot>("apply_academic_cleanup", {
+    mergeDuplicateCourses,
+    collapseRepeatedCommitments,
+  });
+}
+export async function updateClassMeeting(
+  id: string,
+  input: ClassMeetingSeriesInput,
+) {
+  return call<WorkspaceSnapshot>("update_class_meeting", { id, input });
+}
+export async function deleteClassMeeting(id: string, expectedVersion: number) {
+  return call<WorkspaceSnapshot>("delete_class_meeting", {
+    id,
+    expectedVersion,
+  });
+}
+export async function createAcademicEvent(input: AcademicCalendarEventInput) {
+  return call<WorkspaceSnapshot>("create_academic_event", { input });
+}
+export async function updateAcademicEvent(
+  id: string,
+  input: AcademicCalendarEventInput,
+) {
+  return call<WorkspaceSnapshot>("update_academic_event", { id, input });
+}
+export async function deleteAcademicEvent(id: string, expectedVersion: number) {
+  return call<WorkspaceSnapshot>("delete_academic_event", {
+    id,
+    expectedVersion,
+  });
+}
 export async function deleteLocalProfile(confirmation: string) {
   return call<AppBootstrap>("delete_local_profile", { confirmation });
 }
@@ -1397,6 +1937,12 @@ export async function getUpdateStatus() {
 }
 export async function checkForUpdates() {
   return call<UpdateStatus>("check_for_updates");
+}
+export async function installUpdate(
+  expectedVersion: string,
+  confirmed: boolean,
+) {
+  return call<void>("install_update", { expectedVersion, confirmed });
 }
 const browserAccount = (signedIn = false, email?: string): AccountStatus => ({
   configured: true,
@@ -1485,7 +2031,8 @@ export async function signOutAccount() {
     : browserAccount();
 }
 export async function getSyncProtectionStatus(): Promise<SyncProtectionStatus> {
-  if (isDesktop()) return call<SyncProtectionStatus>("get_sync_protection_status");
+  if (isDesktop())
+    return call<SyncProtectionStatus>("get_sync_protection_status");
   // Staged downloads presuppose an established recovery code, so ?sync=staged implies protection.
   if (new URLSearchParams(window.location.search).get("sync") === "staged")
     return {
@@ -1556,7 +2103,8 @@ export async function checkExistingDeviceApproval(): Promise<SyncProtectionStatu
         accountId: "11111111-1111-4111-8111-111111111111",
         deviceId: "33333333-3333-4333-8333-333333333333",
         publicKey: "Q".repeat(43),
-        message: "This device was approved and its account key is protected locally.",
+        message:
+          "This device was approved and its account key is protected locally.",
       };
 }
 export async function cancelSyncProtection() {
@@ -1576,7 +2124,8 @@ const browserSyncStatus = (connected = false): EncryptedSyncStatus => ({
     : "Recovery is protected. Register this device to connect encrypted sync.",
 });
 export async function getEncryptedSyncStatus(): Promise<EncryptedSyncStatus> {
-  if (isDesktop()) return call<EncryptedSyncStatus>("get_encrypted_sync_status");
+  if (isDesktop())
+    return call<EncryptedSyncStatus>("get_encrypted_sync_status");
   // ?sync=staged renders the "changes from a newer version" state, which is otherwise only
   // reachable by pairing with a computer running a build that replicates more entity types.
   const mode = new URLSearchParams(window.location.search).get("sync");
@@ -1621,7 +2170,9 @@ export async function listPendingSyncDevices(): Promise<PendingSyncDevice[]> {
         },
       ];
 }
-export async function listAuthorizedSyncDevices(): Promise<PendingSyncDevice[]> {
+export async function listAuthorizedSyncDevices(): Promise<
+  PendingSyncDevice[]
+> {
   return isDesktop()
     ? call<PendingSyncDevice[]>("list_authorized_sync_devices")
     : [
@@ -1665,12 +2216,31 @@ export async function downloadSyncedDocument(documentId: string) {
     ? call<boolean>("download_synced_document", { documentId })
     : Boolean(documentId);
 }
-export async function addTask(title: string, minutes: number, dueAt?: string, courseId?: string) {
+export async function addTask(
+  title: string,
+  minutes: number,
+  dueAt?: string,
+  courseId?: string,
+) {
   if (!isDesktop()) {
     const id = crypto.randomUUID();
     const startsAt = browserAt(19);
-    const endsAt = new Date(new Date(startsAt).getTime() + minutes * 60_000).toISOString();
-    browserSeed.blocks.push({id,taskId:id,startsAt,endsAt,title,kind:"study",completed:false,locked:false,sessionIndex:0,location:"",reasonCodes:[dueAt?"deadline_soon":"feasible_window"]});
+    const endsAt = new Date(
+      new Date(startsAt).getTime() + minutes * 60_000,
+    ).toISOString();
+    browserSeed.blocks.push({
+      id,
+      taskId: id,
+      startsAt,
+      endsAt,
+      title,
+      kind: "study",
+      completed: false,
+      locked: false,
+      sessionIndex: 0,
+      location: "",
+      reasonCodes: [dueAt ? "deadline_soon" : "feasible_window"],
+    });
     return structuredClone(browserSeed);
   }
   return call<Dashboard>("add_task", { title, minutes, dueAt, courseId });
@@ -1688,7 +2258,17 @@ export async function replan(effectiveTime: string, reason: string) {
   if (!isDesktop()) {
     browserSeed.blocks = browserSeed.blocks.map((block) =>
       block.taskId && !block.completed && !block.locked
-        ? { ...block, reasonCodes: [...block.reasonCodes.filter((code) => code !== "low_energy_adjustment"), ...(reason.toLowerCase().includes("energy") ? ["low_energy_adjustment"] : [])] }
+        ? {
+            ...block,
+            reasonCodes: [
+              ...block.reasonCodes.filter(
+                (code) => code !== "low_energy_adjustment",
+              ),
+              ...(reason.toLowerCase().includes("energy")
+                ? ["low_energy_adjustment"]
+                : []),
+            ],
+          }
         : block,
     );
     return structuredClone(browserSeed);
@@ -1713,7 +2293,9 @@ export async function updateNotificationSettings(
 export async function startPlanBlock(blockId: string) {
   if (!isDesktop()) {
     browserSeed.blocks = browserSeed.blocks.map((block) =>
-      block.id === blockId ? { ...block, startedAt: new Date().toISOString() } : block,
+      block.id === blockId
+        ? { ...block, startedAt: new Date().toISOString() }
+        : block,
     );
     return structuredClone(browserSeed);
   }
@@ -1740,64 +2322,293 @@ export async function resolveSourceConflict(
 export async function connectCanvas(baseUrl: string, token: string) {
   return call<Dashboard>("connect_canvas", { baseUrl, token });
 }
-export async function connectCanvasCalendar(feedUrl: string, label = "Canvas calendar", refreshOnStartup = true) {
-  return call<Dashboard>("connect_canvas_calendar", { feedUrl, label, refreshOnStartup });
+export async function connectCanvasCalendar(
+  feedUrl: string,
+  label = "Canvas calendar",
+  refreshOnStartup = true,
+) {
+  return call<Dashboard>("connect_canvas_calendar", {
+    feedUrl,
+    label,
+    refreshOnStartup,
+  });
 }
 export async function refreshCanvasCalendar(connectionId: string) {
   return call<Dashboard>("refresh_canvas_calendar", { connectionId });
 }
-export async function setCanvasCalendarRefresh(connectionId: string, refreshOnStartup: boolean) {
+export async function setCanvasCalendarRefresh(
+  connectionId: string,
+  refreshOnStartup: boolean,
+) {
   if (!isDesktop()) {
-    browserSeed.canvasConnections = browserSeed.canvasConnections.map((connection) =>
-      connection.id === connectionId ? { ...connection, refreshOnStartup } : connection,
+    browserSeed.canvasConnections = browserSeed.canvasConnections.map(
+      (connection) =>
+        connection.id === connectionId
+          ? { ...connection, refreshOnStartup }
+          : connection,
     );
     return structuredClone(browserSeed);
   }
-  return call<Dashboard>("set_canvas_calendar_refresh", { connectionId, refreshOnStartup });
+  return call<Dashboard>("set_canvas_calendar_refresh", {
+    connectionId,
+    refreshOnStartup,
+  });
 }
 export async function disconnectCanvasCalendar(connectionId: string) {
   return call<Dashboard>("disconnect_canvas_calendar", { connectionId });
 }
-let browserAiProviders: AiProviderStatus[] = (["openai", "anthropic", "gemini"] as AiProviderId[]).map((provider) => ({
+let browserAiProviders: AiProviderStatus[] = (
+  ["openai", "anthropic", "gemini"] as AiProviderId[]
+).map((provider) => ({
   provider,
   connected: false,
   healthy: false,
-  model: provider === "openai" ? "gpt-5.4-mini-2026-03-17" : provider === "anthropic" ? "claude-sonnet-5" : "gemini-3.7-flash",
-  capabilities: ["brain_dump", "document_extraction", "schedule_vision", "task_decomposition", "planner_explanation", "source_qa", "study_guide", "flashcards", "practice_questions", "practice_test"],
-  disclosureUrl: provider === "openai" ? "https://openai.com/policies/api-data-usage-policies/" : provider === "anthropic" ? "https://privacy.claude.com/en/articles/7996868-how-long-do-you-store-my-organization-s-data" : "https://ai.google.dev/gemini-api/terms",
+  model:
+    provider === "openai"
+      ? "gpt-5.4-mini-2026-03-17"
+      : provider === "anthropic"
+        ? "claude-sonnet-5"
+        : "gemini-3.7-flash",
+  capabilities: [
+    "brain_dump",
+    "document_extraction",
+    "schedule_vision",
+    "task_decomposition",
+    "planner_explanation",
+    "source_qa",
+    "study_guide",
+    "flashcards",
+    "practice_questions",
+    "practice_test",
+  ],
+  disclosureUrl:
+    provider === "openai"
+      ? "https://openai.com/policies/api-data-usage-policies/"
+      : provider === "anthropic"
+        ? "https://privacy.claude.com/en/articles/7996868-how-long-do-you-store-my-organization-s-data"
+        : "https://ai.google.dev/gemini-api/terms",
 }));
-export async function listAiProviders() { return isDesktop() ? call<AiProviderStatus[]>("list_ai_providers") : structuredClone(browserAiProviders); }
-export async function saveAiProviderKey(provider: AiProviderId, key: string, model: string | undefined, ageConfirmed: boolean) {
+export async function listAiProviders() {
+  return isDesktop()
+    ? call<AiProviderStatus[]>("list_ai_providers")
+    : structuredClone(browserAiProviders);
+}
+export async function saveAiProviderKey(
+  provider: AiProviderId,
+  key: string,
+  model: string | undefined,
+  ageConfirmed: boolean,
+) {
   if (!isDesktop()) {
-    if (!ageConfirmed || key.trim().length < 20) throw new Error("Confirm your age and enter a valid API key.");
-    browserAiProviders = browserAiProviders.map((item) => item.provider === provider ? { ...item, connected: true, healthy: true, model: model?.trim() || item.model, maskedKey: `••••${key.slice(-4)}` } : item);
+    if (!ageConfirmed || key.trim().length < 20)
+      throw new Error("Confirm your age and enter a valid API key.");
+    browserAiProviders = browserAiProviders.map((item) =>
+      item.provider === provider
+        ? {
+            ...item,
+            connected: true,
+            healthy: true,
+            model: model?.trim() || item.model,
+            maskedKey: `••••${key.slice(-4)}`,
+          }
+        : item,
+    );
     return structuredClone(browserAiProviders);
   }
-  return call<AiProviderStatus[]>("save_ai_provider_key", { provider, key, model, ageConfirmed });
+  return call<AiProviderStatus[]>("save_ai_provider_key", {
+    provider,
+    key,
+    model,
+    ageConfirmed,
+  });
 }
-export async function testAiProvider(provider: AiProviderId) { return isDesktop() ? call<AiProviderStatus[]>("test_ai_provider", { provider }) : structuredClone(browserAiProviders); }
-export async function removeAiProvider(provider: AiProviderId) { if (!isDesktop()) { browserAiProviders = browserAiProviders.map((item) => item.provider === provider ? { ...item, connected: false, healthy: false, maskedKey: undefined } : item); return structuredClone(browserAiProviders); } return call<AiProviderStatus[]>("remove_ai_provider", { provider }); }
-export async function setAiProviderOrder(order: AiProviderId[]) { if (!isDesktop()) { browserAiProviders = order.map((provider) => browserAiProviders.find((item) => item.provider === provider)!); return structuredClone(browserAiProviders); } return call<AiProviderStatus[]>("set_ai_provider_order", { order }); }
-export async function getAiUsage() { return isDesktop() ? call<AiUsageSummary[]>("get_ai_usage") : []; }
-let browserStudyWorkspace: StudyWorkspace = { materials: [], artifacts: [], reviews: [], gradeCategories: [], gradeItems: [], courseGrades: [], gradingScales: [] };
-export async function getStudyWorkspace() { return isDesktop() ? call<StudyWorkspace>("get_study_workspace") : structuredClone(browserStudyWorkspace); }
-export async function setStudyMaterialCourses(documentId: string, courseIds: string[]) { if (!isDesktop()) { browserStudyWorkspace.materials = browserStudyWorkspace.materials.map((item) => item.id === documentId ? { ...item, courseIds } : item); return structuredClone(browserStudyWorkspace); } return call<StudyWorkspace>("set_study_material_courses", { documentId, courseIds }); }
-export async function generateGroundedStudyArtifact(input: GroundedStudyInput) { if (!isDesktop()) { const artifact: StudyArtifact = { id: crypto.randomUUID(), courseId: input.courseIds[0], kind: input.capability, title: input.title || "Grounded study result", content: "Browser preview: the installed app validates every claim against selected local sources.", citations: [], provider: "openai", model: "browser-test-model", updatedAt: new Date().toISOString() }; browserStudyWorkspace.artifacts.unshift(artifact); return { workspace: structuredClone(browserStudyWorkspace), artifactId: artifact.id, provider: artifact.provider, model: artifact.model }; } return call<{ workspace: StudyWorkspace; artifactId: string; provider: string; model: string }>("generate_grounded_study_artifact", { input }); }
-export async function updateStudyArtifact(artifactId: string, title: string, content: string) { if (!isDesktop()) { browserStudyWorkspace.artifacts = browserStudyWorkspace.artifacts.map((item) => item.id === artifactId ? { ...item, title, content, updatedAt: new Date().toISOString() } : item); return structuredClone(browserStudyWorkspace); } return call<StudyWorkspace>("update_study_artifact", { artifactId, title, content }); }
-export async function reviewStudyArtifact(artifactId: string, confidence: number) { return isDesktop() ? call<StudyWorkspace>("review_study_artifact", { artifactId, confidence }) : structuredClone(browserStudyWorkspace); }
-export async function saveGradeCategory(input: { id?: string; courseId: string; name: string; weight: number }) { return isDesktop() ? call<StudyWorkspace>("save_grade_category", { input }) : structuredClone(browserStudyWorkspace); }
-export async function saveGradeItem(input: { id?: string; courseId: string; categoryId?: string; title: string; score?: number; pointsPossible: number; dueAt?: string; status: GradeItem["status"] }) { return isDesktop() ? call<StudyWorkspace>("save_grade_item", { input }) : structuredClone(browserStudyWorkspace); }
-export async function calculateGradeWhatIf(input: { courseId: string; categoryId?: string; title: string; score?: number; pointsPossible: number; status: GradeItem["status"] }) { return isDesktop() ? call<{ percent?: number; projectedLetter?: string }>("calculate_grade_what_if", { input }) : { percent: input.score === undefined ? undefined : input.score / input.pointsPossible * 100 }; }
-export async function saveGradingScale(courseId: string, bands: GradeBand[], creditHours: number) {
+export async function testAiProvider(provider: AiProviderId) {
+  return isDesktop()
+    ? call<AiProviderStatus[]>("test_ai_provider", { provider })
+    : structuredClone(browserAiProviders);
+}
+export async function removeAiProvider(provider: AiProviderId) {
   if (!isDesktop()) {
-    const scale = { courseId, bands: structuredClone(bands), creditHours };
-    browserStudyWorkspace.gradingScales = [scale, ...browserStudyWorkspace.gradingScales.filter((item) => item.courseId !== courseId)];
+    browserAiProviders = browserAiProviders.map((item) =>
+      item.provider === provider
+        ? { ...item, connected: false, healthy: false, maskedKey: undefined }
+        : item,
+    );
+    return structuredClone(browserAiProviders);
+  }
+  return call<AiProviderStatus[]>("remove_ai_provider", { provider });
+}
+export async function setAiProviderOrder(order: AiProviderId[]) {
+  if (!isDesktop()) {
+    browserAiProviders = order.map(
+      (provider) =>
+        browserAiProviders.find((item) => item.provider === provider)!,
+    );
+    return structuredClone(browserAiProviders);
+  }
+  return call<AiProviderStatus[]>("set_ai_provider_order", { order });
+}
+export async function getAiUsage() {
+  return isDesktop() ? call<AiUsageSummary[]>("get_ai_usage") : [];
+}
+let browserStudyWorkspace: StudyWorkspace = {
+  materials: [],
+  artifacts: [],
+  reviews: [],
+  gradeCategories: [],
+  gradeItems: [],
+  courseGrades: [],
+  gradingScales: [],
+};
+export async function getStudyWorkspace() {
+  return isDesktop()
+    ? call<StudyWorkspace>("get_study_workspace")
+    : structuredClone(browserStudyWorkspace);
+}
+export async function setStudyMaterialCourses(
+  documentId: string,
+  courseIds: string[],
+) {
+  if (!isDesktop()) {
+    browserStudyWorkspace.materials = browserStudyWorkspace.materials.map(
+      (item) => (item.id === documentId ? { ...item, courseIds } : item),
+    );
     return structuredClone(browserStudyWorkspace);
   }
-  return call<StudyWorkspace>("save_grading_scale", { courseId, bands, creditHours });
+  return call<StudyWorkspace>("set_study_material_courses", {
+    documentId,
+    courseIds,
+  });
 }
-export async function launchScheduleCapture() { return call<string>("launch_schedule_capture"); }
-export async function settleScheduleSource(documentId: string, decision: "keep_encrypted" | "delete_now") {
+export async function generateGroundedStudyArtifact(input: GroundedStudyInput) {
+  if (!isDesktop()) {
+    const artifact: StudyArtifact = {
+      id: crypto.randomUUID(),
+      courseId: input.courseIds[0],
+      kind: input.capability,
+      title: input.title || "Grounded study result",
+      content:
+        "Browser preview: the installed app validates every claim against selected local sources.",
+      citations: [],
+      provider: "openai",
+      model: "browser-test-model",
+      updatedAt: new Date().toISOString(),
+    };
+    browserStudyWorkspace.artifacts.unshift(artifact);
+    return {
+      workspace: structuredClone(browserStudyWorkspace),
+      artifactId: artifact.id,
+      provider: artifact.provider,
+      model: artifact.model,
+    };
+  }
+  return call<{
+    workspace: StudyWorkspace;
+    artifactId: string;
+    provider: string;
+    model: string;
+  }>("generate_grounded_study_artifact", { input });
+}
+export async function updateStudyArtifact(
+  artifactId: string,
+  title: string,
+  content: string,
+) {
+  if (!isDesktop()) {
+    browserStudyWorkspace.artifacts = browserStudyWorkspace.artifacts.map(
+      (item) =>
+        item.id === artifactId
+          ? { ...item, title, content, updatedAt: new Date().toISOString() }
+          : item,
+    );
+    return structuredClone(browserStudyWorkspace);
+  }
+  return call<StudyWorkspace>("update_study_artifact", {
+    artifactId,
+    title,
+    content,
+  });
+}
+export async function reviewStudyArtifact(
+  artifactId: string,
+  confidence: number,
+) {
+  return isDesktop()
+    ? call<StudyWorkspace>("review_study_artifact", { artifactId, confidence })
+    : structuredClone(browserStudyWorkspace);
+}
+export async function saveGradeCategory(input: {
+  id?: string;
+  courseId: string;
+  name: string;
+  weight: number;
+}) {
+  return isDesktop()
+    ? call<StudyWorkspace>("save_grade_category", { input })
+    : structuredClone(browserStudyWorkspace);
+}
+export async function saveGradeItem(input: {
+  id?: string;
+  courseId: string;
+  categoryId?: string;
+  title: string;
+  score?: number;
+  pointsPossible: number;
+  dueAt?: string;
+  status: GradeItem["status"];
+}) {
+  return isDesktop()
+    ? call<StudyWorkspace>("save_grade_item", { input })
+    : structuredClone(browserStudyWorkspace);
+}
+export async function calculateGradeWhatIf(input: {
+  courseId: string;
+  categoryId?: string;
+  title: string;
+  score?: number;
+  pointsPossible: number;
+  status: GradeItem["status"];
+}) {
+  return isDesktop()
+    ? call<{ percent?: number; projectedLetter?: string }>(
+        "calculate_grade_what_if",
+        { input },
+      )
+    : {
+        percent:
+          input.score === undefined
+            ? undefined
+            : (input.score / input.pointsPossible) * 100,
+      };
+}
+export async function saveGradingScale(
+  courseId: string,
+  bands: GradeBand[],
+  creditHours: number,
+) {
+  if (!isDesktop()) {
+    const scale = { courseId, bands: structuredClone(bands), creditHours };
+    browserStudyWorkspace.gradingScales = [
+      scale,
+      ...browserStudyWorkspace.gradingScales.filter(
+        (item) => item.courseId !== courseId,
+      ),
+    ];
+    return structuredClone(browserStudyWorkspace);
+  }
+  return call<StudyWorkspace>("save_grading_scale", {
+    courseId,
+    bands,
+    creditHours,
+  });
+}
+export async function launchScheduleCapture() {
+  return call<string>("launch_schedule_capture");
+}
+export async function settleScheduleSource(
+  documentId: string,
+  decision: "keep_encrypted" | "delete_now",
+) {
   return call<Dashboard>("settle_schedule_source", { documentId, decision });
 }
 export async function syncCanvas(connectionId: string) {
@@ -1831,7 +2642,7 @@ export async function exportEncryptedBackup(
 export async function selectBackupFile(): Promise<string | null> {
   if (!isDesktop()) return null;
   const selected = await open({
-    multiple: true,
+    multiple: false,
     filters: [
       {
         name: "Student Center encrypted backup",
@@ -1860,7 +2671,7 @@ export async function restoreEncryptedBackup(
 export async function selectAndImport(): Promise<Dashboard | null> {
   if (!isDesktop()) return null;
   const selected = await open({
-    multiple: false,
+    multiple: true,
     filters: [
       {
         name: "Academic documents",
@@ -1880,7 +2691,9 @@ export async function selectAndImport(): Promise<Dashboard | null> {
     ],
   });
   if (!selected) return null;
-  const paths = Array.isArray(selected) ? selected.slice(0, 20) : [String(selected)];
+  const paths = Array.isArray(selected)
+    ? selected.slice(0, 20)
+    : [String(selected)];
   let dashboard: Dashboard | null = null;
   for (const path of paths) dashboard = await importDocumentPath(String(path));
   return dashboard;
@@ -1905,7 +2718,10 @@ export async function importDocumentPath(path: string) {
  * student's own screen anywhere, and the calling UI has to say so plainly.
  */
 export async function readScheduleWithAi(documentId: string, consent: boolean) {
-  return call<ManagedAiResult>("analyze_schedule_source", { documentId, consent });
+  return call<ManagedAiResult>("analyze_schedule_source", {
+    documentId,
+    consent,
+  });
 }
 /**
  * The image on a paste event, if this paste is a screenshot import at all.
@@ -1929,7 +2745,8 @@ export async function importDocumentBytes(fileName: string, bytes: Uint8Array) {
   // Sent as a raw body rather than Array.from(bytes): a 25 MB screenshot
   // serialises to roughly 100 MB of JSON as a number array, built and parsed on
   // both sides of the boundary, for every paste.
-  if (!isDesktop()) throw new Error("Native command unavailable in browser test mode");
+  if (!isDesktop())
+    throw new Error("Native command unavailable in browser test mode");
   return invoke<Dashboard>("import_document_bytes", {
     fileName,
     bytes: new Uint8Array(bytes),
@@ -1963,13 +2780,22 @@ export async function getDocumentEvidence(documentId: string) {
     : structuredClone(browserSeed.candidates);
 }
 export async function getScheduleSourcePreview(documentId: string) {
-  if (!isDesktop()) throw new Error("Visual source preview is available in the installed app.");
-  return call<ScheduleSourcePreview>("get_schedule_source_preview", { documentId });
+  if (!isDesktop())
+    throw new Error("Visual source preview is available in the installed app.");
+  return call<ScheduleSourcePreview>("get_schedule_source_preview", {
+    documentId,
+  });
 }
-export async function updateImportCandidate(candidateId: string, input: CandidateEditInput) {
+export async function updateImportCandidate(
+  candidateId: string,
+  input: CandidateEditInput,
+) {
   if (!isDesktop()) {
-    const candidate = browserSeed.candidates.find((item) => item.id === candidateId);
-    if (!candidate || candidate.status !== "pending") throw new Error("Pending candidate not found");
+    const candidate = browserSeed.candidates.find(
+      (item) => item.id === candidateId,
+    );
+    if (!candidate || candidate.status !== "pending")
+      throw new Error("Pending candidate not found");
     Object.assign(candidate, input, {
       studentEditedFields: Object.keys(input),
     });
@@ -2008,5 +2834,408 @@ export async function requestManagedAi(
   }
   return call<ManagedAiResult>("request_ai_capability", {
     input: { capability, excerpt, locale, consent },
+  });
+}
+
+const browserScholarships: ScholarshipWorkspace = {
+  sources: [
+    {
+      id: "asu-onsa",
+      name: "ASU ONSA scholarships",
+      kind: "asu-onsa",
+      origin: "https://onsa.asu.edu/scholarships",
+      enabled: true,
+      requiresCredential: false,
+      status: "ready",
+      attribution:
+        "Arizona State University Office of National Scholarships Advisement",
+      parserVersion: "manual-1",
+    },
+    {
+      id: "asu-global-education",
+      name: "ASU Global Education scholarships",
+      kind: "asu-global-education",
+      origin: "https://goglobal.asu.edu/scholarship-search",
+      enabled: true,
+      requiresCredential: false,
+      status: "ready",
+      attribution: "Arizona State University Global Education Office",
+      parserVersion: "asu-global-1",
+    },
+    {
+      id: "asu-scholarship-universe",
+      name: "ASU Scholarship Universe",
+      kind: "scholarship-universe",
+      origin: "https://asu.scholarshipuniverse.com/",
+      enabled: false,
+      weeklyRefresh: false,
+      requiresCredential: true,
+      status: "disabled",
+      lastError:
+        "Requires an admitted or current student's ASURITE sign-in. Coqui never crawls or reuses that authenticated session.",
+      attribution: "Arizona State University",
+      parserVersion: "manual-launch-1",
+    },
+    {
+      id: "careeronestop",
+      name: "CareerOneStop Scholarship Finder API",
+      kind: "careeronestop",
+      origin: "https://api.careeronestop.org/api-explorer/",
+      enabled: false,
+      weeklyRefresh: false,
+      requiresCredential: true,
+      status: "disabled",
+      lastError:
+        "Optional adapter is disabled until a CareerOneStop user ID and API bearer token are configured.",
+      attribution: "CareerOneStop, U.S. Department of Labor",
+      parserVersion: "credential-required-1",
+    },
+    {
+      id: "manual",
+      name: "Manual links and files",
+      kind: "manual",
+      origin: "https://coqui.local/scholarships/manual",
+      enabled: true,
+      requiresCredential: false,
+      status: "ready",
+      attribution: "Added by the student",
+      parserVersion: "manual-1",
+    },
+  ],
+  opportunities: [],
+  documents: [],
+  applications: [],
+  drafts: [],
+  stories: [],
+  runs: [],
+  diffs: [],
+  profile: {
+    studyLevel: "",
+    fieldsOfStudy: [],
+    locations: [],
+    citizenship: [],
+    residency: [],
+    gpa: null,
+  },
+  matches: [],
+  suggestions: [],
+};
+export async function getScholarshipWorkspace() {
+  return isDesktop()
+    ? call<ScholarshipWorkspace>("get_scholarship_workspace")
+    : structuredClone(browserScholarships);
+}
+export async function saveScholarshipOpportunity(
+  opportunity: ScholarshipOpportunity,
+) {
+  if (!isDesktop()) {
+    const index = browserScholarships.opportunities.findIndex(
+      (item) => item.id === opportunity.id,
+    );
+    if (index < 0) browserScholarships.opportunities.unshift(opportunity);
+    else browserScholarships.opportunities[index] = opportunity;
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("save_scholarship_opportunity", {
+    opportunity,
+  });
+}
+export async function saveScholarshipApplication(
+  application: ScholarshipApplication,
+) {
+  if (!isDesktop()) {
+    const index = browserScholarships.applications.findIndex(
+      (item) => item.id === application.id,
+    );
+    if (index < 0) browserScholarships.applications.unshift(application);
+    else browserScholarships.applications[index] = application;
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("save_scholarship_application", {
+    application,
+  });
+}
+export async function saveScholarshipDraft(draft: ScholarshipDraft) {
+  if (!isDesktop()) {
+    const now = new Date().toISOString();
+    const version = {
+      id: crypto.randomUUID(),
+      draftId: draft.id,
+      content: draft.content,
+      createdAt: now,
+      source: "student" as const,
+    };
+    const next = {
+      ...draft,
+      updatedAt: now,
+      versions: [...draft.versions, version],
+    };
+    const index = browserScholarships.drafts.findIndex(
+      (item) => item.id === draft.id,
+    );
+    if (index < 0) browserScholarships.drafts.unshift(next);
+    else browserScholarships.drafts[index] = next;
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("save_scholarship_draft", { draft });
+}
+export async function autosaveScholarshipDraft(draft: ScholarshipDraft) {
+  if (!isDesktop()) {
+    const index = browserScholarships.drafts.findIndex(
+      (item) => item.id === draft.id,
+    );
+    if (index < 0)
+      throw new Error("Save the first draft version before autosave begins");
+    browserScholarships.drafts[index] = {
+      ...draft,
+      updatedAt: new Date().toISOString(),
+    };
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("autosave_scholarship_draft", { draft });
+}
+export async function saveScholarshipStory(story: ScholarshipStoryExample) {
+  if (!isDesktop()) {
+    const index = browserScholarships.stories.findIndex(
+      (item) => item.id === story.id,
+    );
+    if (index < 0) browserScholarships.stories.unshift(story);
+    else browserScholarships.stories[index] = story;
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("save_scholarship_story", { story });
+}
+export async function deleteScholarshipStory(storyId: string) {
+  if (!isDesktop()) {
+    browserScholarships.stories = browserScholarships.stories.filter(
+      (item) => item.id !== storyId,
+    );
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("delete_scholarship_story", { storyId });
+}
+export async function refreshScholarshipSource(sourceId: string) {
+  if (!isDesktop()) {
+    browserScholarships.runs.unshift({
+      id: crypto.randomUUID(),
+      sourceId,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      status: "complete",
+      discovered: 0,
+      changed: 0,
+      skipped: 0,
+      reasonCategories: [],
+    });
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("refresh_scholarship_source", { sourceId });
+}
+export async function setScholarshipSourceRefresh(
+  sourceId: string,
+  weeklyRefresh: boolean,
+) {
+  if (!isDesktop()) {
+    browserScholarships.sources = browserScholarships.sources.map((source) =>
+      source.id === sourceId ? { ...source, weeklyRefresh } : source,
+    );
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("set_scholarship_source_refresh", {
+    sourceId,
+    weeklyRefresh,
+  });
+}
+export async function resolveScholarshipDiff(diffId: string) {
+  if (!isDesktop()) {
+    browserScholarships.diffs = browserScholarships.diffs.filter(
+      (diff) => diff.id !== diffId,
+    );
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("resolve_scholarship_diff", { diffId });
+}
+export async function saveScholarshipProfile(profile: ScholarshipProfile) {
+  if (!isDesktop()) {
+    browserScholarships.profile = profile;
+    browserScholarships.matches = [];
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("save_scholarship_profile", { profile });
+}
+export async function planScholarshipDeadline(opportunityId: string) {
+  if (!isDesktop()) {
+    const opportunity = browserScholarships.opportunities.find(
+      (item) => item.id === opportunityId,
+    );
+    if (opportunity && !opportunity.taskIds.length) {
+      opportunity.taskIds = [crypto.randomUUID()];
+      opportunity.state = "preparing";
+    }
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("plan_scholarship_deadline", {
+    opportunityId,
+  });
+}
+export async function previewScholarshipWriting(draftId: string) {
+  if (!isDesktop())
+    return {
+      draftId,
+      provider: "openai",
+      model: "browser-test-model",
+      policy: "unknown",
+      draftScope: { characters: 0, words: 0 },
+      profileSnippets: [],
+      disclosureUrl: "https://openai.com/policies/api-data-usage-policies/",
+    } satisfies ScholarshipWritingPreview;
+  return call<ScholarshipWritingPreview>("preview_scholarship_writing", {
+    draftId,
+  });
+}
+export async function requestScholarshipWritingFeedback(input: {
+  draftId: string;
+  kinds: string[];
+  profileSnippets: string[];
+  provider: string;
+  model: string;
+  policyAcknowledged: boolean;
+  consent: boolean;
+}) {
+  if (!isDesktop()) return structuredClone(browserScholarships);
+  return call<ScholarshipWorkspace>("request_scholarship_writing_feedback", {
+    input,
+  });
+}
+export async function resolveScholarshipWritingSuggestion(
+  suggestionId: string,
+  apply: boolean,
+) {
+  if (!isDesktop()) {
+    browserScholarships.suggestions = browserScholarships.suggestions.filter(
+      (item) => item.id !== suggestionId,
+    );
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("resolve_scholarship_writing_suggestion", {
+    suggestionId,
+    apply,
+  });
+}
+export async function importScholarshipRequirements(
+  opportunityId: string,
+  file: File,
+) {
+  const buffer =
+    typeof file.arrayBuffer === "function"
+      ? await file.arrayBuffer()
+      : await new Promise<ArrayBuffer>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () =>
+            reject(
+              reader.error ?? new Error("The selected file could not be read"),
+            );
+          reader.onload = () => resolve(reader.result as ArrayBuffer);
+          reader.readAsArrayBuffer(file);
+        });
+  const bytes = new Uint8Array(buffer);
+  if (!isDesktop()) {
+    const text = new TextDecoder().decode(bytes);
+    const lines = text
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const requirements = [
+      lines.some((value) => /official transcript/i.test(value))
+        ? "Official transcript"
+        : lines.some((value) => /transcript/i.test(value))
+          ? "Transcript"
+          : undefined,
+      lines.some((value) => /r[eé]sum[eé]/i.test(value)) ? "Résumé" : undefined,
+      lines.some((value) => /recommendation/i.test(value))
+        ? "Letter of recommendation"
+        : undefined,
+      lines.some((value) => /fafsa/i.test(value)) ? "FAFSA record" : undefined,
+      lines.some((value) => /portfolio/i.test(value)) ? "Portfolio" : undefined,
+      lines.some((value) => /proof of enrollment/i.test(value))
+        ? "Proof of enrollment"
+        : undefined,
+    ].filter((value): value is string => Boolean(value));
+    const prompts = lines
+      .filter((value) => /(essay|prompt)|\?$/i.test(value) && value.length > 20)
+      .slice(0, 12)
+      .map((prompt) => ({
+        id: crypto.randomUUID(),
+        prompt,
+        wordLimit:
+          Number(/\b([1-9][0-9]{1,3})\s*words?\b/i.exec(prompt)?.[1]) ||
+          undefined,
+      }));
+    browserScholarships.documents.unshift({
+      id: crypto.randomUUID(),
+      opportunityId,
+      documentId: crypto.randomUUID(),
+      fileName: file.name,
+      mime: file.type || "text/plain",
+      importedAt: new Date().toISOString(),
+      status:
+        requirements.length || prompts.length
+          ? "review_required"
+          : "needs_attention",
+      proposedRequirements: requirements,
+      proposedPrompts: prompts,
+      warnings:
+        requirements.length || prompts.length
+          ? []
+          : [
+              "No requirements or essay prompts were recognized. Review the source manually.",
+            ],
+      selectedRequirements: [],
+      selectedPromptIds: [],
+    });
+    return structuredClone(browserScholarships);
+  }
+  return invoke<ScholarshipWorkspace>("import_scholarship_requirements", {
+    opportunityId,
+    fileName: file.name,
+    bytes,
+  });
+}
+export async function applyScholarshipRequirementsReview(
+  documentId: string,
+  requirements: string[],
+  promptIds: string[],
+) {
+  if (!isDesktop()) {
+    const document = browserScholarships.documents.find(
+      (item) => item.id === documentId,
+    );
+    if (!document) throw new Error("Requirements import was not found");
+    const opportunity = browserScholarships.opportunities.find(
+      (item) => item.id === document.opportunityId,
+    );
+    if (!opportunity) throw new Error("Scholarship opportunity was not found");
+    opportunity.requiredDocuments = [
+      ...new Set([...opportunity.requiredDocuments, ...requirements]),
+    ];
+    opportunity.essayPrompts = [
+      ...opportunity.essayPrompts,
+      ...document.proposedPrompts.filter(
+        (prompt) =>
+          promptIds.includes(prompt.id) &&
+          !opportunity.essayPrompts.some(
+            (item) => item.prompt === prompt.prompt,
+          ),
+      ),
+    ];
+    document.status = "reviewed";
+    document.selectedRequirements = requirements;
+    document.selectedPromptIds = promptIds;
+    return structuredClone(browserScholarships);
+  }
+  return call<ScholarshipWorkspace>("apply_scholarship_requirements_review", {
+    documentId,
+    requirements,
+    promptIds,
   });
 }

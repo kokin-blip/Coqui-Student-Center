@@ -14,7 +14,7 @@
       "title": "Coqui Student Center",
       "width": 1280,
       "height": 820,
-      "minWidth": 760,
+      "minWidth": 320,
       "minHeight": 600,
       "center": true,
       "visible": false
