@@ -347,3 +347,24 @@ at 1280px and 320px used an empty synthetic profile and recorded no page-level
 horizontal overflow. A focused regression test covers stale-theme replacement,
 live theme changes and axe. This remains browser evidence; installed first-run,
 live Canvas and catalog certification are still pending.
+
+## Checkpoint C7 — Transient workflows (September 3, 2026)
+
+The root workspace is now an orchestration boundary for transient workflows.
+It chooses the active overlay and dispatches native commands, while feature-owned
+components render import/evidence, review/retention, registrar changes, planning
+conflicts, replanning, optional AI and profile deletion. Search and quick capture
+remain route-level lazy chunks.
+
+The extraction retains the same review-before-write and privacy boundaries:
+schedule candidates require selection, each original source receives an explicit
+retention choice, school-calendar changes remain individually reviewable, and an
+image can reach AI only after resolving the exact provider/model and receiving
+request-specific confirmation. Failed writes retain their current workflow.
+
+Automated coverage now includes the extracted planning, assistant, retention,
+calendar, import-entry and deletion dialogs alongside the existing import/review
+integration and shared modal focus tests. All 77 UI tests pass in the isolated
+single-worker certification run. `StudentCenter.tsx` fell from 2,198 to 1,596
+lines through tested extraction; no native contract or persisted behavior was
+removed. Installed native workflow certification is still pending.

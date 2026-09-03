@@ -12,20 +12,12 @@ import {
 } from "react";
 import {
   Bell,
-  BookOpen,
   ChevronRight,
-  CircleAlert,
-  FileLock2,
   LayoutGrid,
-  Link2,
   MoreHorizontal,
   Plus,
   Search,
-  ShieldCheck,
-  Sparkles,
-  Upload,
   WifiOff,
-  X,
 } from "lucide-react";
 import {
   DesktopNavigation,
@@ -40,8 +32,6 @@ import {
   saveInterfacePreferences,
   type InterfacePreferences,
 } from "./features/shell/interfacePreferences";
-import { ScheduleImportReview } from "./components/ScheduleImportReview";
-import { SchedulePhotoEditor } from "./components/SchedulePhotoEditor";
 import { OnboardingExperience } from "./components/OnboardingExperience";
 import {
   isSetupChecklistDismissed,
@@ -49,7 +39,19 @@ import {
 } from "./components/SetupChecklist";
 import type { SettingsSection } from "./components/SettingsView";
 import { TodayView } from "./components/TodayView";
-import { Modal } from "./components/Modal";
+import { PlanningDialogs } from "./features/overlays/PlanningDialogs";
+import {
+  AssistantDialog,
+  type AssistantCapability,
+} from "./features/overlays/AssistantDialog";
+import { DeleteProfileDialog } from "./features/overlays/DeleteProfileDialog";
+import { ImportDialog } from "./features/overlays/ImportDialog";
+import {
+  CalendarRefreshDialog,
+  changeKey,
+  RetentionDialog,
+  ReviewDialog,
+} from "./features/overlays/ReviewDialogs";
 import { SettingsDetail } from "./components/SettingsDetail";
 import { LockScreen } from "./components/SecurityPrimitives";
 import {
@@ -65,7 +67,6 @@ import {
   approveCandidates,
   CalendarDiff,
   Dashboard,
-  TermChange,
   deleteLocalProfile,
   DocumentSummary,
   getAccountStatus,
@@ -192,7 +193,7 @@ const QuickAddTaskModal = lazy(() =>
   })),
 );
 
-type Modal =
+type Overlay =
   | "search"
   | "import"
   | "review"
@@ -204,13 +205,6 @@ type Modal =
   | "calendar-refresh"
   | "delete-profile"
   | null;
-const formatDateTime = (iso?: string) =>
-  iso
-    ? new Intl.DateTimeFormat([], {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(iso))
-    : "Not set";
 type BootPhase = "loading" | "ready" | "error";
 const BOOT_WATCHDOG_MS = 15000;
 const BOOT_RECOVERY_DELAY_MS = 1200;
@@ -249,7 +243,7 @@ export function StudentCenter() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [taskDetailsSession, setTaskDetailsSession] = useState(0);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
-  const [modal, setModal] = useState<Modal>(null);
+  const [modal, setModal] = useState<Overlay>(null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (
@@ -342,12 +336,8 @@ export function StudentCenter() {
     documentId: string;
     items: Dashboard["candidates"];
   } | null>(null);
-  const [assistantCapability, setAssistantCapability] = useState<
-    | "brain_dump"
-    | "document_extraction"
-    | "task_decomposition"
-    | "planner_explanation"
-  >("brain_dump");
+  const [assistantCapability, setAssistantCapability] =
+    useState<AssistantCapability>("brain_dump");
   const [assistantExcerpt, setAssistantExcerpt] = useState("");
   const [assistantConsent, setAssistantConsent] = useState(false);
   const [assistantExplanation, setAssistantExplanation] = useState("");
@@ -530,8 +520,6 @@ export function StudentCenter() {
   // that changed under us is not authority to move anyone's finals.
   const [calendarDiff, setCalendarDiff] = useState<CalendarDiff | null>(null);
   const [declinedChanges, setDeclinedChanges] = useState<string[]>([]);
-  const changeKey = (change: TermChange) =>
-    `${change.termName}:${change.field}`;
   // The school on this profile. Empty for a custom or unset school, in which
   // case there is no published calendar to read and the control says so.
   const institutionId = onboarding?.draft.institution.custom
@@ -682,6 +670,69 @@ export function StudentCenter() {
     } finally {
       setBusy(false);
     }
+  };
+  const decideCandidates = async (choice: "approve" | "reject") => {
+    const selectedSources = [
+      ...new Set(
+        pending
+          .filter((item) => selectedCandidates.includes(item.id))
+          .map((item) => item.documentId),
+      ),
+    ];
+    const next = await run(
+      () =>
+        choice === "approve"
+          ? approveCandidates(selectedCandidates)
+          : rejectCandidates(selectedCandidates),
+      choice === "approve"
+        ? `${selectedCandidates.length} items approved and planned.`
+        : `${selectedCandidates.length} candidates rejected.`,
+    );
+    if (!next) return;
+    const ready = selectedSources.filter(
+      (id) =>
+        next.unsettledScheduleSources.includes(id) &&
+        !next.candidates.some(
+          (item) => item.documentId === id && item.status === "pending",
+        ),
+    );
+    if (ready.length) {
+      setRetentionDocumentIds(ready);
+      setModal("retention");
+    } else {
+      setModal(null);
+    }
+  };
+  const chooseRetention = async (
+    choice: "delete_now" | "keep_encrypted",
+  ) => {
+    const next = await run(
+      () => settleScheduleSource(retentionDocumentIds[0], choice),
+      choice === "delete_now"
+        ? "Schedule source deleted."
+        : "Schedule source kept encrypted.",
+    );
+    if (!next) return;
+    const remaining = retentionDocumentIds.slice(1);
+    setRetentionDocumentIds(remaining);
+    if (!remaining.length) setModal(null);
+  };
+  const applySchoolCalendar = async () => {
+    if (!calendarDiff) return;
+    const next = await run(
+      () =>
+        applyCalendarDiff({
+          termChanges: calendarDiff.changedTerms.filter(
+            (change) => !declinedChanges.includes(changeKey(change)),
+          ),
+          noClassDates: calendarDiff.addedNoClassDates,
+        }),
+      "Calendar updated.",
+    );
+    if (!next) return;
+    setCalendarDiff(null);
+    setDeclinedChanges([]);
+    setModal(null);
   };
   const openBackups = () => showSettingsSection("backups");
   const openAiSettings = () => showSettingsSection("ai");
@@ -1303,680 +1354,146 @@ export function StudentCenter() {
           onDeleteProfile={() => setModal("delete-profile")}
         />
         {modal === "import" && (
-          <Modal
-            title="Bring in my schedule"
-            subtitle="Choose the quickest source. Coqui shows a review before anything reaches your plan."
+          <ImportDialog
+            busy={busy}
+            pasteTarget={importPasteTarget}
+            documents={documents}
+            documentSearch={documentSearch}
+            evidence={vaultEvidence}
             close={() => setModal(null)}
-          >
-            <div className="import-choice-grid">
-              <button
-                className="outline"
-                onClick={() => {
-                  showSettingsSection("canvas");
-                }}
-              >
-                <Link2 />
-                <strong>Canvas calendar link</strong>
-                <span>Paste the one link Canvas provides</span>
-              </button>
-              <button
-                className="outline"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    setToast(await launchScheduleCapture());
-                    window.setTimeout(
-                      () => importPasteTarget.current?.focus(),
-                      0,
-                    );
-                  } catch (next) {
-                    setError(String(next));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                <LayoutGrid />
-                <strong>Capture screen area</strong>
-                <span>Use the system snipping tool, then paste</span>
-              </button>
-            </div>
-            <SchedulePhotoEditor
-              disabled={busy}
-              onError={setError}
-              onImported={(next, count) => {
-                setData(next);
-                setToast(
-                  `${count} corrected photo${count === 1 ? "" : "s"} encrypted and extracted.`,
-                );
-                setModal("review");
-              }}
-            />
-            <button
-              ref={importPasteTarget}
-              className="dropzone"
-              disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  const next = await selectAndImport();
-                  if (next) setModal("review");
-                  return next;
-                }, "File encrypted and extraction completed.")
+            openCanvas={() => showSettingsSection("canvas")}
+            capture={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                setToast(await launchScheduleCapture());
+                window.setTimeout(() => importPasteTarget.current?.focus(), 0);
+              } catch (next) {
+                setError(String(next));
+              } finally {
+                setBusy(false);
               }
-            >
-              <Upload />
-              <strong>Paste, choose, or drop a schedule</strong>
-              <span>
-                PDF, image, ICS, Word, Excel, CSV, PowerPoint, or text
-              </span>
-              <span>
-                Or paste a screenshot of your schedule with Ctrl/Cmd+V
-              </span>
-            </button>
-            <button
-              className="quick-add-detailed"
-              onClick={() => {
-                setModal(null);
-                setView("courses");
-              }}
-            >
-              <BookOpen /> Enter classes manually <ChevronRight />
-            </button>
-            <p className="privacy-note">
-              <ShieldCheck /> The original stays private. AI is never used
-              without a connected provider and explicit consent.
-            </p>
-            <section className="vault-library" aria-labelledby="vault-heading">
-              <div className="small-head">
-                <h3 id="vault-heading">Document library</h3>
-                <span>{documents.length}</span>
-              </div>
-              <label className="search-field">
-                <Search aria-hidden="true" />
-                <span className="sr-only">Search encrypted documents</span>
-                <input
-                  type="search"
-                  value={documentSearch}
-                  onChange={(event) => setDocumentSearch(event.target.value)}
-                  placeholder="Search file names"
-                />
-              </label>
-              {documents.length ? (
-                <div className="document-list">
-                  {documents.map((document) => (
-                    <button
-                      className="document-row"
-                      key={document.id}
-                      onClick={async () => {
-                        setError("");
-                        try {
-                          const items = await getDocumentEvidence(document.id);
-                          setVaultEvidence({ documentId: document.id, items });
-                        } catch (e) {
-                          setError(String(e));
-                        }
-                      }}
-                    >
-                      <FileLock2 aria-hidden="true" />
-                      <span>
-                        <strong>{document.fileName}</strong>
-                        <small>
-                          {new Date(document.importedAt).toLocaleString()} ·{" "}
-                          {document.approvedCount} approved ·{" "}
-                          {document.pendingCount} pending
-                        </small>
-                        {document.extractionError && (
-                          <em>{document.extractionError}</em>
-                        )}
-                      </span>
-                      <ChevronRight aria-hidden="true" />
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty compact-empty">
-                  No encrypted documents match this search.
-                </div>
-              )}
-              {vaultEvidence && (
-                <div className="vault-evidence" aria-live="polite">
-                  <div className="small-head">
-                    <h3>Saved source evidence</h3>
-                    <button
-                      className="icon-button"
-                      aria-label="Close source evidence"
-                      onClick={() => setVaultEvidence(null)}
-                    >
-                      <X />
-                    </button>
-                  </div>
-                  {vaultEvidence.items.length ? (
-                    vaultEvidence.items.map((candidate) => (
-                      <article key={candidate.id}>
-                        <strong>{candidate.title}</strong>
-                        <q>{candidate.evidence}</q>
-                        <small>
-                          {candidate.sourceLocator} · {candidate.status}
-                        </small>
-                      </article>
-                    ))
-                  ) : (
-                    <p>No academic facts were extracted from this source.</p>
-                  )}
-                  {/* Offered only for an image, and only ever offered: the app
-                    never sends a picture of a student's screen on its own
-                    initiative, and the copy has to read that way rather than
-                    burying it in a settings toggle. */}
-                  {/* Only while the image is still stored. Shredding happens
-                    exactly when every candidate is settled, which is also when a
-                    student is most likely to be reading the evidence — so
-                    offering this then would put the failure on the common path. */}
-                  {(() => {
-                    const source = documents.find(
-                      (document) => document.id === vaultEvidence.documentId,
-                    );
-                    return (
-                      source?.mime.startsWith("image/") &&
-                      source.originalAvailable
-                    );
-                  })() && (
-                    <div className="ai-reread">
-                      <p>
-                        <ShieldCheck aria-hidden="true" /> Coqui read this
-                        screenshot on your computer. If the class times came out
-                        wrong, it can ask your selected AI provider to try again
-                        — that sends{" "}
-                        <strong>this image and the text read from it</strong>{" "}
-                        off your computer. Everything it proposes still needs
-                        your review, and you never have to do this.
-                      </p>
-                      <button
-                        className="outline"
-                        disabled={busy}
-                        onClick={() =>
-                          run(async () => {
-                            const available = await listAiProviders();
-                            const resolved = available.find(
-                              (item) => item.connected && item.healthy,
-                            );
-                            if (!resolved)
-                              throw new Error(
-                                "Connect and test an AI provider in Settings first.",
-                              );
-                            const approved = window.confirm(
-                              `Send this screenshot and its locally extracted text to ${resolved.provider} (${resolved.model})? Nothing else in your vault is included.`,
-                            );
-                            if (!approved) return null;
-                            const result = await readScheduleWithAi(
-                              vaultEvidence.documentId,
-                              true,
-                            );
-                            setModal("review");
-                            return result.dashboard;
-                          }, "Your selected AI provider proposed classes for review; nothing was added to your plan.")
-                        }
-                      >
-                        Ask AI to re-read this screenshot
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-          </Modal>
+            }}
+            photosImported={(next, count) => {
+              setData(next);
+              setToast(
+                `${count} corrected photo${count === 1 ? "" : "s"} encrypted and extracted.`,
+              );
+              setModal("review");
+            }}
+            selectFile={() => {
+              void run(async () => {
+                const next = await selectAndImport();
+                if (next) setModal("review");
+                return next;
+              }, "File encrypted and extraction completed.");
+            }}
+            enterManually={() => {
+              setModal(null);
+              setView("courses");
+            }}
+            setDocumentSearch={setDocumentSearch}
+            openEvidence={async (documentId) => {
+              setError("");
+              try {
+                const items = await getDocumentEvidence(documentId);
+                setVaultEvidence({ documentId, items });
+              } catch (next) {
+                setError(String(next));
+              }
+            }}
+            closeEvidence={() => setVaultEvidence(null)}
+            rereadWithAi={(documentId) => {
+              void run(async () => {
+                const available = await listAiProviders();
+                const resolved = available.find(
+                  (item) => item.connected && item.healthy,
+                );
+                if (!resolved) {
+                  throw new Error(
+                    "Connect and test an AI provider in Settings first.",
+                  );
+                }
+                const approved = window.confirm(
+                  `Send this screenshot and its locally extracted text to ${resolved.provider} (${resolved.model})? Nothing else in your vault is included.`,
+                );
+                if (!approved) return null;
+                const result = await readScheduleWithAi(documentId, true);
+                setModal("review");
+                return result.dashboard;
+              }, "Your selected AI provider proposed classes for review; nothing was added to your plan.");
+            }}
+            onError={setError}
+          />
         )}
         {modal === "review" && (
-          <Modal
-            title="Review extracted facts"
-            subtitle="Every candidate shows its source evidence. Approve only what is correct."
-            close={() => setModal(null)}
-          >
-            {pending.length ? (
-              <>
-                <ScheduleImportReview
-                  candidates={pending}
-                  selectedIds={selectedCandidates}
-                  conflictedIds={conflictCandidateIds}
-                  busy={busy}
-                  onSelection={setSelectedCandidates}
-                  onDashboard={setData}
-                  onError={setError}
-                  terms={todayWorkspace?.terms ?? []}
-                />
-                <div className="modal-actions split-actions">
-                  <button
-                    className="outline danger"
-                    disabled={!selectedCandidates.length || busy}
-                    onClick={() =>
-                      run(
-                        () => rejectCandidates(selectedCandidates),
-                        `${selectedCandidates.length} candidates rejected.`,
-                      ).then((next) => {
-                        if (!next) return;
-                        const selectedSources = [
-                          ...new Set(
-                            pending
-                              .filter((item) =>
-                                selectedCandidates.includes(item.id),
-                              )
-                              .map((item) => item.documentId),
-                          ),
-                        ];
-                        const ready = selectedSources.filter(
-                          (id) =>
-                            next.unsettledScheduleSources.includes(id) &&
-                            !next.candidates.some(
-                              (item) =>
-                                item.documentId === id &&
-                                item.status === "pending",
-                            ),
-                        );
-                        if (ready.length) {
-                          setRetentionDocumentIds(ready);
-                          setModal("retention");
-                        } else setModal(null);
-                      })
-                    }
-                  >
-                    Ignore selected
-                  </button>
-                  <span />
-                  <button className="outline" onClick={() => setModal(null)}>
-                    Keep for later
-                  </button>
-                  {data.conflicts.some(
-                    (conflict) => conflict.kind === "source_change",
-                  ) && (
-                    <button
-                      className="outline"
-                      onClick={() => setModal("conflicts")}
-                    >
-                      Resolve date changes
-                    </button>
-                  )}
-                  <button
-                    className="solid"
-                    disabled={!selectedCandidates.length || busy}
-                    onClick={() =>
-                      run(
-                        () => approveCandidates(selectedCandidates),
-                        `${selectedCandidates.length} items approved and planned.`,
-                      ).then((next) => {
-                        if (!next) return;
-                        const selectedSources = [
-                          ...new Set(
-                            pending
-                              .filter((item) =>
-                                selectedCandidates.includes(item.id),
-                              )
-                              .map((item) => item.documentId),
-                          ),
-                        ];
-                        const ready = selectedSources.filter(
-                          (id) =>
-                            next.unsettledScheduleSources.includes(id) &&
-                            !next.candidates.some(
-                              (item) =>
-                                item.documentId === id &&
-                                item.status === "pending",
-                            ),
-                        );
-                        if (ready.length) {
-                          setRetentionDocumentIds(ready);
-                          setModal("retention");
-                        } else setModal(null);
-                      })
-                    }
-                  >
-                    Approve and plan
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="empty">
-                No candidates are waiting for review. The encrypted source
-                remains available in your vault.
-              </div>
+          <ReviewDialog
+            candidates={pending}
+            selectedIds={selectedCandidates}
+            conflictedIds={conflictCandidateIds}
+            busy={busy}
+            terms={todayWorkspace?.terms ?? []}
+            hasSourceChanges={data.conflicts.some(
+              (conflict) => conflict.kind === "source_change",
             )}
-          </Modal>
+            close={() => setModal(null)}
+            openConflicts={() => setModal("conflicts")}
+            onSelection={setSelectedCandidates}
+            onDashboard={setData}
+            onError={setError}
+            decide={(choice) => void decideCandidates(choice)}
+          />
         )}
         {modal === "retention" && (
-          <Modal
-            title="Keep the schedule source?"
-            subtitle="Your approved classes and evidence stay either way."
+          <RetentionDialog
+            count={retentionDocumentIds.length}
+            busy={busy}
             close={() => setModal(null)}
-          >
-            <div className="consent-box">
-              <ShieldCheck />
-              <div>
-                <strong>Your choice, every import</strong>
-                <p>
-                  Keep the original image or document encrypted for later
-                  review, or delete the source now. Coqui never makes this
-                  choice silently.
-                </p>
-              </div>
-            </div>
-            {retentionDocumentIds.length > 1 && (
-              <p className="field-help">
-                Source 1 of {retentionDocumentIds.length}. You will choose
-                separately for every imported source file.
-              </p>
-            )}
-            <div className="modal-actions">
-              <button
-                className="outline danger"
-                disabled={busy || !retentionDocumentIds.length}
-                onClick={() =>
-                  run(
-                    () =>
-                      settleScheduleSource(
-                        retentionDocumentIds[0],
-                        "delete_now",
-                      ),
-                    "Schedule source deleted.",
-                  ).then((next) => {
-                    if (!next) return;
-                    const remaining = retentionDocumentIds.slice(1);
-                    setRetentionDocumentIds(remaining);
-                    if (!remaining.length) setModal(null);
-                  })
-                }
-              >
-                Delete source now
-              </button>
-              <button
-                className="solid"
-                disabled={busy || !retentionDocumentIds.length}
-                onClick={() =>
-                  run(
-                    () =>
-                      settleScheduleSource(
-                        retentionDocumentIds[0],
-                        "keep_encrypted",
-                      ),
-                    "Schedule source kept encrypted.",
-                  ).then((next) => {
-                    if (!next) return;
-                    const remaining = retentionDocumentIds.slice(1);
-                    setRetentionDocumentIds(remaining);
-                    if (!remaining.length) setModal(null);
-                  })
-                }
-              >
-                Keep encrypted source
-              </button>
-            </div>
-          </Modal>
+            choose={(choice) => void chooseRetention(choice)}
+          />
         )}
         {modal === "calendar-refresh" && calendarDiff && (
-          <Modal
-            title="Your school's calendar"
-            subtitle={`Read from ${calendarDiff.sourceLabel || "the registrar"} just now. Nothing changes until you approve it.`}
+          <CalendarRefreshDialog
+            diff={calendarDiff}
+            declinedChanges={declinedChanges}
+            busy={busy}
             close={() => setModal(null)}
-          >
-            {calendarDiff.changedTerms.length ||
-            calendarDiff.addedNoClassDates.length ? (
-              <>
-                {calendarDiff.changedTerms.length > 0 && (
-                  <div className="candidate-list">
-                    <p className="field-help">
-                      A term date is a critical academic date, so each one is
-                      shown with the value you have now beside the one the
-                      registrar publishes. Anything you have edited yourself is
-                      left alone.
-                    </p>
-                    {calendarDiff.changedTerms.map((change) => {
-                      const declined = declinedChanges.includes(
-                        changeKey(change),
-                      );
-                      return (
-                        <label key={changeKey(change)}>
-                          <input
-                            type="checkbox"
-                            checked={!declined}
-                            onChange={(event) =>
-                              setDeclinedChanges((current) =>
-                                event.target.checked
-                                  ? current.filter(
-                                      (key) => key !== changeKey(change),
-                                    )
-                                  : [...current, changeKey(change)],
-                              )
-                            }
-                          />
-                          <span>
-                            <strong>{change.termName}</strong>
-                            <small>
-                              {change.field} · {change.current || "unset"} →{" "}
-                              {change.proposed}
-                            </small>
-                            <q>{change.evidence}</q>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-                {calendarDiff.addedNoClassDates.length > 0 && (
-                  <div className="candidate-list">
-                    <p className="field-help">
-                      Holidays and breaks. Approving these stops the planner
-                      scheduling on those days.
-                    </p>
-                    {calendarDiff.addedNoClassDates.map((date) => (
-                      <label key={`${date.startsOn}-${date.label}`}>
-                        <input type="checkbox" checked readOnly />
-                        <span>
-                          <strong>{date.label}</strong>
-                          <small>
-                            {date.startsOn}
-                            {date.endsOn ? ` – ${date.endsOn}` : ""}
-                          </small>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-                <div className="modal-actions split-actions">
-                  <span />
-                  <button className="outline" onClick={() => setModal(null)}>
-                    Not now
-                  </button>
-                  <button
-                    className="solid"
-                    disabled={busy}
-                    onClick={() =>
-                      run(
-                        () =>
-                          applyCalendarDiff({
-                            termChanges: calendarDiff.changedTerms.filter(
-                              (change) =>
-                                !declinedChanges.includes(changeKey(change)),
-                            ),
-                            noClassDates: calendarDiff.addedNoClassDates,
-                          }),
-                        "Calendar updated.",
-                      ).then(() => {
-                        setCalendarDiff(null);
-                        setDeclinedChanges([]);
-                        setModal(null);
-                      })
-                    }
-                  >
-                    Apply selected
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="empty compact-empty">
-                Your calendar already matches what{" "}
-                {calendarDiff.sourceLabel || "your school"} publishes.
-              </div>
-            )}
-          </Modal>
+            setDeclinedChanges={setDeclinedChanges}
+            apply={() => void applySchoolCalendar()}
+          />
         )}
-        {modal === "conflicts" && (
-          <Modal
-            title="Resolve planning conflicts"
-            subtitle="Student Center never replaces a critical date silently. Compare the current value with the newest source evidence."
-            close={() => setModal(null)}
-          >
-            {data.conflicts.length ? (
-              <div className="conflict-list">
-                {data.conflicts.map((conflict) => {
-                  const candidate = data.candidates.find(
-                    (item) => item.id === conflict.candidateId,
-                  );
-                  return (
-                    <article className="conflict-card" key={conflict.id}>
-                      <div className="conflict-title">
-                        <CircleAlert />
-                        <span>
-                          <strong>
-                            {candidate?.title ?? "Planning overload"}
-                          </strong>
-                          <small>{conflict.description}</small>
-                        </span>
-                      </div>
-                      {["source_change", "sync_critical_date"].includes(
-                        conflict.kind,
-                      ) ? (
-                        <>
-                          <div className="conflict-compare">
-                            <div>
-                              <small>Current plan</small>
-                              <strong>
-                                {["commitment", "academic_term"].includes(
-                                  conflict.entityType ?? "",
-                                )
-                                  ? `${formatDateTime(conflict.currentStartsAt)} – ${formatDateTime(conflict.currentEndsAt)}`
-                                  : formatDateTime(conflict.currentDueAt)}
-                              </strong>
-                            </div>
-                            <ChevronRight />
-                            <div>
-                              <small>
-                                {conflict.kind === "sync_critical_date"
-                                  ? "Newest device value"
-                                  : "Newest Canvas value"}
-                              </small>
-                              <strong>
-                                {["commitment", "academic_term"].includes(
-                                  conflict.entityType ?? "",
-                                )
-                                  ? `${formatDateTime(conflict.proposedStartsAt)} – ${formatDateTime(conflict.proposedEndsAt)}`
-                                  : formatDateTime(conflict.proposedDueAt)}
-                              </strong>
-                            </div>
-                          </div>
-                          {candidate && <q>{candidate.evidence}</q>}
-                          <div className="conflict-actions">
-                            <button
-                              className="outline"
-                              disabled={busy}
-                              onClick={() =>
-                                run(
-                                  () =>
-                                    resolveSourceConflict(
-                                      conflict.id,
-                                      "keep_existing",
-                                    ),
-                                  "Your current value was preserved.",
-                                )
-                              }
-                            >
-                              Keep my current value
-                            </button>
-                            <button
-                              className="solid"
-                              disabled={busy}
-                              onClick={() =>
-                                run(
-                                  () =>
-                                    resolveSourceConflict(
-                                      conflict.id,
-                                      "use_source",
-                                    ),
-                                  "Canvas value accepted and plan rebuilt.",
-                                )
-                              }
-                            >
-                              Use Canvas value
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="conflict-actions">
-                          <button
-                            className="solid"
-                            onClick={() => setModal("replan")}
-                          >
-                            Adjust my plan
-                          </button>
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="empty">All conflicts are resolved.</div>
-            )}
-          </Modal>
-        )}
-        {modal === "replan" && (
-          <Modal
-            title="What changed?"
-            subtitle="Completed, past, fixed, and locked blocks remain protected."
-            close={() => setModal(null)}
-          >
-            <div className="options">
-              {[
-                "I woke up late",
-                "This took 30 minutes longer",
-                "I have less energy",
-                "Replan everything after now",
-              ].map((reason) => (
-                <button
-                  className={reason === replanReason ? "active" : ""}
-                  key={reason}
-                  onClick={() => setReplanReason(reason)}
-                >
-                  {reason}
-                </button>
-              ))}
-            </div>
-            <div className="modal-actions">
-              <button className="outline" onClick={() => setModal(null)}>
-                Keep current plan
-              </button>
-              <button
-                className="solid"
-                disabled={busy}
-                onClick={() =>
-                  run(
-                    () =>
-                      replan(
-                        new Date(
-                          Date.now() +
-                            (replanReason === "This took 30 minutes longer"
-                              ? 30 * 60_000
-                              : 0),
-                        ).toISOString(),
-                        replanReason,
-                      ),
-                    "Plan rebuilt without moving protected work.",
-                  ).then(() => setModal(null))
-                }
-              >
-                Build a realistic plan
-              </button>
-            </div>
-          </Modal>
-        )}
+        <PlanningDialogs
+          active={
+            modal === "conflicts" || modal === "replan" ? modal : null
+          }
+          dashboard={data}
+          busy={busy}
+          replanReason={replanReason}
+          close={() => setModal(null)}
+          openReplan={() => setModal("replan")}
+          setReplanReason={setReplanReason}
+          resolveConflict={(id, resolution, message) => {
+            void run(
+              () => resolveSourceConflict(id, resolution),
+              message,
+            );
+          }}
+          submitReplan={() => {
+            void run(
+              () =>
+                replan(
+                  new Date(
+                    Date.now() +
+                      (replanReason === "This took 30 minutes longer"
+                        ? 30 * 60_000
+                        : 0),
+                  ).toISOString(),
+                  replanReason,
+                ),
+              "Plan rebuilt without moving protected work.",
+            ).then(() => setModal(null));
+          }}
+        />
         {modal === "search" && (
           <Suspense
             fallback={
@@ -2017,175 +1534,56 @@ export function StudentCenter() {
           </Suspense>
         )}
         {modal === "assistant" && (
-          <Modal
-            title="AI is optional"
-            subtitle="Core planning and local extraction remain available without an account, internet, or API key."
+          <AssistantDialog
+            providers={aiProviders}
+            busy={busy}
+            capability={assistantCapability}
+            excerpt={assistantExcerpt}
+            consent={assistantConsent}
+            explanation={assistantExplanation}
             close={() => setModal(null)}
-          >
-            <div className="consent-box">
-              <Sparkles />
-              <div>
-                <strong>
-                  {aiProviders.find((item) => item.connected && item.healthy)
-                    ? `${aiProviders.find((item) => item.connected && item.healthy)?.provider} · ${aiProviders.find((item) => item.connected && item.healthy)?.model}`
-                    : "Connect an AI provider first"}
-                </strong>
-                <p>
-                  Data scope: only the excerpt shown below is sent over TLS.
-                  Responses become reviewable candidates and can’t directly
-                  alter your plan. A failure is never retried with another
-                  provider without asking.
-                </p>
-              </div>
-            </div>
-            <label className="field">
-              AI action
-              <select
-                value={assistantCapability}
-                onChange={(event) =>
-                  setAssistantCapability(
-                    event.target.value as typeof assistantCapability,
-                  )
-                }
-              >
-                <option value="brain_dump">Structure a brain dump</option>
-                <option value="task_decomposition">
-                  Break down an assignment
-                </option>
-                <option value="document_extraction">Clarify an excerpt</option>
-                <option value="planner_explanation">
-                  Explain planner facts
-                </option>
-              </select>
-            </label>
-            <label className="field">
-              Selected excerpt
-              <textarea
-                value={assistantExcerpt}
-                onChange={(event) => setAssistantExcerpt(event.target.value)}
-                maxLength={12000}
-                rows={7}
-                placeholder="Paste only the brain dump, assignment excerpt, or deterministic facts needed for this request."
-              />
-              <small>
-                {assistantExcerpt.length.toLocaleString()} / 12,000 characters
-              </small>
-            </label>
-            <label className="check-row consent-check">
-              <input
-                type="checkbox"
-                checked={assistantConsent}
-                onChange={(event) => setAssistantConsent(event.target.checked)}
-              />
-              <span>
-                I consent to sending only this excerpt to the provider and model
-                shown above for this request.
-              </span>
-            </label>
-            {assistantExplanation && (
-              <div className="consent-box ai-explanation" role="status">
-                <Sparkles />
-                <div>
-                  <strong>Explanation</strong>
-                  <p>{assistantExplanation}</p>
-                </div>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button className="outline" onClick={() => setModal(null)}>
-                Cancel
-              </button>
-              {!aiProviders.some((item) => item.connected && item.healthy) && (
-                <button
-                  className="outline"
-                  onClick={() => void openAiSettings()}
-                >
-                  Configure providers
-                </button>
-              )}
-              <button
-                className="solid"
-                disabled={
-                  busy ||
-                  !aiProviders.some((item) => item.connected && item.healthy) ||
-                  !assistantConsent ||
-                  !assistantExcerpt.trim()
-                }
-                onClick={async () => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    const result = await requestManagedAi(
-                      assistantCapability,
-                      assistantExcerpt.trim(),
-                      assistantConsent,
-                    );
-                    setData(result.dashboard);
-                    setToast(
-                      result.dashboard.importNotice ??
-                        `${result.provider} response is ready for review.`,
-                    );
-                    setAssistantExplanation(result.explanation ?? "");
-                    if (result.candidatesCreated > 0) setModal("review");
-                  } catch (e) {
-                    setAiProviders(
-                      await listAiProviders().catch(() => aiProviders),
-                    );
-                    setAssistantConsent(false);
-                    setError(
-                      `${String(e)} Nothing was sent to another provider. Review the resolved provider and consent again to retry.`,
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                <Sparkles /> {busy ? "Working…" : "Create reviewable result"}
-              </button>
-            </div>
-          </Modal>
+            openSettings={() => void openAiSettings()}
+            setCapability={setAssistantCapability}
+            setExcerpt={setAssistantExcerpt}
+            setConsent={setAssistantConsent}
+            submit={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const result = await requestManagedAi(
+                  assistantCapability,
+                  assistantExcerpt.trim(),
+                  assistantConsent,
+                );
+                setData(result.dashboard);
+                setToast(
+                  result.dashboard.importNotice ??
+                    `${result.provider} response is ready for review.`,
+                );
+                setAssistantExplanation(result.explanation ?? "");
+                if (result.candidatesCreated > 0) setModal("review");
+              } catch (e) {
+                setAiProviders(
+                  await listAiProviders().catch(() => aiProviders),
+                );
+                setAssistantConsent(false);
+                setError(
+                  `${String(e)} Nothing was sent to another provider. Review the resolved provider and consent again to retry.`,
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
         )}
         {modal === "delete-profile" && (
-          <Modal
-            title="Delete this local profile"
-            subtitle="This permanently removes the encrypted database, document vault, plans, imports, and local integration history from this computer."
+          <DeleteProfileDialog
+            busy={busy}
+            confirmation={deleteConfirmation}
             close={() => setModal(null)}
-          >
-            <div className="consent-box security-warning">
-              <CircleAlert />
-              <div>
-                <strong>
-                  Create an encrypted backup first if you may need this data
-                  again.
-                </strong>
-                <p>
-                  Close this dialog and use Backups to export. Deletion cannot
-                  be undone and Student Center will return to first-run
-                  onboarding.
-                </p>
-              </div>
-            </div>
-            <label className="field">
-              Type DELETE MY PROFILE
-              <input
-                value={deleteConfirmation}
-                onChange={(event) => setDeleteConfirmation(event.target.value)}
-                autoComplete="off"
-              />
-            </label>
-            <div className="modal-actions">
-              <button className="outline" onClick={() => setModal(null)}>
-                Cancel
-              </button>
-              <button
-                className="solid danger-solid"
-                disabled={busy || deleteConfirmation !== "DELETE MY PROFILE"}
-                onClick={eraseProfile}
-              >
-                Permanently delete local profile
-              </button>
-            </div>
-          </Modal>
+            setConfirmation={setDeleteConfirmation}
+            erase={() => void eraseProfile()}
+          />
         )}
         {toast && (
           <div className="toast" role="status">

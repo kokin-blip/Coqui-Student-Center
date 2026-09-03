@@ -18,7 +18,7 @@ certification claim. All replacement/verification columns start pending.
 | Scholarships / Saved | Save/update, explainable matching/profile, eligibility unknowns, requirements and source evidence | Pending |
 | Scholarships / Applications | Status, checklist, notes, planner tasks, review requirement documents | Pending |
 | Scholarships / Writing | Prompt/draft, autosave, outline, word count, versions/restore, story library, policy/consent, Apply/Dismiss suggestions | Pending |
-| Import / review | File/photo/ICS, multiple photos, crop/rotate/perspective, confidence/evidence, candidate edits, approve/reject, dedupe, retention | Pending |
+| Import / review | File/photo/ICS, multiple photos, crop/rotate/perspective, confidence/evidence, candidate edits, approve/reject, dedupe, retention | Feature-owned transient workflows; native installed pass pending |
 | Canvas settings | Calendar/full connection, partial diagnostics, refresh, review/conflicts, disconnect, restore/reconnect | Pending |
 | AI settings | Provider/key/model, health/usage, disclosure and consent; no secret echo | Pending |
 | Account / sync | Sign-in/out, recovery phrase, device registration/approval/revocation, status, push/pull, date conflicts | Pending |
@@ -28,7 +28,7 @@ certification claim. All replacement/verification columns start pending.
 | Appearance | Legacy themes/accents, system changes, density preference migration, reduced motion | Pending |
 | Notifications / updates | Reminder preferences, actionable reminders, truthful unsigned updater state | Pending |
 | Advanced recovery | Legacy quarantine review and safe recovery | Pending |
-| Shared interactions | Search/deep links, quick capture, assistant, toast/error feedback, keyboard focus/Escape, destructive confirmation | Pending |
+| Shared interactions | Search/deep links, quick capture, assistant, toast/error feedback, keyboard focus/Escape, destructive confirmation | Extracted and regression-tested; installed pass pending |
 
 ## Checkpoint B — implementation and deletion audit
 
@@ -193,3 +193,22 @@ both measured a 320px document/body at a 320px viewport.
 
 This checkpoint does not claim native Canvas import, catalog lookup or installed
 first-run certification; those remain part of the final native pass.
+
+## C7 transient workflow extraction audit
+
+- `StudentCenter` now owns overlay selection and command dispatch without owning
+  complete import, review, retention, registrar-diff, conflict, replan, assistant
+  or destructive-confirmation dialog bodies.
+- File/photo selection, document evidence, explicit screenshot AI consent,
+  candidate editing and selection, source retention, critical-date review and
+  conflict resolution continue to call the same native commands.
+- Failed candidate, retention and calendar writes keep the active workflow open.
+  No source is silently approved, deleted or applied.
+- Assistant disclosure still resolves the exact provider/model before consent,
+  clears consent after failure and explicitly forbids cross-provider fallback.
+- Shared `Modal` focus trapping, Escape handling and opener restoration remain
+  the single dialog boundary. Search and quick capture remain lazy loaded.
+
+Focused tests cover conflict choices, replanning, AI gating and axe, exact profile
+deletion confirmation, per-source retention and registrar change selection. The
+existing import/review integration test continues to cover editable candidates.

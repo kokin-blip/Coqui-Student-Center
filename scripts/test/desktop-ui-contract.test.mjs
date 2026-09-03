@@ -6,6 +6,20 @@ const ui = await readFile(
   new URL("../../apps/desktop-ui/src/StudentCenter.tsx", import.meta.url),
   "utf8",
 );
+const overlaySources = (
+  await Promise.all(
+    ["ImportDialog", "ReviewDialogs", "PlanningDialogs", "AssistantDialog"].map(
+      (name) =>
+        readFile(
+          new URL(
+            `../../apps/desktop-ui/src/features/overlays/${name}.tsx`,
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+    ),
+  )
+).join("\n");
 const native = await readFile(
   new URL("../../apps/desktop-ui/src/native.ts", import.meta.url),
   "utf8",
@@ -570,6 +584,7 @@ test("startup work is deferred off the main thread", () => {
 });
 
 test("vault and BYOK AI remain review-first and explicitly consented", () => {
+  const reviewFirstUi = `${ui}\n${overlaySources}`;
   for (const copy of [
     "Paste, choose, or drop a schedule",
     "Document library",
@@ -577,7 +592,7 @@ test("vault and BYOK AI remain review-first and explicitly consented", () => {
     "I consent to sending only this excerpt",
     "Responses become reviewable candidates",
   ]) {
-    assert.match(ui, new RegExp(copy));
+    assert.match(reviewFirstUi, new RegExp(copy));
   }
   for (const command of [
     "list_documents",
