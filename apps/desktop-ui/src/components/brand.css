@@ -35,12 +35,12 @@
 }
 .coqui-logo .face-only {
   width: 40px;
-  aspect-ratio: 410 / 350;
+  aspect-ratio: 1;
 }
 .coqui-logo .face-only img {
-  width: 464.9%;
-  left: -63.4%;
-  top: -70%;
+  width: 100%;
+  left: 0;
+  top: 0;
 }
 .coqui-logo.monochrome .brand-art img {
   filter: grayscale(1);

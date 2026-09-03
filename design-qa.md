@@ -318,3 +318,12 @@ autosave lifecycle, command dispatch and section selection. Static contract
 coverage follows those modules so extraction cannot be mistaken for lost controls.
 Onboarding/overlay polish, the comprehensive state/theme matrix, native icons and
 installed certification remain pending.
+
+### Native identity export
+
+The previous desktop bundle icons used a different mint frog. The desktop PNG,
+Windows tile/ICO and macOS ICNS assets now derive from a direct 520×520 crop of
+the approved transparent frog face. The application face-only mark uses the same
+source file instead of fragile CSS cropping. File inspection confirms alpha on
+the source and PNG exports, a six-image ICO, and a valid ICNS container. Mobile
+runtime work remains deferred and its Android/iOS icon folders remain unchanged.

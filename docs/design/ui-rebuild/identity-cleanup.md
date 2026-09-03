@@ -13,6 +13,11 @@ as the brand reference for both Comfy and Compact.
 - Browser proof visually checked on white and dark surfaces at small and enlarged
   sizes: background and letter openings reveal the actual surface, with no
   checkerboard. Capture: `identity-proof-capture.png`.
+- Desktop icon source: `apps/desktop-ui/public/brand/coqui-face.png`, a direct
+  square crop of the approved transparent master (520×520, alpha). No pixels were
+  redrawn or generated. Tauri produced the Windows PNG/ICO tile family and macOS
+  ICNS/PNG family from this exact crop. Dormant Android/iOS assets were restored
+  unchanged because mobile packaging remains deferred.
 
 ## Exact prompt
 

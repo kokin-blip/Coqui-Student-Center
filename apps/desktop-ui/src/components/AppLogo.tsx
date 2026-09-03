@@ -17,7 +17,7 @@ export function AppLogo({
     >
       <span className={`brand-art ${wordmark ? "lockup" : "face-only"}`}>
         <img
-          src="/brand/coqui-approved.png"
+          src={wordmark ? "/brand/coqui-approved.png" : "/brand/coqui-face.png"}
           alt={wordmark ? "Coqui Student Center" : "Coqui"}
         />
       </span>
