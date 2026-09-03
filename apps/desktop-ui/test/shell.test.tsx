@@ -83,7 +83,9 @@ describe("application shell", () => {
       expect(
         within(sections).getByRole("button", { name: item }),
       ).toBeInTheDocument();
-    expect(screen.getByText(/Citations are required/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Citations are required/),
+    ).toBeInTheDocument();
   });
 
   test("Settings uses focused detail routes and restores the opener", async () => {
@@ -103,7 +105,9 @@ describe("application shell", () => {
 
     const canvas = screen.getByRole("button", { name: /Canvas/ });
     await user.click(canvas);
-    const detail = await screen.findByRole("region", { name: "Connect Canvas" });
+    const detail = await screen.findByRole("region", {
+      name: "Connect Canvas",
+    });
     expect(detail.closest("main")).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Settings", level: 1 }),

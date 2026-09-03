@@ -120,3 +120,31 @@ AI consent/secret clearing, PIN validation, backup preview invalidation and rest
 acknowledgment. These mocks do not substitute for installed native certification.
 Both modes' nine default Settings states reflow at 320px with no page overflow.
 Remaining feature rollout and certification are listed in root `design-qa.md`.
+
+## C4 preservation audit
+
+- Courses is now a feature-owned master/detail workspace with searchable course
+  selection and Overview, Work, Schedule, Materials and Grades modules. Course,
+  instructor and rotating-meeting editors retain their drafts after failed native
+  writes. Instructor and schedule drafts are isolated per course rather than
+  leaking when selection changes.
+- Course work opens the same selected task in Work. Material and grade actions
+  open Study with the selected course and section. Existing import, course term,
+  catalog suggestion, deletion, instructor, office-hour and rotation controls
+  remain reachable.
+- Study now has separate Learn, Materials and Grades modules over one shared view
+  model. Linked course navigation selects the requested course. Grounded requests
+  still require explicit source/provider consent; failures clear that consent and
+  explicitly confirm that no fallback provider was used. Draft prompts remain.
+- Grade what-if preview remains separate from saved grade items. Scale, credit,
+  category and score controls are preserved. Loading, retry, empty-artifact and
+  empty-category states are explicit.
+- No native contracts, schema, sync entities or encryption behavior changed in
+  this checkpoint. Route/layout switching reuses the same mounted state rather
+  than creating parallel Comfy and Compact application state.
+
+Reference-sized evidence: `courses-comfy-1600.png`,
+`courses-compact-1600.png`, `study-comfy-1600.png` and
+`study-compact-1600.png`. Both screens measured document/body width of 320px at
+a 320px viewport in Compact mode. These are synthetic browser checks, not an
+installed-app certification.

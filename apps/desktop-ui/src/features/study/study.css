@@ -1,0 +1,120 @@
+.mode-study {
+  --study-inspector: 22rem;
+  font-family: var(--font-ui);
+}
+.mode-study h2,
+.mode-study h3 {
+  font-family: var(--font-ui);
+}
+.study-tabs {
+  width: fit-content;
+  margin-bottom: var(--space-5);
+}
+.study-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, var(--study-inspector));
+  gap: var(--space-5);
+  align-items: start;
+}
+.study-builder-panel,
+.study-materials-panel {
+  min-width: 0;
+}
+.study-builder-panel .section-head > span {
+  white-space: nowrap;
+}
+.study-artifact-inspector,
+.study-grade-inspector {
+  position: sticky;
+  top: var(--space-4);
+  max-height: calc(100dvh - 8rem);
+  overflow: auto;
+}
+.study-course-picker {
+  max-width: 26rem;
+}
+.inspector-kicker {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.progressive-form {
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-4);
+}
+.progressive-form > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+.progressive-form[open] > summary {
+  margin-bottom: var(--space-4);
+}
+.course-chip-list legend {
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+.compact-empty {
+  min-height: 8rem;
+}
+.study-loading {
+  display: grid;
+  gap: var(--space-4);
+}
+.study-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+[data-interface-mode="compact"] .mode-study {
+  --study-inspector: 20.5rem;
+}
+[data-interface-mode="compact"] .study-grid {
+  gap: 1px;
+  border: 1px solid var(--border-subtle);
+  background: var(--border-subtle);
+}
+[data-interface-mode="compact"] .study-grid > .workspace-panel,
+[data-interface-mode="compact"] .study-grid > .side-stack {
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-primary);
+}
+[data-interface-mode="compact"] .study-tabs {
+  margin-bottom: var(--space-3);
+}
+[data-interface-mode="compact"] .study-artifact-inspector,
+[data-interface-mode="compact"] .study-grade-inspector {
+  top: 0;
+  max-height: calc(100dvh - 7rem);
+}
+
+@media (max-width: 899px) {
+  .study-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .study-artifact-inspector,
+  .study-grade-inspector {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 479px) {
+  .study-tabs {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .study-error {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

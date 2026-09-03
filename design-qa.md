@@ -254,3 +254,40 @@ Scholarship module split, full populated/error/theme/high-zoom/reduced-motion
 visual matrix, native icon exports, and installed Windows/macOS certification.
 Not all authenticated account states or real reminder/backup actions have been
 certified in an installed build. No release was published or replaced.
+
+## Checkpoint C4 — Courses and Study (September 3, 2026)
+
+Courses now follows the approved desktop language as a searchable master/detail
+workspace. Comfy uses the readable sidebar/detail composition; Compact removes
+card gaps into a dense bordered workspace. The existing five sections are now
+feature-owned without changing their native commands. Per-course instructor and
+meeting drafts remain independent, and failed course/instructor writes retain the
+student's entered values.
+
+Study is now an orchestration shell over feature-owned Learn, Materials and Grades
+workspaces. Comfy uses a generous working pane with supporting inspector. Compact
+uses the same records in a denser bordered composition with a persistent inspector
+where width permits. The inspector stacks below 900px. Source selection, exact
+provider disclosure, one-request consent, cited artifacts, edits, revision scoring,
+grade categories/scales and what-if tools remain present. Linked actions from a
+course land on the requested Study course and section.
+
+Evidence under `docs/design/ui-rebuild/`: `courses-comfy-1600.png`,
+`courses-compact-1600.png`, `study-comfy-1600.png` and
+`study-compact-1600.png`. Live checks found no page-level overflow for either
+Courses or Study at 320px in Compact mode. Interface text and headings use the
+bundled Inter family; the approved identity is unchanged.
+
+Focused regression coverage adds six tests for course-specific drafts, failed
+writes, shared task/Study navigation, linked Study state, provider failure consent
+reset/no fallback, and unsaved grade previews. TypeScript and those focused tests
+pass. The complete desktop UI suite passes 71 tests, including axe coverage for
+every primary area. All 16 desktop static contracts and 60 shared/cloud tests pass;
+the production build completes without a chunk-size warning. The macOS signature
+suite passes all seven checks when allowed to create its temporary disk images.
+The aggregate script's two disk-image cases remain unavailable inside the sandbox,
+where the other 53 script/OCR/packaging checks pass.
+
+Still pending: Scholarship feature split/visual rollout, onboarding and transient
+workflow polish, full visual/state/accessibility matrix, native icon exports and
+installed Windows/macOS certification. No release was published or replaced.

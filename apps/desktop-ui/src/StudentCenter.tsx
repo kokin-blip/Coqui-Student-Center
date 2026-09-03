@@ -1,5 +1,6 @@
 import { TaskDetailsSession } from "./features/tasks/TaskDetailsSession";
 import type { WorkFilter } from "./components/WorkView";
+import type { StudyTab } from "./features/study/studyModel";
 import {
   lazy,
   Suspense,
@@ -235,6 +236,10 @@ export function StudentCenter() {
       : null,
   );
   const [workFilter, setWorkFilter] = useState<WorkFilter>("all");
+  const [studyTarget, setStudyTarget] = useState<{
+    courseId?: string;
+    tab?: StudyTab;
+  }>({});
   const interfaceMode = interfacePreferences.mode;
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
@@ -1158,7 +1163,11 @@ export function StudentCenter() {
                 onCanvas={() => showSettingsSection("canvas")}
               />
             ) : view === "study" ? (
-              <ModularStudyView onOpenAssistant={() => void openAiSettings()} />
+              <ModularStudyView
+                onOpenAssistant={() => void openAiSettings()}
+                initialCourseId={studyTarget.courseId}
+                initialTab={studyTarget.tab}
+              />
             ) : view === "calendar" ? (
               <CalendarView
                 selectedTaskId={selectedTaskId}
@@ -1248,6 +1257,15 @@ export function StudentCenter() {
                 onDashboard={setData}
                 onImport={() => setModal("import")}
                 onStudy={() => setView("study")}
+                onOpenTask={(id) => {
+                  setSelectedTaskId(id);
+                  setWorkFilter("all");
+                  setView("work");
+                }}
+                onOpenStudy={(courseId, tab) => {
+                  setStudyTarget({ courseId, tab });
+                  setView("study");
+                }}
               />
             )}
           </Suspense>

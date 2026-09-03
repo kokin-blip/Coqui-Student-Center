@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createPreviewTaskStore, type TaskDetails } from "./taskDetailsApi";
+import { createCourseSession } from "../courses/courseModel";
 import type {
   TaskInput,
   TaskRecord,
@@ -11,6 +12,7 @@ import type {
 
 function createSession() {
   return {
+    courses: createCourseSession(),
     drafts: new Map<string, TaskDetails>(),
     workDrafts: new Map<
       string,
