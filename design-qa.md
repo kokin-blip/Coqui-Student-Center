@@ -312,7 +312,9 @@ Evidence under `docs/design/ui-rebuild/`: `scholarships-comfy-1600.png`,
 Comfy Discover and Compact Writing both measured no page-level overflow at 320px.
 Focused scholarship workflow and full primary-surface axe tests pass.
 
-The visual rollout is complete, but the four section bodies still need physical
-file extraction from the existing Scholarship component before the architecture
-portion of milestone C is complete. Onboarding/overlay polish, the comprehensive
-state/theme matrix, native icons and installed certification also remain pending.
+The four section bodies now live in feature-owned Discover, Saved, Applications
+and Writing modules. The route component owns their one shared local view model,
+autosave lifecycle, command dispatch and section selection. Static contract
+coverage follows those modules so extraction cannot be mistaken for lost controls.
+Onboarding/overlay polish, the comprehensive state/theme matrix, native icons and
+installed certification remain pending.

@@ -166,6 +166,10 @@ installed-app certification.
   explainable matching, requirement review, application checklist, version restore,
   story library, exact AI disclosure/consent and Apply/Dismiss suggestions remain
   reachable. No auto-submission or fallback provider behavior was added.
+- Discover, Saved (including requirement review), Applications and Writing now
+  live in separate feature modules. Their route retains one shared view model and
+  autosave/command lifecycle, reducing the prior 1,835-line screen to a 582-line
+  orchestrator without creating mode-specific data state.
 
 Evidence: `scholarships-comfy-1600.png`, `scholarships-compact-1600.png` and
 `scholarships-writing-compact-1600.png`. Discover in Comfy and Writing in Compact

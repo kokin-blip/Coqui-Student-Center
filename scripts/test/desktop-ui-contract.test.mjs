@@ -41,8 +41,20 @@ const courseFeatureSources = (
     ),
   )
 ).join("\n");
-const taskInspector = await readFile(new URL("../../apps/desktop-ui/src/features/tasks/TaskInspector.tsx", import.meta.url), "utf8");
-const calendarInspector = await readFile(new URL("../../apps/desktop-ui/src/features/calendar/CalendarInspector.tsx", import.meta.url), "utf8");
+const taskInspector = await readFile(
+  new URL(
+    "../../apps/desktop-ui/src/features/tasks/TaskInspector.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const calendarInspector = await readFile(
+  new URL(
+    "../../apps/desktop-ui/src/features/calendar/CalendarInspector.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const today = await readFile(
   new URL(
     "../../apps/desktop-ui/src/components/TodayView.tsx",
@@ -50,13 +62,31 @@ const today = await readFile(
   ),
   "utf8",
 );
-const scholarships = await readFile(
+const scholarshipsRoute = await readFile(
   new URL(
     "../../apps/desktop-ui/src/components/ScholarshipsView.tsx",
     import.meta.url,
   ),
   "utf8",
 );
+const scholarships = `${scholarshipsRoute}\n${(
+  await Promise.all(
+    [
+      "ScholarshipDiscover",
+      "ScholarshipSaved",
+      "ScholarshipApplications",
+      "ScholarshipWriting",
+    ].map((name) =>
+      readFile(
+        new URL(
+          `../../apps/desktop-ui/src/features/scholarships/${name}.tsx`,
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ),
+  )
+).join("\n")}`;
 const quickAdd = await readFile(
   new URL(
     "../../apps/desktop-ui/src/components/QuickAddTaskModal.tsx",
@@ -76,8 +106,20 @@ const contracts = await readFile(
   "utf8",
 );
 const shellSources = `${ui}\n${today}`;
-const aiSettings = await readFile(new URL("../../apps/desktop-ui/src/features/settings/AiSettings.tsx", import.meta.url), "utf8");
-const canvasSettings = await readFile(new URL("../../apps/desktop-ui/src/features/settings/CanvasSettings.tsx", import.meta.url), "utf8");
+const aiSettings = await readFile(
+  new URL(
+    "../../apps/desktop-ui/src/features/settings/AiSettings.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const canvasSettings = await readFile(
+  new URL(
+    "../../apps/desktop-ui/src/features/settings/CanvasSettings.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const onboarding = await readFile(
   new URL(
     "../../apps/desktop-ui/src/components/OnboardingExperience.tsx",
@@ -217,7 +259,10 @@ test("calendar, work, courses, and academic settings are feature-owned routes", 
   );
   for (const source of Object.values(routeSources))
     // Interface mode (Comfy/Compact) is shared presentation, not route multiplexing.
-    assert.doesNotMatch(source, /WorkspaceView|route\.mode|mode === ["'](?:calendar|work|courses|academics|assignments)/);
+    assert.doesNotMatch(
+      source,
+      /WorkspaceView|route\.mode|mode === ["'](?:calendar|work|courses|academics|assignments)/,
+    );
   assert.match(routeSources.WorkView, /<TaskInspector/);
   assert.match(routeSources.CalendarView, /<CalendarInspector/);
   assert.doesNotMatch(
