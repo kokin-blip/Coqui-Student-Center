@@ -3,10 +3,8 @@
 /* ------------------------------------------------------ application shell -- */
 
 .settings-detail-page {
-  position: fixed;
-  z-index: 60;
-  inset: 0 0 0 var(--sidebar-width);
-  overflow: auto;
+  position: relative;
+  min-width: 0;
   padding: var(--space-8);
   color: var(--text-primary);
   background: var(--bg-app);
@@ -33,6 +31,10 @@
 .settings-detail-header p {
   margin: 0;
 }
+.settings-detail-page h1, .settings-detail-page h2, .settings-detail-page h3 { font-family: var(--font-ui); font-weight: 600; }
+.settings-detail-header h1 { font-size: 36px; letter-spacing: -.025em; color: var(--accent); }
+[data-interface-mode="compact"] .settings-detail-header h1 { font-size: 28px; color: var(--text-primary); }
+[data-interface-mode="compact"] .settings-detail-page { padding: 20px; }
 
 .settings-detail-header p {
   max-width: 70ch;
@@ -260,7 +262,7 @@ body {
 @media (min-width: 768px) and (max-width: 1199px) {
   .app-shell { grid-template-columns: 78px minmax(0, 1fr); }
   .sidebar { padding: var(--space-5) 11px; }
-  .settings-detail-page { left: 78px; }
+  .settings-detail-page { padding: 24px; }
 }
 
 @media (max-width: 767px) {

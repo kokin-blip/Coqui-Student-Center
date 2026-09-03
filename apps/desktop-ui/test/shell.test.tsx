@@ -103,7 +103,14 @@ describe("application shell", () => {
 
     const canvas = screen.getByRole("button", { name: /Canvas/ });
     await user.click(canvas);
-    const detail = screen.getByRole("region", { name: "Connect Canvas" });
+    const detail = await screen.findByRole("region", { name: "Connect Canvas" });
+    expect(detail.closest("main")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Settings", level: 1 }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Primary navigation" }),
+    ).toBeVisible();
     expect(
       within(detail).getByRole("button", { name: "Back to Settings" }),
     ).toHaveFocus();
@@ -111,7 +118,27 @@ describe("application shell", () => {
     expect(
       screen.queryByRole("region", { name: "Connect Canvas" }),
     ).not.toBeInTheDocument();
-    expect(canvas).toHaveFocus();
+    // The settings home is a real route now, so its controls remount on Back.
+    expect(
+      screen.getByRole("button", { name: /Canvas Calendar-link/ }),
+    ).toHaveFocus();
+    await user.click(
+      screen.getByRole("button", { name: /Notifications Reminder/ }),
+    );
+    expect(
+      await screen.findByRole("region", { name: "Desktop reminders" }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(
+        screen.getByRole("navigation", { name: "Primary navigation" }),
+      ).getByRole("button", { name: "Today" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Today", exact: true }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Desktop reminders" }),
+    ).not.toBeInTheDocument();
   });
 
   test("changing destinations resets the content scroll position", async () => {

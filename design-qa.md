@@ -214,3 +214,43 @@ installed-app certification or full theme/state-matrix approval.
 Remaining: Settings and other screen/overlay extraction and visual rollout,
 Scholarship module split, native icon exports, comprehensive visual/state and
 installed macOS/Windows certification. No new release has been published.
+
+## Checkpoint C3 — Nested desktop Settings (September 3, 2026)
+
+Settings now occupies the main workspace instead of a fixed layer over it.
+The sidebar, command entry and layout switch remain available. Comfy uses
+readable grouped rows and a green heading; Compact uses denser rows and the
+shared command shell. Both preserve the approved logo and bundled Inter.
+
+Canvas, AI providers, Account, Backup & Recovery, App Lock, Notifications and
+Data Recovery now own their forms/actions in separate lazy-loaded feature
+components. Existing account/sync and update surfaces remain reused. Academic
+& Planning is a nested Settings section with the same term, profile, availability
+and cleanup controls. Root orchestration keeps app unlock, account status events,
+dashboard refresh, task selection, appearance and post-restore session clearing.
+
+Back restores focus to the remounted Settings action. Escape in a transient
+dialog does not also exit the underlying Settings page. Pending reminder saves
+retain inputs on failure; recovery errors retain records; backup previews are
+invalidated when their file or passphrase changes. Canvas still clears submitted
+secrets, retains review-before-write and surfaces partial-success notices. AI
+consent and secret clearing are preserved. Unsigned update copy no longer implies
+that this build has an active signed-update channel.
+
+Evidence: `settings-comfy-wide.jpg`, `settings-compact-wide.jpg`,
+`settings-canvas-comfy-320.jpg` and `settings-notifications-compact-320.jpg`
+under `docs/design/ui-rebuild/`. All nine nested pages measured a 320px document
+at a 320px viewport in both modes after their headings finished rendering.
+These captures use synthetic browser records; no private feeds or keys were used.
+
+Verification: all 65 UI tests (including nine-page navigation/focus/axe checks),
+16 desktop contracts, 60 shared/cloud tests, workspace checks and production
+build pass. The main production JS chunk decreased from about 400.5kB to 379.1kB;
+there is no chunk-size warning. Existing Rust check warnings and an intermittent
+Study test `act` warning remain. Native code/schema/sync were not changed in C3.
+
+Still pending: remaining Courses/Study/Scholarships and transient-workflow rollout,
+Scholarship module split, full populated/error/theme/high-zoom/reduced-motion
+visual matrix, native icon exports, and installed Windows/macOS certification.
+Not all authenticated account states or real reminder/backup actions have been
+certified in an installed build. No release was published or replaced.

@@ -1,5 +1,6 @@
 import {
   Brain,
+  Bell,
   CalendarDays,
   HardDrive,
   Link2,
@@ -11,8 +12,10 @@ import type { ReactNode } from "react";
 import type { InterfaceMode } from "../features/shell/interfacePreferences";
 import { AppearanceSettings } from "./AppearanceSettings";
 import type { AccentPreference, AppearancePreference } from "./ThemeControls";
+import "../features/settings/settings.css";
 
 export type SettingsSection =
+  | "academic"
   | "canvas"
   | "ai"
   | "account"
@@ -38,6 +41,7 @@ type SettingsViewProps = {
   onBackups: () => void;
   onSecurity: () => void;
   onUpdates: () => void;
+  onNotifications: () => void;
   onAcademic: () => void;
   onRecovery: () => void;
   onCalendarRefresh: () => void;
@@ -74,6 +78,7 @@ export function SettingsView({
   onBackups,
   onSecurity,
   onUpdates,
+  onNotifications,
   onAcademic,
   onRecovery,
   onCalendarRefresh,
@@ -86,7 +91,6 @@ export function SettingsView({
     >
       <div className="page-head">
         <div>
-          <p className="eyebrow">Administrative controls</p>
           <h1 id="settings-title">Settings</h1>
           <p>
             Configure the workspace without leaving the task you were doing.
@@ -165,8 +169,14 @@ export function SettingsView({
             <SettingsAction
               icon={<RefreshCw />}
               title="Updates"
-              detail="Check the configured signed release channel"
+              detail="Installed version and update availability"
               onClick={onUpdates}
+            />
+            <SettingsAction
+              icon={<Bell />}
+              title="Notifications"
+              detail="Reminder timing, quiet hours, and title privacy"
+              onClick={onNotifications}
             />
           </div>
           <div className="settings-calendar-refresh">
@@ -206,7 +216,20 @@ export function SettingsView({
             onAccent={onAccent}
           />
         </section>
-        {onDeleteProfile && <section className="workspace-panel settings-route-section"><header><h2>Delete local profile</h2><p>Remove this device's local records only after confirmation. Export a backup first.</p></header><button className="outline danger" onClick={onDeleteProfile}>Delete local profile</button></section>}
+        {onDeleteProfile && (
+          <section className="workspace-panel settings-route-section">
+            <header>
+              <h2>Delete local profile</h2>
+              <p>
+                Remove this device's local records only after confirmation.
+                Export a backup first.
+              </p>
+            </header>
+            <button className="outline danger" onClick={onDeleteProfile}>
+              Delete local profile
+            </button>
+          </section>
+        )}
       </div>
     </section>
   );
@@ -224,7 +247,11 @@ function SettingsAction({
   onClick: () => void;
 }) {
   return (
-    <button className="settings-route-action" onClick={onClick}>
+    <button
+      className="settings-route-action"
+      data-settings-action={title}
+      onClick={onClick}
+    >
       <span aria-hidden="true">{icon}</span>
       <span>
         <strong>{title}</strong>

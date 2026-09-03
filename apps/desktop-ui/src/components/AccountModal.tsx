@@ -148,6 +148,7 @@ export function AccountModal({
     setSyncError("");
   };
   const closeAccount = () => {
+    if (busy || syncBusy) return;
     void cancelSyncProtection();
     resetRecovery();
     close();
@@ -295,7 +296,7 @@ export function AccountModal({
         <div className="alert account-alert">
           <CircleAlert />
           <span>{error}</span>
-          <button onClick={clearError}>
+          <button onClick={clearError} aria-label="Dismiss account error">
             <X />
           </button>
         </div>

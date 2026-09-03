@@ -14,7 +14,10 @@ type UpdateModalProps = {
   presentation?: "dialog" | "settings";
 };
 
-export function UpdateModal({ close, presentation = "dialog" }: UpdateModalProps) {
+export function UpdateModal({
+  close,
+  presentation = "dialog",
+}: UpdateModalProps) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [installConfirmed, setInstallConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -66,7 +69,7 @@ export function UpdateModal({ close, presentation = "dialog" }: UpdateModalProps
   return (
     <Modal
       title="Student Center updates"
-      subtitle="Private-beta builds check only an HTTPS channel and accept installers signed by the public key embedded at build time."
+      subtitle="Review your installed version and this build’s update availability. Checking never installs an update."
       close={close}
       presentation={presentation}
     >
@@ -99,13 +102,25 @@ export function UpdateModal({ close, presentation = "dialog" }: UpdateModalProps
           <div className="consent-box">
             <ShieldCheck />
             <div>
-              <strong>Signed artifacts only</strong>
-              <p>
-                Checking does not install anything. When you approve an update,
-                the native app downloads it, verifies the signature against the
-                key embedded in this build, installs it, and restarts Student
-                Center.
-              </p>
+              <strong>
+                {status.configured
+                  ? "Signed artifacts only"
+                  : "Manual installation for this build"}
+              </strong>
+              {status.configured ? (
+                <p>
+                  Checking does not install anything. When you approve an
+                  update, the native app downloads it, verifies the signature
+                  against the key embedded in this build, installs it, and
+                  restarts Student Center.
+                </p>
+              ) : (
+                <p>
+                  Automatic updates are not configured. Your current
+                  installation stays unchanged; new releases must be installed
+                  manually.
+                </p>
+              )}
             </div>
           </div>
           {status.available && status.latestVersion && (
@@ -150,7 +165,9 @@ export function UpdateModal({ close, presentation = "dialog" }: UpdateModalProps
         </>
       ) : (
         <div className="empty" role="status">
-          {busy ? "Loading update configuration…" : "Update configuration unavailable."}
+          {busy
+            ? "Loading update configuration…"
+            : "Update configuration unavailable."}
         </div>
       )}
     </Modal>

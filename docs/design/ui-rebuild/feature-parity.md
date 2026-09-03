@@ -93,3 +93,30 @@ New regression tests cover failed saves, new-task drafts, cross-route selection,
 mode switching, Calendar form focus restoration, week navigation and DST/local
 time conversion. All 55 UI and 16 static desktop contract checks pass. Full
 remaining-screen rollout, native icons and installed certification remain pending.
+
+## C3 preservation audit
+
+The large `StudentCenter` reduction is extraction, not feature removal:
+
+| Previous inline subsystem | Feature-owned destination | Preserved controls |
+| --- | --- | --- |
+| Canvas connection body/state | `CanvasSettings` | Calendar/full connection, auto-refresh, manual refresh, disconnect, history, pending review |
+| AI provider body/state/actions | `AiSettings` | Connect/validate, age/billing consent, configure, test, disconnect, ordering, local usage |
+| Account sign-in controller | `AccountSettings` + existing `AccountModal` | Email/code retry, Google/cancel, refresh/sign-out; existing encrypted sync/device recovery UI |
+| Backup body/state/actions | `BackupSettings` | Export/verify, file selection, passphrase, preview/fingerprint, explicit replacement, credential-clear disclosure |
+| PIN body/state/actions | `SecuritySettings` | Enable/change/disable, confirmation, lock now, failure retention |
+| Reminder body/state/actions | `NotificationsSettings` | Delivery, lead/quiet hours/title privacy, start/snooze/complete/dismiss |
+| Legacy recovery body/state/actions | `DataRecoverySettings` | Load/retry, restore, exact purge confirmation, empty/failure states |
+
+Updates and Academic & Planning retain their existing components and commands,
+now inside the main Settings page boundary. Appearance remains on Settings home;
+profile deletion stays in the clearly labeled danger section. Root still owns
+startup, app locking, dashboard/account events, route selection and post-restore
+clearing of local task drafts and cached provider/account status.
+
+65 UI tests pass, including all nine nested routes with axe/focus checks and
+new native-command mocks for reminder errors, recovery errors, Canvas diagnostics,
+AI consent/secret clearing, PIN validation, backup preview invalidation and restore
+acknowledgment. These mocks do not substitute for installed native certification.
+Both modes' nine default Settings states reflow at 320px with no page overflow.
+Remaining feature rollout and certification are listed in root `design-qa.md`.

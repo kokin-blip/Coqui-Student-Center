@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
+import "../features/settings/settings.css";
 
 export function SettingsDetail({
   title,
@@ -21,6 +22,11 @@ export function SettingsDetail({
     const previous = document.activeElement as HTMLElement | null;
     backRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        document.querySelector('[role="dialog"][aria-modal="true"]')
+      )
+        return;
       if (event.key !== "Escape") return;
       event.preventDefault();
       closeRef.current();

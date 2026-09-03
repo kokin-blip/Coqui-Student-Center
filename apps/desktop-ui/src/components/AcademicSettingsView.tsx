@@ -36,7 +36,10 @@ const emptyTerm = (): AcademicTermInput => ({
   active: true,
 });
 
-export function AcademicSettingsView({ onDashboard }: WorkspaceRouteProps) {
+export function AcademicSettingsView({
+  onDashboard,
+  embedded = false,
+}: WorkspaceRouteProps & { embedded?: boolean }) {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [cleanup, setCleanup] = useState<AcademicCleanupPreview | null>(null);
   const [term, setTerm] = useState<AcademicTermInput>(emptyTerm);
@@ -146,24 +149,26 @@ export function AcademicSettingsView({ onDashboard }: WorkspaceRouteProps) {
 
   return (
     <section
-      className="content workspace-page mode-settings"
+      className={`content workspace-page mode-settings ${embedded ? "settings-academic-content" : ""}`}
       data-route="academic-settings"
       aria-label="Academic and planning settings"
     >
-      <div className="page-head">
-        <div>
-          <p className="eyebrow">Academic and planning</p>
-          <h1>Academic & planning settings</h1>
-          <p>
-            Manage terms, profile timezone, availability, and planning
-            preferences.
-          </p>
+      {!embedded && (
+        <div className="page-head">
+          <div>
+            <p className="eyebrow">Academic and planning</p>
+            <h1>Academic & planning settings</h1>
+            <p>
+              Manage terms, profile timezone, availability, and planning
+              preferences.
+            </p>
+          </div>
+          <span className="mode-pill">
+            <HardDrive />
+            Local authority
+          </span>
         </div>
-        <span className="mode-pill">
-          <HardDrive />
-          Local authority
-        </span>
-      </div>
+      )}
       {error && (
         <div className="alert" role="alert">
           <CircleAlert />

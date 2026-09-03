@@ -33,6 +33,38 @@ test("Today and the primary navigation pass automated accessibility checks", asy
   await expectNoAccessibilityViolations();
 });
 
+test("every nested Settings page is reachable and passes automated accessibility checks", async () => {
+  const user = userEvent.setup();
+  render(<StudentCenter />);
+  await user.click(
+    await screen.findByRole("button", { name: "Settings", exact: true }),
+  );
+  const sections = [
+    [/Canvas Calendar-link/, "Connect Canvas"],
+    [/AI providers OpenAI/, "AI providers"],
+    [/Account & sync Optional/, "Optional Student Center account"],
+    [/Backup & recovery Portable/, "Encrypted backups"],
+    [/Privacy & security App lock/, "App lock"],
+    [/Advanced data recovery Inspect/, "Data recovery"],
+    [/Academic & planning Terms/, "Academic & planning settings"],
+    [/Updates Installed version/, "Student Center updates"],
+    [/Notifications Reminder timing/, "Desktop reminders"],
+  ] as const;
+  for (const [action, title] of sections) {
+    await user.click(await screen.findByRole("button", { name: action }));
+    const page = await screen.findByRole("region", {
+      name: title,
+      exact: true,
+    });
+    expect(page.closest("main")).toBeInTheDocument();
+    await expectNoAccessibilityViolations();
+    await user.click(
+      within(page).getByRole("button", { name: "Back to Settings" }),
+    );
+    expect(await screen.findByRole("button", { name: action })).toHaveFocus();
+  }
+}, 20000);
+
 test("Calendar and keyboard-operable planning controls pass automated accessibility checks", async () => {
   const user = userEvent.setup();
   render(<StudentCenter />);

@@ -62,6 +62,8 @@ const contracts = await readFile(
   "utf8",
 );
 const shellSources = `${ui}\n${today}`;
+const aiSettings = await readFile(new URL("../../apps/desktop-ui/src/features/settings/AiSettings.tsx", import.meta.url), "utf8");
+const canvasSettings = await readFile(new URL("../../apps/desktop-ui/src/features/settings/CanvasSettings.tsx", import.meta.url), "utf8");
 const onboarding = await readFile(
   new URL(
     "../../apps/desktop-ui/src/components/OnboardingExperience.tsx",
@@ -297,11 +299,11 @@ test("calendar, work, and courses expose complete local controls", () => {
     assert.match(native, new RegExp(command));
   }
   assert.match(
-    ui,
+    aiSettings,
     /const submittedKey\s*=\s*aiKey;\s*setAiKey\(""\);[\s\S]{0,300}saveAiProviderKey\(\s*aiProvider,\s*submittedKey/,
   );
   assert.match(
-    ui,
+    canvasSettings,
     /const submittedUrl\s*=\s*canvasUrl\.trim\(\);[\s\S]{0,300}setCanvasUrl\(""\);[\s\S]{0,1400}connectCanvasCalendar\(\s*submittedUrl/,
   );
 });
