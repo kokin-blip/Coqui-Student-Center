@@ -1,9 +1,30 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createPreviewTaskStore, type TaskDetails } from "./taskDetailsApi";
+import type {
+  TaskInput,
+  TaskRecord,
+  CommitmentEditorInput,
+  CommitmentRecord,
+  AcademicCalendarEventInput,
+  AcademicCalendarEventRecord,
+} from "../../native";
 
 function createSession() {
   return {
     drafts: new Map<string, TaskDetails>(),
+    workDrafts: new Map<
+      string,
+      { input: TaskInput; record: TaskRecord | null }
+    >(),
+    workFilter: "upcoming" as string,
+    calendarRange: "week" as "day" | "week",
+    calendarDay: "",
+    calendarEditor: null as null | {
+      commitment: CommitmentEditorInput;
+      commitmentEdit: CommitmentRecord | null;
+      academicEvent: AcademicCalendarEventInput;
+      academicEventEdit: AcademicCalendarEventRecord | null;
+    },
     preview: createPreviewTaskStore(),
   };
 }

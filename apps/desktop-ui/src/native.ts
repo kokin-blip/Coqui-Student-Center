@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { localToIso } from "./features/calendar/calendarDate";
+import { dayKey, shiftDay } from "./features/today/todayModel";
 
 export type PlanBlock = {
   id: string;
@@ -1645,11 +1647,14 @@ export async function getCalendarAgenda(
 ): Promise<CalendarAgenda> {
   if (isDesktop())
     return call<CalendarAgenda>("get_calendar_agenda", { startDate });
+  const firstDay = startDate || dayKey(browserDayStart, browserSeed.timezone);
+  const startsAt = localToIso(firstDay, 0, browserSeed.timezone);
+  const endsAt = localToIso(shiftDay(firstDay, 7), 0, browserSeed.timezone);
   return {
     timezone: browserSeed.timezone,
-    startsAt: browserDayStart.toISOString(),
-    endsAt: new Date(browserDayStart.getTime() + 7 * 86400000).toISOString(),
-    blocks: structuredClone(browserSeed.blocks),
+    startsAt,
+    endsAt,
+    blocks: structuredClone(browserSeed.blocks.filter(block => block.endsAt > startsAt && block.startsAt < endsAt)),
     overloadConflicts: structuredClone(
       browserSeed.conflicts.filter((conflict) => conflict.kind === "overload"),
     ),
@@ -2254,8 +2259,11 @@ export async function addTask(
 }
 export async function toggleTask(id: string) {
   if (!isDesktop()) {
+    const task = browserWorkspace.tasks.find(item => item.id === id);
+    const completed = task ? !task.completed : !browserSeed.blocks.find(block => block.taskId === id)?.completed;
+    browserWorkspace.tasks = browserWorkspace.tasks.map(item => item.id === id ? { ...item, completed, version: item.version + 1 } : item);
     browserSeed.blocks = browserSeed.blocks.map((block) =>
-      block.taskId === id ? { ...block, completed: !block.completed } : block,
+      block.taskId === id ? { ...block, completed } : block,
     );
     return structuredClone(browserSeed);
   }

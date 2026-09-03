@@ -185,3 +185,32 @@ file-picker/export/restart tests on both platforms, all-width/theme comparisons 
 release certification. Native icon exports remain outstanding. No release published.
 
 Current result: in progress; C1 implemented, full rebuild not certified.
+
+## Checkpoint C2 — Work and Calendar
+
+- Work uses a real task table, shared completion, selected record, course,
+  priority and deadline columns. Comfy has readable rows; Compact has denser
+  rows and a 330px inspector, becoming an explicit drawer below 1440px.
+- Calendar now opens event creation on demand, collapses unscheduled work,
+  supplies an accessible agenda alternative and opens the same local task
+  details from task blocks or unscheduled tasks. Existing move/resize/lock/undo,
+  fixed commitments, academic events and import/Canvas actions remain.
+- Both use feature-owned inspectors. Root selection and unlocked-session
+  drafts retain Work fields, local details and Calendar forms across routes;
+  Today and Calendar retain the selected date. Failed saves no longer clear
+  task/event forms. Explicit reload preserves separate detail drafts.
+- Calendar shares overlap placement with Today, shows hours and the academic
+  timezone, and validates nonexistent DST times. Local datetime inputs now
+  round-trip the computer's wall clock rather than displaying a UTC prefix.
+- Dialog titles are unique; focus traversal excludes closed/hidden controls.
+  Existing native contracts, schema 26, review-before-write and sync are unchanged.
+
+Verification: 55 UI tests, 16 desktop static contracts, 60 shared/cloud tests,
+workspace checks and production build pass. Compact Work measured no page-level
+overflow at 320/768/1024/1280/1586/1920px. Browser captures cover Work and Calendar
+wide layouts, narrow rows and drawers. This is synthetic browser evidence, not
+installed-app certification or full theme/state-matrix approval.
+
+Remaining: Settings and other screen/overlay extraction and visual rollout,
+Scholarship module split, native icon exports, comprehensive visual/state and
+installed macOS/Windows certification. No new release has been published.

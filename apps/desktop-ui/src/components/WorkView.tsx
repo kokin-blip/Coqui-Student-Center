@@ -1,54 +1,84 @@
-import { useEffect, useMemo, useState } from "react";
-import { CircleAlert, HardDrive, ListChecks, Upload, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CircleAlert, ListChecks, Plus, Upload, X } from "lucide-react";
 import {
   createLocalTask,
   deleteLocalTask,
   getDashboard,
   getLocalWorkspace,
   updateLocalTask,
+  toggleTask,
 } from "../native";
 import type { TaskInput, TaskRecord, WorkspaceSnapshot } from "../native";
 import type { WorkspaceRouteProps } from "./workspaceTypes";
-import { TaskDetailsEditor } from "../features/tasks/TaskDetailsEditor";
+import { TaskInspector } from "../features/tasks/TaskInspector";
+import { useTaskDetailsSession } from "../features/tasks/TaskDetailsSession";
+import { emptyTask, taskInput } from "../features/tasks/taskEditorModel";
+import { dayKey, dueLabel, priorityLabel } from "../features/today/todayModel";
+import "../features/tasks/work.css";
+import type { InterfaceMode } from "../features/shell/interfacePreferences";
+import { Modal } from "./Modal";
 
-type WorkFilter = "inbox" | "upcoming" | "overdue" | "exams" | "completed";
-
-const emptyTask = (): TaskInput => ({
-  title: "",
-  kind: "assignment",
-  minutes: 30,
-  priority: 3,
-  academicRisk: 0,
-  energyDemand: "medium",
-  location: "",
-  splittable: true,
-  minSessionMinutes: 20,
-  maxSessionMinutes: 60,
-  dependencies: [],
-});
-const dateTimeValue = (value?: string) =>
-  value ? new Date(value).toISOString().slice(0, 16) : "";
-const formatDateTime = (value?: string) =>
-  value
-    ? new Intl.DateTimeFormat([], {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(value))
-    : "Not set";
+export type WorkFilter =
+  | "all"
+  | "high"
+  | "inbox"
+  | "upcoming"
+  | "overdue"
+  | "exams"
+  | "completed";
 
 export function WorkView({
   initialTaskId,
   initialFilter,
+  onSelectTask,
+  onFilterChange,
+  mode = "comfy",
   onDashboard,
   onImport,
   onStudy,
-}: WorkspaceRouteProps & { initialTaskId?: string | null; initialFilter?: "all" | "high" | "completed" }) {
+}: WorkspaceRouteProps & {
+  initialTaskId?: string | null;
+  initialFilter?: WorkFilter;
+  onSelectTask?: (id: string | null) => void;
+  onFilterChange?: (filter: WorkFilter) => void;
+  mode?: InterfaceMode;
+}) {
+  const session = useTaskDetailsSession();
+  const draft = session.workDrafts.get(initialTaskId ?? "new");
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
-  const [filter, setFilter] = useState<WorkFilter | "all" | "high">(initialFilter ?? "upcoming");
-  const [task, setTask] = useState<TaskInput>(emptyTask);
-  const [editing, setEditing] = useState<TaskRecord | null>(null);
+  const [filter, setFilter] = useState<WorkFilter | "all" | "high">(
+    (initialFilter ?? session.workFilter) as WorkFilter | "all" | "high",
+  );
+  const [task, setTaskState] = useState<TaskInput>(
+    () => draft?.input ?? emptyTask(),
+  );
+  const [editing, setEditing] = useState<TaskRecord | null>(
+    draft?.record ?? null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  const [wide, setWide] = useState(window.innerWidth >= 1440);
+  const [inspectorOpen, setInspectorOpen] = useState(Boolean(initialTaskId));
+  const editorRef = useRef<HTMLElement>(null);
+  const [focusEditor, setFocusEditor] = useState(0);
+  useEffect(() => {
+    if (!focusEditor || (mode === "compact" && !wide)) return;
+    editorRef.current?.querySelector("input")?.focus();
+  }, [focusEditor, mode, wide]);
+  useEffect(() => {
+    const resize = () => setWide(window.innerWidth >= 1440);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  const setTask: React.Dispatch<React.SetStateAction<TaskInput>> = (next) => {
+    const value = typeof next === "function" ? next(task) : next;
+    session.workDrafts.set(editing?.id ?? "new", {
+      input: value,
+      record: editing,
+    });
+    setTaskState(value);
+  };
 
   useEffect(() => {
     let active = true;
@@ -56,8 +86,6 @@ export function WorkView({
       .then((value) => {
         if (active) {
           setWorkspace(value);
-          const selected = value.tasks.find(t => t.id === initialTaskId);
-          if (selected) edit(selected);
         }
       })
       .catch((reason) => {
@@ -66,18 +94,39 @@ export function WorkView({
     return () => {
       active = false;
     };
-  }, [initialTaskId]);
+  }, [reload]);
 
-  useEffect(() => { if (initialFilter) setFilter(initialFilter); }, [initialFilter]);
+  useEffect(() => {
+    if (!workspace || !initialTaskId || editing?.id === initialTaskId) return;
+    const selected = workspace.tasks.find((item) => item.id === initialTaskId);
+    if (selected) edit(selected);
+  }, [workspace, initialTaskId, editing?.id]);
+
+  useEffect(() => {
+    if (initialFilter) setFilter(initialFilter);
+  }, [initialFilter]);
+  useEffect(() => {
+    session.workFilter = filter;
+  }, [filter, session]);
 
   const apply = async (operation: () => Promise<WorkspaceSnapshot>) => {
     setBusy(true);
     setError("");
     try {
-      setWorkspace(await operation());
-      onDashboard(await getDashboard());
+      const updated = await operation();
+      setWorkspace(updated);
+      // A refresh failure must not masquerade as a failed write and invite a duplicate.
+      try {
+        onDashboard(await getDashboard());
+      } catch {
+        setError(
+          "Saved, but the dashboard could not refresh. Reopen Today to retry.",
+        );
+      }
+      return updated;
     } catch (reason) {
       setError(String(reason));
+      return null;
     } finally {
       setBusy(false);
     }
@@ -88,7 +137,10 @@ export function WorkView({
       workspace?.tasks.filter((item) => {
         const overdue =
           Boolean(item.dueAt) &&
-          new Date(item.dueAt!).getTime() < Date.now() &&
+          (/^\d{4}-\d{2}-\d{2}$/.test(item.dueAt!)
+            ? item.dueAt! <
+              dayKey(new Date(), workspace.profile?.timezone ?? "UTC")
+            : new Date(item.dueAt!).getTime() < Date.now()) &&
           !item.completed;
         if (filter === "completed") return item.completed;
         if (filter === "all") return true;
@@ -102,29 +154,36 @@ export function WorkView({
   );
 
   const edit = (value: TaskRecord) => {
-    setEditing(value);
-    setTask({
-      title: value.title,
-      minutes: value.minutes,
-      dueAt: value.dueAt,
-      courseId: value.courseId,
-      priority: value.priority,
-      kind: value.kind,
-      academicRisk: value.academicRisk,
-      earliestStart: value.earliestStart,
-      energyDemand: value.energyDemand,
-      location: value.location,
-      splittable: value.splittable,
-      minSessionMinutes: value.minSessionMinutes,
-      maxSessionMinutes: value.maxSessionMinutes,
-      dependencies: value.dependencies,
-      expectedVersion: value.version,
-    });
+    setFocusEditor(value => value + 1);
+    setInspectorOpen(true);
+    const savedDraft = session.workDrafts.get(value.id);
+    setEditing(savedDraft?.record ?? value);
+    setTaskState(savedDraft?.input ?? taskInput(value));
+    onSelectTask?.(value.id);
   };
 
   const resetEditor = () => {
+    session.workDrafts.delete(editing?.id ?? "new");
     setEditing(null);
-    setTask(emptyTask());
+    setTaskState(session.workDrafts.get("new")?.input ?? emptyTask());
+    onSelectTask?.(null);
+  };
+  const save = async () => {
+    const submitted = task;
+    const key = editing?.id ?? "new";
+    const updated = await apply(() =>
+      editing ? updateLocalTask(editing.id, task) : createLocalTask(task),
+    );
+    if (!updated) return;
+    if (session.workDrafts.get(key)?.input === submitted)
+      session.workDrafts.delete(key);
+    if (editing) {
+      const saved = updated.tasks.find((item) => item.id === editing.id);
+      if (saved) {
+        setEditing(saved);
+        setTaskState(taskInput(saved));
+      }
+    } else resetEditor();
   };
 
   if (!workspace)
@@ -132,10 +191,35 @@ export function WorkView({
       <div className="content workspace-page">
         <div className="loading">
           <strong>Loading your encrypted local records…</strong>
-          {error && <p>{error}</p>}
+          {error && (
+            <>
+              <p role="alert">{error}</p>
+              <button
+                onClick={() => {
+                  setError("");
+                  setReload((value) => value + 1);
+                }}
+              >
+                Retry loading Work
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
+
+  const inspector = (
+      <TaskInspector
+        editorRef={editorRef}
+      workspace={workspace}
+      task={task}
+      editing={editing}
+      busy={busy}
+      setTask={setTask}
+      reset={resetEditor}
+      save={() => void save()}
+    />
+  );
 
   return (
     <section
@@ -145,9 +229,8 @@ export function WorkView({
     >
       <div className="page-head">
         <div>
-          <p className="eyebrow">Decide what comes next</p>
           <h1>Work</h1>
-          <p>Inbox, upcoming work, overdue items, exams, and completed work.</p>
+          <p>Your assignments, exams, and next steps.</p>
         </div>
         <div className="page-head-actions">
           <button className="outline" onClick={onImport}>
@@ -157,16 +240,42 @@ export function WorkView({
           <button className="outline" onClick={onStudy}>
             Open Study
           </button>
-          <span className="mode-pill">
-            <HardDrive />
-            Local authority
-          </span>
+          <button
+            className="solid"
+            onClick={() => {
+              setFocusEditor(value => value + 1);
+              setInspectorOpen(true);
+              setEditing(null);
+              setTaskState(session.workDrafts.get("new")?.input ?? emptyTask());
+              onSelectTask?.(null);
+            }}
+          >
+            <Plus /> New task
+          </button>
+          {mode === "compact" && !wide && (
+            <button className="outline" onClick={() => setInspectorOpen(true)}>
+              Open task inspector
+            </button>
+          )}
         </div>
       </div>
       {error && (
         <div className="alert" role="alert">
           <CircleAlert />
           <span>{error}</span>
+          {editing && <button disabled={busy} onClick={async () => {
+            if (!window.confirm("Discard your unsaved task fields and reload the saved version? Your separate detail draft is kept.")) return;
+            setBusy(true);
+            try {
+              const latest = await getLocalWorkspace();
+              const record = latest.tasks.find(item => item.id === editing.id);
+              setWorkspace(latest);
+              if (!record) { setError("This task is no longer available. Your draft has not been discarded."); return; }
+              session.workDrafts.delete(record.id);
+              setEditing(record); setTaskState(taskInput(record)); setError("");
+            } catch (reason) { setError(String(reason)); }
+            finally { setBusy(false); }
+          }}>Reload saved task</button>}
           <button aria-label="Dismiss error" onClick={() => setError("")}>
             <X />
           </button>
@@ -186,68 +295,139 @@ export function WorkView({
             aria-label="Work filters"
           >
             {(
-              ["all", "high", "inbox", "upcoming", "overdue", "exams", "completed"] as const
+              [
+                "all",
+                "high",
+                "inbox",
+                "upcoming",
+                "overdue",
+                "exams",
+                "completed",
+              ] as const
             ).map((value) => (
               <button
                 role="tab"
                 aria-selected={filter === value}
                 className={filter === value ? "active" : ""}
                 key={value}
-                onClick={() => setFilter(value)}
+                onClick={() => {
+                  setFilter(value);
+                  onFilterChange?.(value);
+                }}
               >
                 {value[0].toUpperCase() + value.slice(1)}
               </button>
             ))}
           </div>
           {visibleTasks.length ? (
-            <div className="record-list compact">
-              {visibleTasks.map((item) => (
-                <article
-                  className={item.completed ? "record-complete" : ""}
-                  key={item.id}
-                >
-                  <div className={`record-icon task ${item.kind}`}>
-                    <ListChecks />
-                  </div>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <small>
-                      {item.kind === "exam"
-                        ? "Exam"
-                        : item.kind === "assignment"
-                          ? "Assignment"
-                          : "Task"}{" "}
-                      · {item.minutes} min · Priority {item.priority}
-                      {item.dueAt
-                        ? ` · Due ${formatDateTime(item.dueAt)}`
-                        : " · No deadline"}
-                    </small>
-                    <small>
-                      {item.energyDemand} energy ·{" "}
-                      {item.splittable
-                        ? `${item.minSessionMinutes}–${item.maxSessionMinutes} min sessions`
-                        : "Indivisible"}
-                    </small>
-                  </div>
-                  <div className="record-actions">
-                    <button className="outline" onClick={() => edit(item)}>
-                      Edit
-                    </button>
-                    <button
-                      className="text-button danger"
-                      disabled={busy}
-                      onClick={() => {
-                        if (window.confirm(`Delete ${item.title}?`))
-                          void apply(() =>
-                            deleteLocalTask(item.id, item.version),
-                          );
-                      }}
+            <div
+              className="work-table-scroll"
+              role="region"
+              aria-label="Task table"
+              tabIndex={0}
+            >
+              <table className="work-table">
+                <caption className="sr-only">
+                  {visibleTasks.length} tasks in the selected filter
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Done</th>
+                    <th scope="col">Task</th>
+                    <th scope="col">Course</th>
+                    <th scope="col">Priority</th>
+                    <th scope="col">Due</th>
+                    <th scope="col">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleTasks.map((item) => (
+                    <tr
+                      key={item.id}
+                      className={item.completed ? "record-complete" : ""}
+                      data-selected={editing?.id === item.id}
                     >
-                      Delete
-                    </button>
-                  </div>
-                </article>
-              ))}
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Complete ${item.title}`}
+                          checked={item.completed}
+                          disabled={busy}
+                          onChange={() =>
+                            void apply(async () => {
+                              await toggleTask(item.id);
+                              return getLocalWorkspace();
+                            })
+                          }
+                        />
+                      </td>
+                      <th scope="row">
+                        <button
+                          className="work-task-title"
+                          aria-pressed={editing?.id === item.id}
+                          onClick={() => edit(item)}
+                        >
+                          {item.title}
+                        </button>
+                        <small>
+                          {item.kind === "exam"
+                            ? "Exam"
+                            : item.kind === "assignment"
+                              ? "Assignment"
+                              : "Task"}{" "}
+                          · {item.minutes} min
+                        </small>
+                      </th>
+                      <td>
+                        {workspace.courses.find(
+                          (course) => course.id === item.courseId,
+                        )?.code ||
+                          workspace.courses.find(
+                            (course) => course.id === item.courseId,
+                          )?.title ||
+                          "—"}
+                      </td>
+                      <td>
+                        <span title={`Priority ${item.priority} of 5`}>
+                          {priorityLabel(item.priority)}
+                        </span>
+                      </td>
+                      <td>
+                        {dueLabel(
+                          item,
+                          dayKey(
+                            new Date(),
+                            workspace.profile?.timezone ?? "UTC",
+                          ),
+                          workspace.profile?.timezone ?? "UTC",
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="text-button danger"
+                          aria-label={`Delete ${item.title}`}
+                          disabled={busy}
+                          onClick={() => {
+                            if (window.confirm(`Delete ${item.title}?`))
+                              void apply(() =>
+                                deleteLocalTask(item.id, item.version),
+                              ).then((updated) => {
+                                if (!updated) return;
+                                session.workDrafts.delete(item.id);
+                                session.drafts.delete(item.id);
+                                if (editing?.id === item.id) resetEditor();
+                              });
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="empty-state">
@@ -261,315 +441,21 @@ export function WorkView({
             </div>
           )}
         </section>
-        <TaskInspector
-          workspace={workspace}
-          task={task}
-          editing={editing}
-          busy={busy}
-          setTask={setTask}
-          reset={resetEditor}
-          save={() =>
-            void apply(() =>
-              editing
-                ? updateLocalTask(editing.id, task)
-                : createLocalTask(task),
-            ).then(resetEditor)
-          }
-        />
+        {(mode !== "compact" || wide) && inspector}
       </div>
-    </section>
-  );
-}
-
-function TaskInspector({
-  workspace,
-  task,
-  editing,
-  busy,
-  setTask,
-  reset,
-  save,
-}: {
-  workspace: WorkspaceSnapshot;
-  task: TaskInput;
-  editing: TaskRecord | null;
-  busy: boolean;
-  setTask: React.Dispatch<React.SetStateAction<TaskInput>>;
-  reset: () => void;
-  save: () => void;
-}) {
-  return (
-    <aside
-      className="workspace-panel task-editor work-inspector"
-      aria-label="Selected task inspector"
-    >
-      <h2>{editing ? `Edit ${task.kind}` : "Add an assignment or exam"}</h2>
-      <div className="form-grid compact">
-        <label className="field full">
-          Task
-          <input
-            value={task.title}
-            onChange={(event) =>
-              setTask((current) => ({ ...current, title: event.target.value }))
-            }
-            placeholder="Draft lab report"
-          />
-        </label>
-        <label className="field">
-          Type
-          <select
-            value={task.kind}
-            onChange={(event) =>
-              setTask((current) => ({
-                ...current,
-                kind: event.target.value as TaskInput["kind"],
-              }))
-            }
-          >
-            <option value="assignment">Assignment</option>
-            <option value="exam">Exam</option>
-            <option value="task">General task</option>
-          </select>
-        </label>
-        <label className="field">
-          Course
-          <select
-            value={task.courseId ?? ""}
-            onChange={(event) =>
-              setTask((current) => ({
-                ...current,
-                courseId: event.target.value || undefined,
-              }))
-            }
-          >
-            <option value="">No course</option>
-            {workspace.courses.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.code || item.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          Estimate
-          <input
-            type="number"
-            min="5"
-            max="1440"
-            step="5"
-            value={task.minutes}
-            onChange={(event) =>
-              setTask((current) => ({
-                ...current,
-                minutes: Number(event.target.value),
-              }))
-            }
-          />
-        </label>
-        <label className="field">
-          Due date
-          <input
-            type="datetime-local"
-            value={dateTimeValue(task.dueAt)}
-            onChange={(event) =>
-              setTask((current) => ({
-                ...current,
-                dueAt: event.target.value
-                  ? new Date(event.target.value).toISOString()
-                  : undefined,
-              }))
-            }
-          />
-        </label>
-      </div>
-      <details className="scheduling-options">
-        <summary>Scheduling options</summary>
-        <p className="field-help">
-          Coqui chooses the do date from these constraints. The due date above
-          never changes.
-        </p>
-        <div className="form-grid">
-          <label className="field">
-            Earliest start
-            <input
-              type="datetime-local"
-              value={dateTimeValue(task.earliestStart)}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  earliestStart: event.target.value
-                    ? new Date(event.target.value).toISOString()
-                    : undefined,
-                }))
-              }
-            />
-          </label>
-          <label className="field">
-            Priority
-            <input
-              type="number"
-              min="1"
-              max="5"
-              value={task.priority}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  priority: Number(event.target.value),
-                }))
-              }
-            />
-          </label>
-          <label className="field">
-            Academic risk
-            <input
-              type="number"
-              min="0"
-              max="5"
-              value={task.academicRisk}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  academicRisk: Number(event.target.value),
-                }))
-              }
-            />
-          </label>
-          <label className="field">
-            Energy
-            <select
-              value={task.energyDemand}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  energyDemand: event.target.value as TaskInput["energyDemand"],
-                }))
-              }
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label className="field">
-            Location
-            <input
-              value={task.location}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  location: event.target.value,
-                }))
-              }
-            />
-          </label>
-          <label className="field">
-            Minimum session
-            <input
-              type="number"
-              min="5"
-              max="240"
-              step="5"
-              disabled={!task.splittable}
-              value={task.minSessionMinutes}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  minSessionMinutes: Number(event.target.value),
-                }))
-              }
-            />
-          </label>
-          <label className="field">
-            Maximum session
-            <input
-              type="number"
-              min="5"
-              max="240"
-              step="5"
-              disabled={!task.splittable}
-              value={task.maxSessionMinutes}
-              onChange={(event) =>
-                setTask((current) => ({
-                  ...current,
-                  maxSessionMinutes: Number(event.target.value),
-                }))
-              }
-            />
-          </label>
-        </div>
-        <label className="setting-toggle compact">
-          <input
-            type="checkbox"
-            checked={task.splittable}
-            onChange={(event) =>
-              setTask((current) => ({
-                ...current,
-                splittable: event.target.checked,
-              }))
-            }
-          />
-          <span>
-            <strong>Allow this task to split into sessions</strong>
-            <small>
-              Coqui still respects the minimum and maximum session lengths.
-            </small>
-          </span>
-        </label>
-        <fieldset className="dependency-picker">
-          <legend>Prerequisites</legend>
-          {workspace.tasks.filter((item) => item.id !== editing?.id).length ? (
-            workspace.tasks
-              .filter((item) => item.id !== editing?.id)
-              .map((item) => (
-                <label key={item.id}>
-                  <input
-                    type="checkbox"
-                    checked={task.dependencies.includes(item.id)}
-                    onChange={(event) =>
-                      setTask((current) => ({
-                        ...current,
-                        dependencies: event.target.checked
-                          ? [...current.dependencies, item.id]
-                          : current.dependencies.filter(
-                              (dependency) => dependency !== item.id,
-                            ),
-                      }))
-                    }
-                  />
-                  <span>
-                    <strong>{item.title}</strong>
-                    <small>
-                      {item.completed ? "Completed" : "Must finish first"}
-                    </small>
-                  </span>
-                </label>
-              ))
-          ) : (
-            <p>Add another task to define a prerequisite.</p>
-          )}
-        </fieldset>
-      </details>
-      <div className="modal-actions">
-        {editing && (
-          <button className="outline" onClick={reset}>
-            Cancel
-          </button>
-        )}
-        <button
-          className="solid"
-          disabled={busy || !task.title.trim()}
-          onClick={save}
+      {mode === "compact" && !wide && inspectorOpen && (
+        <Modal
+          title={editing ? "Edit task" : "New task"}
+          subtitle="Unsaved edits stay in this unlocked session."
+          close={() => {
+            if (!busy) setInspectorOpen(false);
+          }}
+          className="work-task-drawer"
         >
-          {editing ? "Save task" : "Add task and replan"}
-        </button>
-      </div>
-      {editing && workspace.tasks.some((item) => item.id === editing.id) && (
-        <TaskDetailsEditor
-          key={editing.id}
-          taskId={editing.id}
-          completed={workspace.tasks.find((item) => item.id === editing.id)?.completed ?? false}
-        />
+          {error && <p role="alert">{error}</p>}
+          {inspector}
+        </Modal>
       )}
-    </aside>
+    </section>
   );
 }

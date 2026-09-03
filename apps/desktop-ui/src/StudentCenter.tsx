@@ -1,4 +1,5 @@
 import { TaskDetailsSession } from "./features/tasks/TaskDetailsSession";
+import type { WorkFilter } from "./components/WorkView";
 import {
   lazy,
   Suspense,
@@ -245,7 +246,7 @@ export function StudentCenter() {
   const [interfacePreferences, setInterfacePreferences] = useState(initialInterfacePreferences);
   const [interfaceBusy, setInterfaceBusy] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => import.meta.env.DEV && !isDesktop() && new URLSearchParams(location.search).get("reference") === "compact" ? "reference-task-0" : null);
-  const [workFilter, setWorkFilter] = useState<"all" | "high" | "completed">("all");
+  const [workFilter, setWorkFilter] = useState<WorkFilter>("all");
   const interfaceMode = interfacePreferences.mode;
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
@@ -1318,6 +1319,9 @@ export function StudentCenter() {
             <ModularStudyView onOpenAssistant={() => void openAiSettings()} />
           ) : view === "calendar" ? (
             <CalendarView
+              selectedTaskId={selectedTaskId}
+              onSelectTask={setSelectedTaskId}
+              onEditTask={(id) => { setSelectedTaskId(id); setView("work"); }}
               onDashboard={setData}
               onImport={() => setModal("import")}
               onStudy={() => setView("study")}
@@ -1326,8 +1330,11 @@ export function StudentCenter() {
             />
           ) : view === "work" ? (
             <WorkView
+              mode={interfaceMode}
               initialTaskId={selectedTaskId}
+              onSelectTask={setSelectedTaskId}
               initialFilter={workFilter}
+              onFilterChange={setWorkFilter}
               onDashboard={setData}
               onImport={() => setModal("import")}
               onStudy={() => setView("study")}

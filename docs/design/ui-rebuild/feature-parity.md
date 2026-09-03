@@ -77,3 +77,19 @@ claimed as redesigned. Existing UI, Scholarship, settings and import tests pass.
 
 For each migrated row, record component/command coverage, visual screenshots,
 automated checks, native persistence evidence, and any approved deviation.
+
+## C2 preservation audit
+
+Work and Calendar now share root task selection and the local details editor.
+Task core fields, event forms, filters and Today/Calendar dates survive route
+changes in the unlocked session. Work has a semantic task table with completion
+controls and narrow-window row reflow. Calendar creation is on demand, with a
+collapsible unscheduled tray and accessible agenda. All previous editor fields
+remain in `TaskInspector` / `CalendarInspector`; the removed inline screen code
+was extracted, not dropped. Failed writes retain drafts; refresh failures after
+a successful write are labeled separately to discourage duplicate creation.
+
+New regression tests cover failed saves, new-task drafts, cross-route selection,
+mode switching, Calendar form focus restoration, week navigation and DST/local
+time conversion. All 55 UI and 16 static desktop contract checks pass. Full
+remaining-screen rollout, native icons and installed certification remain pending.

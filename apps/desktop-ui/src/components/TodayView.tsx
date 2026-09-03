@@ -33,6 +33,7 @@ import {
 } from "../features/today/todayModel";
 import "../features/today/today.css";
 import { Modal } from "./Modal";
+import { useTaskDetailsSession } from "../features/tasks/TaskDetailsSession";
 
 type Props = {
   data: Dashboard;
@@ -64,10 +65,12 @@ type Props = {
 };
 
 export function TodayView(p: Props) {
+  const session = useTaskDetailsSession();
   const compact = p.mode === "compact";
   const [date, setDate] = useState(
-    () => p.data.planDate.slice(0, 10) || dayKey(new Date(), p.data.timezone),
+    () => session.calendarDay || p.data.planDate.slice(0, 10) || dayKey(new Date(), p.data.timezone),
   );
+  useEffect(() => { session.calendarDay = date; }, [date, session]);
   const referenceClock =
     import.meta.env.DEV &&
     !p.desktop &&

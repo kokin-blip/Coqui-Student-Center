@@ -1,0 +1,203 @@
+.mode-timetable.workspace-page {
+  padding: 4px 40px 32px;
+  min-width: 0;
+}
+.mode-timetable h1,
+.mode-timetable h2,
+.mode-timetable h3 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+.mode-timetable .page-head {
+  margin-bottom: 24px;
+}
+.mode-timetable .calendar-inspector .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.mode-timetable .calendar-inspector input,
+.mode-timetable .calendar-inspector select {
+  min-width: 0;
+  width: 100%;
+}
+.mode-timetable .calendar-inspector input[type="checkbox"] {
+  width: auto;
+}
+.mode-timetable .page-head h1 {
+  font-size: 48px;
+  letter-spacing: -0.035em;
+  color: var(--accent);
+}
+.mode-timetable .calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.mode-timetable .calendar-layout[data-inspecting="true"] {
+  grid-template-columns: minmax(0, 1fr) 330px;
+}
+.mode-timetable .workspace-panel {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  box-shadow: none;
+  background: var(--bg-surface);
+}
+.mode-timetable .calendar-layout > .today-task-inspector {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100dvh - 110px);
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.mode-timetable .time-grid {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.mode-timetable .calendar-grid-scroll {
+  display: flex;
+  overflow: auto;
+  max-width: 100%;
+  border: 1px solid var(--border-subtle);
+}
+.calendar-hours {
+  flex: 0 0 48px;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-surface);
+}
+.calendar-hours > span {
+  position: absolute;
+  right: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+.mode-timetable .calendar-grid-scroll .time-grid {
+  flex: 1;
+  min-width: 735px;
+  gap: 0;
+  margin: 0;
+  overflow: visible;
+}
+.mode-timetable .calendar-grid-scroll .day-calendar {
+  min-width: 220px;
+}
+.mode-timetable .time-grid > section {
+  min-height: 828px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background-position: 0 32px;
+}
+.mode-timetable .time-grid > section > h3 {
+  height: 32px;
+  margin: 0;
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  box-sizing: border-box;
+}
+.mode-timetable .time-grid > section > p {
+  padding: 8px;
+  font-size: 11px;
+}
+.mode-timetable .week-block {
+  padding: 6px;
+  margin: 0;
+  border-radius: 3px;
+  border: 1px solid color-mix(in oklch, var(--accent) 25%, var(--border-subtle));
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-surface));
+}
+.mode-timetable .week-block.class {
+  background: color-mix(in oklch, var(--success) 14%, var(--bg-surface));
+}
+.mode-timetable .week-block.work,
+.mode-timetable .week-block.protected {
+  background: color-mix(in oklch, var(--warning) 14%, var(--bg-surface));
+}
+.mode-timetable .week-block.study {
+  background: color-mix(in oklch, var(--accent) 16%, var(--bg-surface));
+}
+.mode-timetable .week-block strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+.mode-timetable .week-block small,
+.mode-timetable .week-block time {
+  font-size: 10px;
+}
+.mode-timetable .week-block[aria-pressed="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.mode-timetable .unscheduled-tray,
+.calendar-list-alternative {
+  margin: 16px 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 12px;
+}
+.mode-timetable summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.mode-timetable .unscheduled-tray[open] summary {
+  margin-bottom: 12px;
+}
+.mode-timetable .course-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+}
+.calendar-task-drawer .modal {
+  margin-left: auto;
+  width: min(430px, 100%);
+  height: 100%;
+  max-height: 100%;
+  border-radius: 0;
+}
+.calendar-task-drawer .today-task-inspector {
+  border: 0;
+  width: auto;
+}
+[data-interface-mode="compact"] .mode-timetable.workspace-page {
+  padding: 16px 20px 24px;
+}
+[data-interface-mode="compact"] .mode-timetable .page-head h1 {
+  font-size: 28px;
+  color: var(--text-primary);
+}
+[data-interface-mode="compact"] .mode-timetable .workspace-panel {
+  padding: 14px;
+}
+@media (max-width: 767px) {
+  .mode-timetable.workspace-page,
+  [data-interface-mode="compact"] .mode-timetable.workspace-page {
+    padding: 8px 12px 24px;
+  }
+  .mode-timetable .page-head h1 {
+    font-size: 34px;
+  }
+  .mode-timetable .page-head {
+    display: block;
+  }
+  .mode-timetable .page-head-actions {
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .mode-timetable .workspace-panel {
+    padding: 12px;
+  }
+  .mode-timetable .section-head {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .mode-timetable .record-actions {
+    flex-wrap: wrap;
+  }
+}

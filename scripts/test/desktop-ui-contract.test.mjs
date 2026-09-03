@@ -27,6 +27,8 @@ const routeSources = Object.fromEntries(
   ),
 );
 const workspaceView = Object.values(routeSources).join("\n");
+const taskInspector = await readFile(new URL("../../apps/desktop-ui/src/features/tasks/TaskInspector.tsx", import.meta.url), "utf8");
+const calendarInspector = await readFile(new URL("../../apps/desktop-ui/src/features/calendar/CalendarInspector.tsx", import.meta.url), "utf8");
 const today = await readFile(
   new URL(
     "../../apps/desktop-ui/src/components/TodayView.tsx",
@@ -198,7 +200,10 @@ test("calendar, work, courses, and academic settings are feature-owned routes", 
     /export function AcademicSettingsView/,
   );
   for (const source of Object.values(routeSources))
-    assert.doesNotMatch(source, /WorkspaceView|route\.mode|mode ===/);
+    // Interface mode (Comfy/Compact) is shared presentation, not route multiplexing.
+    assert.doesNotMatch(source, /WorkspaceView|route\.mode|mode === ["'](?:calendar|work|courses|academics|assignments)/);
+  assert.match(routeSources.WorkView, /<TaskInspector/);
+  assert.match(routeSources.CalendarView, /<CalendarInspector/);
   assert.doesNotMatch(
     styles,
     /\.workspace-grid\.\w+\s*>\s*\.workspace-panel:(first-child|nth-child)/,
@@ -210,7 +215,7 @@ test("calendar, work, courses, and academic settings are feature-owned routes", 
 });
 
 test("calendar, work, and courses expose complete local controls", () => {
-  const interfaceSource = `${workspaceView}\n${ui}\n${quickAdd}\n${workspaceSearch}`;
+  const interfaceSource = `${workspaceView}\n${taskInspector}\n${calendarInspector}\n${ui}\n${quickAdd}\n${workspaceSearch}`;
   for (const control of [
     "Week calendar",
     "time grid from 6 AM to 10 PM",
@@ -275,7 +280,7 @@ test("calendar, work, and courses expose complete local controls", () => {
     "updateStudentProfile(",
   ]) {
     assert.ok(
-      workspaceView.includes(caller),
+      `${workspaceView}\n${taskInspector}\n${calendarInspector}`.includes(caller),
       `${caller} has no caller in the interface`,
     );
   }
