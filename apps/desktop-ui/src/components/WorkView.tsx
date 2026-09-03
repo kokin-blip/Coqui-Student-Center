@@ -9,6 +9,7 @@ import {
 } from "../native";
 import type { TaskInput, TaskRecord, WorkspaceSnapshot } from "../native";
 import type { WorkspaceRouteProps } from "./workspaceTypes";
+import { TaskDetailsEditor } from "../features/tasks/TaskDetailsEditor";
 
 type WorkFilter = "inbox" | "upcoming" | "overdue" | "exams" | "completed";
 
@@ -562,6 +563,13 @@ function TaskInspector({
           {editing ? "Save task" : "Add task and replan"}
         </button>
       </div>
+      {editing && workspace.tasks.some((item) => item.id === editing.id) && (
+        <TaskDetailsEditor
+          key={editing.id}
+          taskId={editing.id}
+          completed={workspace.tasks.find((item) => item.id === editing.id)?.completed ?? false}
+        />
+      )}
     </aside>
   );
 }

@@ -1,3 +1,4 @@
+import { TaskDetailsSession } from "./features/tasks/TaskDetailsSession";
 import {
   lazy,
   Suspense,
@@ -252,6 +253,7 @@ export function StudentCenter() {
   useEffect(() => watchSystemAppearance(() => appearanceRef.current), []);
   const [data, setData] = useState<Dashboard | null>(null);
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
+  const [taskDetailsSession, setTaskDetailsSession] = useState(0);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [modal, setModal] = useState<Modal>(null);
   useEffect(() => {
@@ -769,6 +771,7 @@ export function StudentCenter() {
       setData(next);
       setToast(next.importNotice ?? "Encrypted profile restored.");
       setSelectedTaskId(null);
+      setTaskDetailsSession((value) => value + 1);
       setBackupPassphrase("");
       closeSettingsSection();
       void loadInterfacePreferences().then(restored => {
@@ -1150,6 +1153,7 @@ export function StudentCenter() {
   // still say "checking" if it was built before the probe finished.
   const ocr = ocrStatus ?? data.ocr;
   return (
+    <TaskDetailsSession key={taskDetailsSession}>
     <div className={`app-shell rebuild-shell ${interfaceMode} ${view === "today" ? "today-destination" : ""}`}>
       {settingsSection === "account" && (
         <Suspense
@@ -3416,5 +3420,6 @@ export function StudentCenter() {
         </div>
       )}
     </div>
+    </TaskDetailsSession>
   );
 }

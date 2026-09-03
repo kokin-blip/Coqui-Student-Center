@@ -55,7 +55,8 @@ their comparison/functional checks, not on the old identity preference.
 
 The user approved the cleaned logo and Inter proof. The logo and typography are
 now integrated; both Today compositions are implemented. Their separate visual
-approval gate remains open. This is not completion of the full app rebuild.
+approval gate was satisfied by the user's explicit approval on September 2, 2026.
+This is not completion of the full app rebuild.
 
 ### Evidence and normalization
 
@@ -94,8 +95,8 @@ layouts on the same records.
 5. [P1, planned milestone C] Full inspector content is not implemented: tags,
    descriptions, files, subtasks, local progress and activity require schema 26.
    Only existing real fields/actions appear. Do not claim full inspector parity.
-6. [Approval gate] Both Today compositions still require user visual approval
-   before any remaining screen rollout.
+6. [Approval gate, satisfied] The user approved both Today compositions on
+   September 2, 2026. Milestone C can now proceed.
 
 ### Required fidelity surfaces
 
@@ -137,6 +138,50 @@ layouts on the same records.
 Unrelated `.gitignore` edits and untracked `RELEASENOTES.md` are preserved and
 excluded from rebuild checkpoints. Deletions are mapped in `feature-parity.md`.
 
-Next: user approval of both Today layouts, then milestone C and certification.
+Next: milestone C task details and remaining screens, then certification.
 
 final result: blocked
+
+## Checkpoint C1 — task details, September 2, 2026
+
+Both Today layouts are approved. This checkpoint implements the device-local
+task-detail foundation; it does not certify the remaining screen rollout.
+
+- Schema 26 adds task details, ordered subtasks, attachment links, private-document
+  markers and paginated activity. Existing task columns and replicated entity types
+  are unchanged. Existing tasks start without fabricated activity.
+- Today and Work expose the same detail editor: description, tags, To do/In progress,
+  checkable/reorderable subtasks, file attachment/preview/export/detach and activity.
+  Parent completion remains authoritative. Unsaved detail drafts survive view and
+  layout changes in the unlocked session; restore/lock removes that session.
+- Native writes check revisions and commit metadata/activity together. Conflicts
+  retain the student's draft and offer explicit latest-version review/reload.
+- Files use the encrypted vault, bounded format detection and the existing 25 MB
+  limit without invoking OCR. Task-private files cannot be uploaded by document
+  sync, even after detachment or task deletion. Detachment never shreds shared files.
+  Safe image/text previews are inline; PDF/Office/TIFF files use explicit export.
+  Export creates a new unencrypted file and refuses existing paths/private app data.
+- Compact's long inspector now scrolls independently, keeping the weekly schedule
+  in view. Browser preview data is explicitly session-only, never localStorage.
+
+Evidence under `docs/design/ui-rebuild/`: `task-inspector-compact-wide.png`,
+`task-inspector-compact-320.png`, `task-inspector-comfy-wide.png`, and
+`task-inspector-comfy-320.png`. These are interactive synthetic-data smoke captures,
+not a replacement for the approved full-composition comparisons or installed tests.
+
+Verification: 199 native tests passed (one live ASU test remains opt-in); the new
+tests exercise schema 25→26/repeated migration, stale/no-op edits, parent completion,
+pagination, deletion cleanup, attachment deduplication, OCR independence, private
+file upload denial, encrypted DB/vault reopen, canonical snapshot exclusion and
+encrypted backup restoration of all local detail records. Shared/cloud suites pass
+60 tests. All 48 UI tests and 16 desktop contracts pass; the production build passes.
+Coverage includes save/reopen, Today→Work draft handoff, session clearing and axe
+checks. Both modes' open inspectors measured 320px document/body widths at
+a 320px desktop viewport; Compact was also checked at 1586px with independent scroll.
+
+Remaining: full Calendar selection integration, task-inspector visual refinement
+and state matrix, remaining screen/overlay extraction and redesign, installed-app
+file-picker/export/restart tests on both platforms, all-width/theme comparisons and
+release certification. Native icon exports remain outstanding. No release published.
+
+Current result: in progress; C1 implemented, full rebuild not certified.

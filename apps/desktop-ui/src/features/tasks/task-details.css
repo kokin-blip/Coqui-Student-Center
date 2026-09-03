@@ -1,0 +1,161 @@
+.task-details-editor {
+  min-width: 0;
+  margin-block: 20px;
+}
+.task-details-editor fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.task-details-editor label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.task-details-editor label > span {
+  font-weight: 400;
+}
+.task-details-editor input:not([type="checkbox"]),
+.task-details-editor textarea,
+.task-details-editor select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 7px 8px;
+}
+.task-details-editor textarea {
+  resize: vertical;
+}
+.task-details-editor input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.task-details-editor button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 5px 8px;
+  font: inherit;
+}
+.task-details-editor button.today-primary {
+  background: var(--accent);
+  color: var(--accent-contrast, white);
+}
+.task-details-editor button:disabled {
+  opacity: 0.5;
+}
+.task-details-editor button svg {
+  width: 14px;
+  height: 14px;
+}
+.task-details-editor h3 {
+  display: flex;
+  justify-content: space-between;
+  margin: 20px 0 10px;
+}
+.task-details-editor h3 span {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.task-details-editor .task-local-note,
+.task-details-editor .task-empty-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 8px 0 12px;
+}
+.task-subtasks,
+.task-attachments,
+.task-activity {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.task-subtasks li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 5px;
+  align-items: center;
+  padding-block: 4px;
+}
+.subtask-tools {
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.task-attachments li {
+  border-block-end: 1px solid var(--border-subtle);
+  padding: 10px 0;
+}
+.task-attachments li > span {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.task-attachments li > span svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.task-attachments li > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.task-file-input {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.task-file-preview {
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+}
+.task-file-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.task-file-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.task-revision-review {
+  padding: 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
+}
+.task-revision-review button {
+  margin: 4px;
+}
+.task-activity li {
+  padding-block: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.task-activity small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.task-details-editor :is(input, textarea, button, select):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

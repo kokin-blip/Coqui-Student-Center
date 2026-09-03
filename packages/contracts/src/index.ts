@@ -1,4 +1,5 @@
 import { z } from "zod";
+export { TaskDetails, TaskDetailsInput, TaskSubtask, TaskAttachment, TaskActivity, TaskActivityPage } from "./task-details.js";
 
 const opaqueBase64Url = z
   .string()

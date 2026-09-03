@@ -53,7 +53,22 @@ claimed as redesigned. Existing UI, Scholarship, settings and import tests pass.
 
 ## New behavior and remaining work
 
-- Implemented for Today: distinct Comfy/Compact composition, awaiting approval.
+- Implemented for Today: distinct Comfy/Compact composition, approved by the user
+  on September 2, 2026. Task details and remaining screens are milestone C.
+
+## C1 preservation audit
+
+- Added the shared local task-detail editor to Today and existing Work editing.
+  Existing task/planning controls remain; Today's inferred status display is
+  replaced by explicit local progress with parent completion taking precedence.
+- No screen bodies, existing native commands or replicated task fields removed.
+- New details, subtask order, attachment links and activity are encrypted by the
+  existing profile store and included in backup round trips. File detachment and
+  task deletion keep vault content instead of destroying another feature's source.
+- Unsaved detail drafts survive Today→Work and mode changes. Existing core Work
+  form-draft preservation and shared Calendar selection still need the C rollout.
+- The full UI rollout and installed-app certification remain pending; C1 is not
+  a claim that every planned screen or integration has been completed.
 - Implemented: per-mode native themes and legacy density migration.
 - Milestone C: local descriptions, tags, subtasks, progress, attachments, activity.
 - Milestone C: new detail records backed up and excluded from sync.

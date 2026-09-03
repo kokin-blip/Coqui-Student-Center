@@ -2,9 +2,9 @@
 
 ## Direction
 
-The shell is calm and balanced, with the selective personality of the Scholarship exploration and an optional compact Power density. The primary identity is a friendly geometric frog face with a lowercase `coqui` wordmark. The face-only mark is used for the app, installer, tray-scale, and compact navigation identities; the responsive wordmark is used when at least 112px of horizontal space is available. Never render the face below 20px or the wordmark below 112px wide. A one-color/negative-space state is available through `AppLogo`'s `monochrome` variant.
+Comfy is the primary, spacious daily workspace. Compact is a distinct weekly-calendar, work-table and inspector composition, not a spacing preset. Both Today compositions were visually approved on September 2, 2026; see `docs/design/ui-rebuild/` for references and comparison history. The primary identity is the approved transparent frog-face and lowercase wordmark artwork, never a substitute drawing or retyped lettering. Use locally bundled Inter for interface text. Never render the face below 20px or the wordmark below 112px wide. Native icon export replacement remains a separate certification item.
 
-The default theme follows the operating system; Light and Dark can be selected explicitly. Comfortable density is the default and Power density is optional. The interface uses one restrained deep-green/mint accent family. Amber, coral, red, and blue are semantic colors, not decoration.
+Fresh profiles start in Comfy/light; the first Compact selection defaults to dark. Each mode retains its independent theme, including System, and existing explicit themes and accents are preserved. Preferences remain device-local and are included in encrypted backups. Amber, coral, red, and blue are semantic colors, not decoration.
 
 ## Tokens
 

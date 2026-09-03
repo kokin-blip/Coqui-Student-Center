@@ -19,6 +19,7 @@ mod scholarships;
 mod school_provider;
 mod sync_crypto;
 mod sync_transport;
+mod task_details;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use canvas::{CanvasCandidate, CanvasClient, CanvasPull};
@@ -52,7 +53,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 25;
+const CURRENT_SCHEMA_VERSION: i64 = 26;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -1134,6 +1135,7 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     ensure_column(&conn,"class_meeting_series","rotation_offset_weeks","INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(&conn,"courses","created_at","TEXT NOT NULL DEFAULT ''")?;
     profile::initialize_defaults(&conn)?;
+    task_details::migrate(&conn)?;
     conn.execute_batch(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))?;
     Ok(conn)
 }
@@ -1653,6 +1655,15 @@ fn mutation(
         )?;
     }
     record_local_set_elements(conn, entity_type, entity_id, &set_changes, &hlc, &device_id)?;
+    if matches!(entity_type, "task" | "assignment" | "exam") && !tombstone {
+        let kind = match operation {
+            "created" => "task_created",
+            "completed" => "task_completed",
+            "completion_changed" if snapshot.as_ref().and_then(|value|value.get("completed")).and_then(|value|value.as_i64())==Some(1) => "task_completed",
+            _ => "task_updated",
+        };
+        task_details::record_activity(conn, entity_id, kind, "local")?;
+    }
     Ok(())
 }
 
@@ -4318,6 +4329,116 @@ fn set_interface_preferences(state: tauri::State<AppState>, preferences: interfa
     Ok(preferences)
 }
 
+#[tauri::command]
+fn get_task_details(state: tauri::State<AppState>, task_id: String) -> Result<task_details::TaskDetails> {
+    state.require_unlocked()?;
+    task_details::load(&state.db.lock().unwrap(), &task_id)
+}
+
+#[tauri::command]
+fn update_task_details(state: tauri::State<AppState>, task_id: String, input: task_details::TaskDetailsInput) -> Result<task_details::TaskDetails> {
+    state.require_unlocked()?;
+    task_details::save(&state.db.lock().unwrap(), &task_id, &input)
+}
+
+#[tauri::command]
+fn get_task_activity(state: tauri::State<AppState>, task_id: String, before: Option<i64>, limit: usize) -> Result<task_details::TaskActivityPage> {
+    state.require_unlocked()?;
+    task_details::activity(&state.db.lock().unwrap(), &task_id, before, limit)
+}
+
+fn attach_task_bytes_in(state: &AppState, task_id: &str, file_name: &str, bytes: &[u8], expected_revision: i64) -> Result<task_details::TaskDetails> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(AppError::Invalid("Files must be non-empty and 25 MB or smaller".into()));
+    }
+    let name = file_name.rsplit(['/', '\\']).next().filter(|s| !s.is_empty() && s.chars().count()<=255 && !s.chars().any(char::is_control))
+        .ok_or_else(||AppError::Invalid("Choose a file with a valid name".into()))?;
+    let kind = imports::detect_document(bytes, name).map_err(|_|AppError::Invalid("Choose a supported document or image file".into()))?;
+    let db = state.db.lock().unwrap();
+    let tx = db.unchecked_transaction()?;
+    task_details::require_revision(&tx, task_id, expected_revision)?;
+    let hash = hex::encode(Sha256::digest(bytes));
+    // Deduplicate task-private documents only. Reusing a previously synchronized
+    // document would incorrectly promise that this new attachment is local-only.
+    let existing = tx.query_row("SELECT d.id FROM documents d JOIN task_private_documents p ON p.document_id=d.id WHERE d.sha256=?1 AND d.content_shredded=0 AND d.vault_path!='' LIMIT 1", [&hash], |r|r.get::<_,String>(0)).optional()?;
+    if let Some(id) = existing {
+        let result=task_details::attach(&tx,task_id,&id,expected_revision)?;
+        tx.commit()?;
+        return Ok(result);
+    }
+    let id=Uuid::new_v4().to_string();
+    let document_key=Zeroizing::new(random_key());
+    let (encrypted,content_nonce)=encrypt(&document_key,bytes)?;
+    let (wrapped,key_nonce)=encrypt(&state.master_key,&*document_key)?;
+    fs::create_dir_all(&state.vault)?;
+    let path=state.vault.join(format!("{id}.vault"));
+    // TempPath removes only this newly-created ciphertext if the transaction fails.
+    let mut scratch=tempfile::NamedTempFile::new_in(&state.vault)?;
+    std::io::Write::write_all(&mut scratch,&encrypted)?;
+    tx.execute("INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at,extraction_status,source_retention) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'not_requested','keep_encrypted')",params![id,name,kind.mime(),path.to_string_lossy(),B64.encode(wrapped),B64.encode(key_nonce),B64.encode(content_nonce),hash,Utc::now().to_rfc3339()])?;
+    tx.execute("INSERT INTO task_private_documents(document_id) VALUES(?1)",[&id])?;
+    let result=task_details::attach(&tx,task_id,&id,expected_revision)?;
+    scratch.as_file().sync_all()?;
+    let held=scratch.into_temp_path();
+    held.persist_noclobber(&path).map_err(|e|AppError::Io(e.error))?;
+    if let Err(error)=tx.commit() {
+        let _=fs::remove_file(&path); // Only this attempt's new ciphertext, never a shared file.
+        return Err(error.into());
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn attach_task_file(state: tauri::State<AppState>, task_id: String, file_name: String, bytes: Vec<u8>, expected_revision: i64) -> Result<task_details::TaskDetails> {
+    state.require_unlocked()?;
+    attach_task_bytes_in(&state, &task_id, &file_name, &bytes, expected_revision)
+}
+
+#[tauri::command]
+fn detach_task_file(state: tauri::State<AppState>, task_id: String, document_id: String, expected_revision: i64) -> Result<task_details::TaskDetails> {
+    state.require_unlocked()?;
+    task_details::detach(&state.db.lock().unwrap(), &task_id, &document_id, expected_revision)
+}
+
+fn require_task_attachment(db: &Connection, task_id: &str, document_id: &str) -> Result<()> {
+    if !db.query_row("SELECT EXISTS(SELECT 1 FROM task_attachments_local WHERE task_id=?1 AND document_id=?2)",params![task_id,document_id],|r|r.get::<_,bool>(0))? {
+        return Err(AppError::Invalid("This file is no longer attached to this task".into()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn preview_task_file(state: tauri::State<AppState>, task_id: String, document_id: String) -> Result<serde_json::Value> {
+    state.require_unlocked()?;
+    let db=state.db.lock().unwrap();
+    require_task_attachment(&db,&task_id,&document_id)?;
+    let (bytes,mime,_)=decrypt_original_document(&state,&db,&document_id)?;
+    // No embedded browser/PDF/office execution. Other supported files require an
+    // explicit export; text is rendered as text, never interpreted as markup.
+    if matches!(mime.as_str(),"image/png"|"image/jpeg"|"image/webp") {
+        Ok(serde_json::json!({"kind":"image","content":format!("data:{mime};base64,{}",B64.encode(bytes))}))
+    } else if matches!(mime.as_str(),"text/plain"|"text/csv"|"text/calendar") {
+        Ok(serde_json::json!({"kind":"text","content":String::from_utf8_lossy(&bytes).chars().take(50_000).collect::<String>(),"truncated":bytes.len()>50_000}))
+    } else { Ok(serde_json::json!({"kind":"export_only"})) }
+}
+
+#[tauri::command]
+fn export_task_file(state: tauri::State<AppState>, task_id: String, document_id: String, path: String) -> Result<()> {
+    state.require_unlocked()?;
+    let db=state.db.lock().unwrap();
+    require_task_attachment(&db,&task_id,&document_id)?;
+    let (bytes,_,_)=decrypt_original_document(&state,&db,&document_id)?;
+    let destination=PathBuf::from(path);
+    let parent=destination.parent().filter(|p|p.is_absolute()).ok_or_else(||AppError::Invalid("Choose an absolute export location".into()))?.canonicalize()?;
+    if parent.starts_with(state.root.canonicalize()?) {
+        return Err(AppError::Invalid("Export outside Coqui's private data folder".into()));
+    }
+    // Never overwrite a profile, executable or existing student file.
+    let mut output=fs::OpenOptions::new().write(true).create_new(true).open(destination)?;
+    std::io::Write::write_all(&mut output,&bytes)?;
+    Ok(())
+}
+
 #[derive(Debug,Serialize)]
 #[serde(rename_all="camelCase")]
 struct AcademicCleanupPreview{duplicate_course_groups:Vec<Vec<String>>,repeated_commitment_series:Vec<RepeatedCommitmentPreview>}
@@ -5895,6 +6016,9 @@ fn apply_canonical_mutation(
            hlc=excluded.hlc,device_id=excluded.device_id,tombstone=excluded.tombstone,mutation_id=excluded.mutation_id",
         params![envelope.entity_type, envelope.entity_id.to_string(), envelope.logical_timestamp, envelope.device_id.to_string(), i64::from(envelope.tombstone), envelope.mutation_id.to_string()],
     )?;
+    if table == "tasks" && !envelope.tombstone {
+        task_details::record_activity(conn, &envelope.entity_id.to_string(), "task_received", "received")?;
+    }
     Ok(ApplyOutcome::Applied)
 }
 
@@ -6098,6 +6222,13 @@ async fn pull_encrypted_mutations(
     .map_err(|error| AppError::Background(error.to_string()))?
 }
 
+fn require_syncable_document(conn: &Connection, document_id: &str) -> Result<()> {
+    if conn.query_row("SELECT EXISTS(SELECT 1 FROM task_private_documents WHERE document_id=?1)", [document_id], |r|r.get::<_,bool>(0))? {
+        return Err(AppError::Invalid("Task attachments stay on this device and in encrypted backups".into()));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn upload_synced_document(
     state: tauri::State<'_, AppState>,
@@ -6106,6 +6237,8 @@ async fn upload_synced_document(
     state.require_unlocked()?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        state.require_unlocked()?;
+        require_syncable_document(&state.db.lock().unwrap(), &document_id)?;
         let document_uuid = Uuid::parse_str(&document_id)
             .map_err(|_| AppError::Invalid("The document ID is invalid".into()))?;
         let (account_id, access_token) = signed_in_account_and_token(&state)?;
@@ -8059,6 +8192,8 @@ fn settle_schedule_source_in(db:&Connection,vault:&Path,root:&Path,document_id:&
     let (path,pending)=db.query_row("SELECT vault_path,(SELECT COUNT(*) FROM import_candidates WHERE document_id=d.id AND status='pending') FROM documents d WHERE id=?1",params![document_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))).optional()?.ok_or_else(||AppError::Invalid("document not found".into()))?;
     if decision=="delete_now" {
         if pending>0{return Err(AppError::Invalid("finish reviewing this schedule before deleting its source".into()));}
+        let attached:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM task_attachments_local WHERE document_id=?1) OR EXISTS(SELECT 1 FROM scholarship_requirement_documents WHERE document_id=?1)",[document_id],|r|r.get(0))?;
+        if attached{return Err(AppError::Invalid("This source is still linked to a task or scholarship. Keep it encrypted or remove those links first.".into()));}
         if !path.is_empty(){let source=PathBuf::from(&path);if !source.starts_with(vault)&&!source.starts_with(root){return Err(AppError::Invalid("stored source path is invalid".into()));}match fs::remove_file(&source){Ok(())=>{},Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{},Err(error)=>return Err(error.into())}}
         db.execute("UPDATE documents SET vault_path='',wrapped_key='',key_nonce='',content_nonce='',content_shredded=1,source_retention='delete_now' WHERE id=?1",params![document_id])?;
     } else {db.execute("UPDATE documents SET source_retention='keep_encrypted' WHERE id=?1",params![document_id])?;}
@@ -9857,6 +9992,13 @@ fn main() {
             update_appearance,
             get_interface_preferences,
             set_interface_preferences,
+            get_task_details,
+            update_task_details,
+            get_task_activity,
+            attach_task_file,
+            detach_task_file,
+            preview_task_file,
+            export_task_file,
             update_accent,
             get_academic_cleanup_preview,
             apply_academic_cleanup,
@@ -10209,6 +10351,13 @@ mod tests {
             "update_accent",
             "get_interface_preferences",
             "set_interface_preferences",
+            "get_task_details",
+            "update_task_details",
+            "get_task_activity",
+            "attach_task_file",
+            "detach_task_file",
+            "preview_task_file",
+            "export_task_file",
             "get_local_workspace",
             "update_student_profile",
             "create_academic_term",
@@ -11280,7 +11429,7 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 26);
         assert!(table_columns(&conn,"scholarship_story_examples").is_ok());
         // 12 adds the weekly pattern a class_meeting candidate carries, which
         // the single-instant datetime columns cannot express.
@@ -11921,6 +12070,65 @@ mod tests {
     }
 
     #[test]
+    fn task_details_schema_25_upgrade_and_private_vault_round_trip() {
+        let root=tempfile::tempdir().unwrap();
+        let path=root.path().join("task-details.db");
+        let key=random_key();
+        let conn=open_database(&path,&key).unwrap();
+        conn.execute("INSERT INTO tasks(id,title,minutes,created_at) VALUES('test-task','Task',30,?1)",[Utc::now().to_rfc3339()]).unwrap();
+        // Reconstruct schema 25 in this isolated fixture, then exercise the real opener.
+        conn.execute_batch("DROP TRIGGER task_local_cleanup; DROP TABLE task_subtasks_local; DROP TABLE task_attachments_local; DROP TABLE task_private_documents; DROP TABLE task_activity_local; DROP TABLE task_details_local; PRAGMA user_version=25;").unwrap();
+        drop(conn);
+        let conn=open_database(&path,&key).unwrap();
+        assert_eq!(conn.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),26);
+        assert_eq!(task_details::load(&conn,"test-task").unwrap().revision,0);
+        assert!(task_details::activity(&conn,"test-task",None,20).unwrap().entries.is_empty(),"migration must not invent history");
+        let input=task_details::TaskDetailsInput {expected_revision:0,description:"Never upload private details".into(),tags:vec!["private".into()],progress:task_details::TaskProgress::InProgress,subtasks:vec![]};
+        task_details::save(&conn,"test-task",&input).unwrap();
+        mutation(&conn,"task","test-task","updated","{}").unwrap();
+        let snapshot=canonical_entity_snapshot(&conn,"task","test-task").unwrap().unwrap().to_string();
+        assert!(!snapshot.contains("Never upload"));
+        assert!(!snapshot.contains("in_progress"));
+        let mutations:String=conn.query_row("SELECT group_concat(payload) FROM mutations",[],|r|r.get(0)).unwrap();
+        assert!(!mutations.contains("Never upload"));
+        for entity in ["task_details_local","task_subtasks_local","task_attachments_local","task_activity_local","task_private_documents"] {assert!(!is_replicated_entity_type(entity));}
+        let state=AppState {
+            db:Arc::new(Mutex::new(conn)), master_key:key,root:root.path().into(),db_path:path.clone(),vault:root.path().join("vault"),
+            ocr:OcrRuntime::discover(None),locked:Arc::new(AtomicBool::new(false)),pin_attempts:Arc::new(Mutex::new(PinAttempts::default())),
+            pending_navigation:Arc::new(Mutex::new(None)),account:Arc::new(Mutex::new(auth::AccountRuntime::test_unconfigured())),
+            sync_protection:Arc::new(Mutex::new(sync_crypto::SyncProtectionRuntime::default())),
+        };
+        let content=b"Private attachment without OCR";
+        assert!(attach_task_bytes_in(&state,"test-task","notes.txt",content,0).is_err());
+        assert!(!state.vault.exists(),"stale attachment writes must not create files");
+        assert!(attach_task_bytes_in(&state,"test-task","run.exe",b"MZ unsafe",1).is_err());
+        let attached=attach_task_bytes_in(&state,"test-task","notes.txt",content,1).unwrap();
+        assert_eq!(attached.revision,2);
+        let duplicate=attach_task_bytes_in(&state,"test-task","notes.txt",content,2).unwrap();
+        assert_eq!(duplicate,attached);
+        let document=&attached.attachments[0].document_id;
+        let conn=state.db.lock().unwrap();
+        let (restored,_,_)=decrypt_original_document(&state,&conn,document).unwrap();
+        assert_eq!(restored,content);
+        assert!(require_syncable_document(&conn,document).is_err());
+        assert_eq!(conn.query_row("SELECT extraction_status FROM documents WHERE id=?1",[document],|r|r.get::<_,String>(0)).unwrap(),"not_requested");
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM document_segments",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert!(settle_schedule_source_in(&conn,&state.vault,&state.root,document,"delete_now").is_err());
+        let ciphertext=fs::read(state.vault.join(format!("{document}.vault"))).unwrap();
+        assert!(!ciphertext.windows(content.len()).any(|part|part==content));
+        drop(conn);
+        let reopened=open_database(&path,&key).unwrap();
+        assert_eq!(task_details::load(&reopened,"test-task").unwrap(),attached);
+        let raw=fs::read(&path).unwrap();
+        assert!(!raw.windows(input.description.len()).any(|part|part==input.description.as_bytes()));
+        assert!(Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM tasks",[],|r|r.get::<_,i64>(0)).is_err());
+        reopened.execute("DELETE FROM tasks WHERE id='test-task'",[]).unwrap();
+        assert_eq!(reopened.query_row("SELECT COUNT(*) FROM task_attachments_local",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert!(require_syncable_document(&reopened,document).is_err(),"task deletion must not make the file uploadable");
+        assert!(state.vault.join(format!("{document}.vault")).exists());
+    }
+
+    #[test]
     fn encrypted_backup_round_trip_rekeys_and_replaces_the_profile() {
         // Restore must exercise credential invalidation without opening or
         // mutating the developer machine's real operating-system keychain.
@@ -11960,6 +12168,14 @@ mod tests {
             &source_key,
             private_document,
         );
+        let task_input=task_details::TaskDetailsInput {
+            expected_revision:0,description:"Private task detail backup proof".into(),tags:vec!["Private-tag".into()],
+            progress:task_details::TaskProgress::InProgress,
+            subtasks:vec![task_details::TaskSubtask {id:Uuid::new_v4().to_string(),title:"Private subtask".into(),completed:true}],
+        };
+        task_details::save(&source_db,"portable-task",&task_input).unwrap();
+        source_db.execute("INSERT INTO task_private_documents(document_id) VALUES(?1)",[&document_id]).unwrap();
+        let saved_details=task_details::attach(&source_db,"portable-task",&document_id,1).unwrap();
         source_db.execute("INSERT INTO scholarship_requirement_documents(id,opportunity_id,document_id,payload,imported_at) VALUES('portable-requirements','portable-scholarship',?1,?2,?3)",params![document_id,serde_json::json!({"id":"portable-requirements","opportunityId":"portable-scholarship","documentId":document_id.clone(),"fileName":"private-syllabus.txt","mime":"text/plain","importedAt":Utc::now().to_rfc3339(),"status":"reviewed","proposedRequirements":["Transcript"],"proposedPrompts":[],"warnings":[],"selectedRequirements":["Transcript"],"selectedPromptIds":[]}).to_string(),Utc::now().to_rfc3339()]).unwrap();
         let archive_path = base.path().join("portable.studentcenter");
         let passphrase = "correct horse battery staple";
@@ -11973,6 +12189,7 @@ mod tests {
         )
         .unwrap();
         let raw_archive = fs::read(&archive_path).unwrap();
+        assert!(!raw_archive.windows(task_input.description.len()).any(|window|window==task_input.description.as_bytes()));
         assert!(!raw_archive
             .windows("Private capstone plan".len())
             .any(|window| window == b"Private capstone plan"));
@@ -12035,6 +12252,9 @@ mod tests {
         install_staged_profile(&state, staged).unwrap();
 
         let restored = state.db.lock().unwrap();
+        assert_eq!(task_details::load(&restored,"portable-task").unwrap(),saved_details);
+        assert_eq!(task_details::activity(&restored,"portable-task",None,100).unwrap().entries.len(),5);
+        assert!(restored.query_row("SELECT EXISTS(SELECT 1 FROM task_private_documents WHERE document_id=?1)",[&document_id],|r|r.get::<_,bool>(0)).unwrap());
         assert_eq!(interface_preferences::load(&restored, interface_preferences::InterfaceMode::Comfy).unwrap(), saved_interface);
         assert_eq!(
             restored

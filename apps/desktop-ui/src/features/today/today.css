@@ -841,6 +841,26 @@
   background: var(--bg-surface);
   min-width: 0;
 }
+@media (min-width: 1440px) {
+  .compact-layout > .today-task-inspector {
+    position: sticky;
+    top: 56px;
+    height: calc(100dvh - 94px);
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .compact-layout > .today-task-inspector > header {
+    flex-shrink: 0;
+  }
+  .compact-layout > .today-task-inspector > .inspector-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
 .today-task-inspector > header {
   display: flex;
   align-items: center;

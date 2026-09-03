@@ -104,8 +104,14 @@ Approved logo artwork is consumed directly as a raster master through CSS
 clipping, without redrawing or retyping. Installer/tray/favicon export replacement
 remains outstanding; the published v0.12.0 identity is not modified by this work.
 
-The Today comparison approval gate is still open. Do not roll out remaining
-screens or begin schema 26 until the user approves the two Today experiences.
+The user approved both Today experiences on September 2, 2026. The visual gate
+is satisfied; schema 26 and the remaining desktop screen rollout can proceed.
+Full rebuild certification remains outstanding.
+
+Milestone C1 adds schema-26 encrypted local task details and the shared editor in
+Today and Work. File uploads are native-only; the browser proof intentionally uses
+session-only synthetic edits. See `design-qa.md` for test evidence and remaining
+Calendar/remaining-screen/certification work. Published v0.12.0 is unchanged.
 
 With the repository's normal Vite development server running, open this file
 through Vite's workspace `/@fs/` URL. All proof images and fonts are local; the

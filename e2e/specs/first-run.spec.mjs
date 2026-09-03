@@ -14,7 +14,7 @@ describe("installed Student Center", () => {
     await body.waitForDisplayed();
     await browser.waitUntil(async () => (await body.getText()).includes("Make it yours"));
     const bootstrap = await browser.tauri.execute(async ({ core }) => core.invoke("app_initialize"));
-    assert.equal(bootstrap.schemaVersion, 25);
+    assert.equal(bootstrap.schemaVersion, 26);
     assert.equal(bootstrap.onboarding.required, true);
     assert.equal(bootstrap.dashboard, null);
     assert.doesNotMatch(await body.getText(), /Alex Morgan/);

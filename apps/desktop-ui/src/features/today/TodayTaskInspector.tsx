@@ -1,6 +1,7 @@
 import { CalendarDays, Clock3, Flag, MapPin, X } from "lucide-react";
 import type { PlanBlock, TaskRecord, WorkspaceSnapshot } from "../../native";
 import { dueLabel, priorityLabel, riskLabel } from "./todayModel";
+import { TaskDetailsEditor } from "../tasks/TaskDetailsEditor";
 
 export function TodayTaskInspector({
   task,
@@ -61,16 +62,6 @@ export function TodayTaskInspector({
             <dd>{task.minutes} min</dd>
           </div>
           <div>
-            <dt>Status</dt>
-            <dd>
-              {task.completed
-                ? "Completed"
-                : block?.startedAt
-                  ? "In progress"
-                  : "To do"}
-            </dd>
-          </div>
-          <div>
             <dt>
               <Flag /> Priority
             </dt>
@@ -89,6 +80,11 @@ export function TodayTaskInspector({
             </div>
           )}
         </dl>
+        <TaskDetailsEditor
+          key={task.id}
+          taskId={task.id}
+          completed={task.completed}
+        />
         <h3>Planning</h3>
         <p>
           {task.splittable
