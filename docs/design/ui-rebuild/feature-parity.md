@@ -7,7 +7,7 @@ certification claim. All replacement/verification columns start pending.
 | Surface | Existing behavior to retain | Replacement / verification |
 | --- | --- | --- |
 | Startup / lock | Empty first run, retry/recovery, PIN lock, credential gating | Pending |
-| Onboarding | Skip/finish, student/timezone, institution/campus/term, courses, availability, protected time, import entry, appearance | Pending |
+| Onboarding | Skip/finish, student/timezone, institution/campus/term, courses, availability, protected time, import entry, appearance | Rebuilt and regression-tested; installed-app pass pending |
 | Today | Next action with reasons/alternatives, focus start, task completion, replan, conflicts, review entry, dismissible setup | Pending |
 | Calendar | Week/agenda, navigation, task/commitment/class blocks, create/edit, move/lock/undo, overload warnings, date/timezone handling | Pending |
 | Work | Inbox/upcoming/overdue/exams/completed, create/edit/delete, course, estimate, due date, priority, academic risk, energy, location, splitting, dependencies, version checks | Pending |
@@ -174,3 +174,22 @@ installed-app certification.
 Evidence: `scholarships-comfy-1600.png`, `scholarships-compact-1600.png` and
 `scholarships-writing-compact-1600.png`. Discover in Comfy and Writing in Compact
 both measured a 320px document/body at a 320px viewport.
+
+## C6 onboarding visual preservation audit
+
+- First-run setup retains finish/skip, profile and timezone, institution, campus,
+  term, course and meeting entry, availability, protected-time preferences,
+  Canvas/document/image import entry points and appearance selection.
+- The setup draft now owns its active theme immediately. A Light first-run no
+  longer inherits a stale dark theme from a previous profile or browser preview.
+- The approved identity is shown on a solid high-contrast surface, with the
+  checkerboard-free artwork unchanged. The story panel and form use bundled Inter,
+  restrained corners and the same green/fine-border language as Comfy.
+- Every direct grid child can shrink, preventing the setup story and form from
+  widening a 320px desktop window. The four setup steps remain visible as icons
+  while supporting copy collapses at narrow widths.
+- Automated coverage checks the saved theme override, theme switching and axe
+  results. `onboarding-comfy-light-1280.png` records the reviewed browser state.
+
+This checkpoint does not claim native Canvas import, catalog lookup or installed
+first-run certification; those remain part of the final native pass.

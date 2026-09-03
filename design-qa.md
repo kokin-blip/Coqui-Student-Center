@@ -327,3 +327,23 @@ the approved transparent frog face. The application face-only mark uses the same
 source file instead of fragile CSS cropping. File inspection confirms alpha on
 the source and PNG exports, a six-image ICO, and a valid ICNS container. Mobile
 runtime work remains deferred and its Android/iOS icon folders remain unchanged.
+
+## Checkpoint C6 — Onboarding (September 3, 2026)
+
+The first-run experience now follows the approved Comfy language: a focused green
+story panel, high-contrast approved identity, bundled Inter typography and a calm
+white setup surface. All existing setup capabilities remain reachable, including
+finish/skip, timezone and institution selection, terms, courses and meetings,
+availability, protected time, Canvas/document/image import and appearance.
+
+The setup draft now applies its own appearance immediately instead of inheriting
+a stale dark theme from another profile or preview session. Light/Dark selection
+is reflected live and remains part of the existing persisted draft. Direct grid
+children explicitly shrink, eliminating measured page-level overflow at 320px;
+the progress rail condenses to four accessible step icons.
+
+Evidence: `docs/design/ui-rebuild/onboarding-comfy-light-1280.png`. Browser checks
+at 1280px and 320px used an empty synthetic profile and recorded no page-level
+horizontal overflow. A focused regression test covers stale-theme replacement,
+live theme changes and axe. This remains browser evidence; installed first-run,
+live Canvas and catalog certification are still pending.

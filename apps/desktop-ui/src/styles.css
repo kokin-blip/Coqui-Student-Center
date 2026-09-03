@@ -1855,22 +1855,24 @@ textarea:focus-visible {
   grid-template-columns: minmax(260px, 34vw) 1fr;
   background: var(--bg);
 }
+.onboarding-experience > * { min-width: 0; box-sizing: border-box; }
 .onboarding-story {
   position: sticky;
   top: 0;
   height: 100vh;
   padding: clamp(30px, 5vw, 72px);
-  color: var(--text-primary);
+  color: white;
   background:
-    radial-gradient(circle at 20% 0, #70c8a555, transparent 22rem),
-    linear-gradient(145deg, #084f4b, #0b746b 62%, var(--info) 150%);
+    radial-gradient(circle at 20% 0, #b9dc7366, transparent 22rem),
+    linear-gradient(145deg, #164f43, #2f7562 62%, #6d914e 150%);
   display: flex;
   flex-direction: column;
   gap: clamp(34px, 7vh, 74px);
   overflow: hidden;
 }
 .onboarding-story:after { content: ""; position: absolute; width: 340px; height: 340px; border: 1px solid #ffffff20; border-radius: 50%; right: -180px; bottom: -120px; box-shadow: 0 0 0 56px #ffffff09, 0 0 0 112px #ffffff06; }
-.onboarding-story .coqui-logo { color: white; }
+.onboarding-story .coqui-logo { width: fit-content; padding: 12px; border-radius: 5px; background: white; }
+.onboarding-story .coqui-logo .brand-descriptor { color: #40534f; }
 .onboarding-story .coqui-wordmark small,
 .onboarding-story p { color: #d5ebe5; }
 .onboarding-story .eyebrow { color: #bde8da; }
@@ -1894,7 +1896,7 @@ textarea:focus-visible {
 .setup-panel-head span { font-size: var(--text-meta); font-weight: 850; text-transform: uppercase; letter-spacing: .1em; }
 .setup-panel-head small { font-size: var(--text-meta); }
 .setup-stage { display: grid; gap: 18px; animation: stage-enter 210ms ease-out; }
-.setup-intro { display: flex; gap: 14px; padding: 18px; border: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line)); border-radius: 18px; background: var(--surface-soft); }
+.setup-intro { display: flex; gap: 14px; padding: 18px; border: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line)); border-radius: 5px; background: var(--surface-soft); }
 .setup-intro > svg { width: 24px; color: var(--teal); }
 .setup-intro div { display: grid; gap: 5px; }
 .setup-intro strong { font-size: 14px; }
@@ -1902,7 +1904,7 @@ textarea:focus-visible {
 .setup-fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; }
 .setup-fieldset legend { margin-bottom: 9px; font-size: var(--text-meta); font-weight: 850; }
 .timezone-card,
-.selected-school { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); display: flex; align-items: center; gap: 12px; }
+.selected-school { padding: 16px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); display: flex; align-items: center; gap: 12px; }
 .timezone-card > svg,
 .selected-school > svg { color: var(--teal); width: 20px; }
 .timezone-card div,
@@ -1914,7 +1916,7 @@ textarea:focus-visible {
 .input-with-icon > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 17px; color: var(--muted); }
 .input-with-icon input { width: 100%; padding-left: 40px !important; }
 .prediction-list,
-.course-suggestions { display: grid; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.course-suggestions { display: grid; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: none; }
 .prediction-list button,
 .course-suggestions button { min-height: 54px; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); display: flex; align-items: center; gap: 10px; text-align: left; }
 .prediction-list button:hover,
@@ -1965,7 +1967,7 @@ textarea:focus-visible {
   .onboarding-experience { grid-template-columns: 1fr; }
   .onboarding-story { position: relative; height: auto; min-height: 260px; padding: 28px; gap: 24px; }
   .onboarding-story h1 { font-size: 38px; max-width: none; }
-  .setup-steps { grid-template-columns: repeat(4, 1fr); }
+  .setup-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .local-promise { display: none; }
   .setup-panel { padding: 28px; }
 }

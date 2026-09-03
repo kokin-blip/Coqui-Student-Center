@@ -158,6 +158,12 @@ export function OnboardingExperience({
   };
   const [importAfter, setImportAfter] = useState(false);
 
+  // First run follows its own saved draft rather than inheriting a theme left
+  // behind by a previous profile or browser preview session.
+  useEffect(() => {
+    applyAppearance(draft.appearance);
+  }, [draft.appearance]);
+
   const update = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) => {
     setSaved(false);
     setDraft((current) => ({ ...current, [key]: value }));
