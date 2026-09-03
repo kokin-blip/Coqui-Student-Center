@@ -368,3 +368,38 @@ integration and shared modal focus tests. All 77 UI tests pass in the isolated
 single-worker certification run. `StudentCenter.tsx` fell from 2,198 to 1,596
 lines through tested extraction; no native contract or persisted behavior was
 removed. Installed native workflow certification is still pending.
+
+## Checkpoint D1 — Desktop certification matrix (September 3, 2026)
+
+The approved rebuild has completed its local browser and automated certification.
+Comfy and Compact were exercised through the real mode control at 320, 768, 1024,
+1280, 1586 and 1920 pixels. In every case the document width matched the viewport.
+Today, Calendar, Work, Courses, Study and Scholarships were each reopened at 320px
+without page-level horizontal overflow; dense calendars and tables keep their own
+labeled scrolling regions and list alternatives.
+
+All six shipped theme choices were selected through Settings in Compact: System,
+Coqui Dark, Midnight, Graphite, Forest and Light. Fresh Comfy remains light and a
+first Compact selection remains Coqui Dark. A static regression check now requires
+the shipped reduced-motion media query to remove animation and transition timing.
+The 320px reflow exercises high-zoom-equivalent constraints, but is not recorded as
+an actual browser-zoom test because the browser automation does not expose that
+platform control.
+
+Local gates pass 78 desktop UI tests, 16 desktop contracts, 19 shared contracts,
+41 cloud tests, 199 native tests with one credentialed live-adapter test ignored,
+and 55 script/OCR/packaging tests when macOS disk-image creation runs outside the
+sandbox. The production build has no chunk-size warning. Catalog verification
+reports 3 catalogs, 144 courses and 381 sections; calendar verification reports
+one provider, three terms, six no-class dates and two layouts. The secret scan and
+whitespace check are clean.
+
+Cross-platform certification now includes a non-publishing installed-package gate.
+On disposable GitHub-hosted accounts, Windows installs the NSIS package, launches
+twice against a new profile, verifies persistence and uninstalls; macOS mounts the
+DMG, verifies its ad-hoc seal, copies the app, launches twice against a new profile
+and verifies persistence. This avoids touching a developer's real local database
+or credential vault. The workflow also keeps the existing prepared-OCR native IPC,
+first-run, package signature and checksum gates. Cross-platform results are pending
+for this checkpoint and must not be represented as passed until the hosted run is
+green. No release is created or modified by this certification workflow.

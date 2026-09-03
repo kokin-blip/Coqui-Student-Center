@@ -110,6 +110,67 @@ jobs:
         if: matrix.platform == 'macos-15'
         run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }}
       - run: npm run release:checksums
+      - name: Smoke installed Windows package
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          # Never run this against a developer account: the hosted runner is the
+          # isolation boundary for both the local database and credential vault.
+          if ($env:RUNNER_ENVIRONMENT -ne "github-hosted") { throw "Installer smoke requires a disposable hosted account." }
+          $profileRoot = Join-Path $env:APPDATA "app.studentcenter.desktop"
+          if (Test-Path $profileRoot) { throw "Refusing to touch an existing Coqui profile." }
+          $installer = Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          $installRoot = Join-Path $env:RUNNER_TEMP "CoquiSmoke"
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$installRoot" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "NSIS installation failed." }
+          $apps = @(Get-ChildItem $installRoot -Filter "*.exe" | Where-Object { $_.Name -notlike "uninstall*" })
+          if ($apps.Count -ne 1) { throw "The NSIS installer did not create exactly one application executable." }
+          $database = Join-Path $profileRoot "student-center.db"
+          foreach ($launch in 1..2) {
+            $process = Start-Process -FilePath $apps[0].FullName -PassThru
+            try {
+              Start-Sleep -Seconds 8
+              if ($process.HasExited) { throw "The installed application exited on launch $launch." }
+              if (-not (Test-Path $database)) { throw "The installed application did not persist its profile." }
+            } finally {
+              if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force; $process.WaitForExit() }
+            }
+          }
+          $uninstaller = Get-ChildItem $installRoot -Filter "uninstall*.exe" | Select-Object -First 1
+          if (-not $uninstaller) { throw "The NSIS installer did not create an uninstaller." }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstallation failed." }
+          Start-Sleep -Seconds 3
+          if (Test-Path $apps[0].FullName) { throw "The application executable survived uninstallation." }
+      - name: Smoke installed macOS package
+        if: matrix.platform == 'macos-15'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The disposable hosted account also isolates the macOS credential vault.
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          profile_root="$HOME/Library/Application Support/app.studentcenter.desktop"
+          test ! -e "$profile_root"
+          dmg=$(find apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          mount_point="$RUNNER_TEMP/coqui-dmg"
+          copy_root="$RUNNER_TEMP/coqui-app"
+          mkdir -p "$mount_point" "$copy_root"
+          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount_point"
+          trap 'hdiutil detach "$mount_point" -force || true' EXIT
+          cp -R "$mount_point/Coqui Student Center.app" "$copy_root/"
+          codesign --verify --deep --strict "$copy_root/Coqui Student Center.app"
+          binary="$copy_root/Coqui Student Center.app/Contents/MacOS/student-center"
+          for launch in 1 2; do
+            "$binary" &
+            app_pid=$!
+            sleep 8
+            kill -0 "$app_pid"
+            test -s "$profile_root/student-center.db"
+            kill "$app_pid"
+            wait "$app_pid" || true
+          done
+          hdiutil detach "$mount_point"
+          trap - EXIT
       - uses: actions/upload-artifact@v4
         with:
           name: student-center-${{ matrix.platform }}

@@ -42,7 +42,7 @@ describe("Today", () => {
     expect(panel.queryByText(/^completed$/)).not.toBeInTheDocument();
   });
 
-  test("the reference heading and timeline date are present", async () => {
+  test("the heading, timeline, and active timezone are present", async () => {
     render(<StudentCenter />);
     const heading = await screen.findByRole(
       "heading",
@@ -54,7 +54,7 @@ describe("Today", () => {
       screen.getByRole("region", { name: "Daily timeline" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/All times in/)).toHaveTextContent(
-      "America/Phoenix",
+      Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     );
   });
 

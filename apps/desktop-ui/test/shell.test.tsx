@@ -194,6 +194,13 @@ describe("stylesheets", () => {
     }
   });
 
+  test("reduced motion removes animated transition timing", () => {
+    const css = stylesheets.join("\n");
+    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    expect(css).toMatch(/animation-duration:\s*\.01ms\s*!important/);
+    expect(css).toMatch(/transition-duration:\s*\.01ms\s*!important/);
+  });
+
   // A hardcoded colour cannot follow the theme, so it renders a light-palette
   // value on a dark surface. The brand mark and the onboarding splash are
   // deliberately fixed and are allowed.
