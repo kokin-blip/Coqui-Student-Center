@@ -291,3 +291,28 @@ where the other 53 script/OCR/packaging checks pass.
 Still pending: Scholarship feature split/visual rollout, onboarding and transient
 workflow polish, full visual/state/accessibility matrix, native icon exports and
 installed Windows/macOS certification. No release was published or replaced.
+
+## Checkpoint C5 — Scholarship visual rollout (September 3, 2026)
+
+Scholarships now uses the same approved identity, bundled Inter typography, fine
+borders and mode-specific workspace language as the rebuilt desktop areas. Comfy
+keeps generous source/reading space beside its supporting pane. Compact uses the
+dark command shell, full-width section selector and dense edge-to-edge panels;
+it is a distinct composition rather than a padding-only preference.
+
+All four existing sections remain reachable and share the same local workspace:
+Discover, Saved, Applications and Writing. Source attribution, reviewable changes,
+manual opportunities, explainable matching, encrypted requirement documents,
+application checklists, deadline tasks, versioned drafts, story examples and
+consented Apply/Dismiss writing feedback are preserved. Initial loading now has
+an intentional skeleton and a failed load has an explicit retry.
+
+Evidence under `docs/design/ui-rebuild/`: `scholarships-comfy-1600.png`,
+`scholarships-compact-1600.png` and `scholarships-writing-compact-1600.png`.
+Comfy Discover and Compact Writing both measured no page-level overflow at 320px.
+Focused scholarship workflow and full primary-surface axe tests pass.
+
+The visual rollout is complete, but the four section bodies still need physical
+file extraction from the existing Scholarship component before the architecture
+portion of milestone C is complete. Onboarding/overlay polish, the comprehensive
+state/theme matrix, native icons and installed certification also remain pending.

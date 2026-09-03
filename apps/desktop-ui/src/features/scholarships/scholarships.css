@@ -1,0 +1,118 @@
+.scholarship-center {
+  max-width: none;
+  font-family: var(--font-ui);
+}
+
+.scholarship-center h2,
+.scholarship-center h3 {
+  font-family: var(--font-ui);
+}
+
+.scholarship-center .scholarship-panel,
+.scholarship-center .scholarship-privacy,
+.scholarship-center .scholarship-tabs {
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+.scholarship-center .scholarship-grid,
+.scholarship-center .scholarship-saved-layout {
+  grid-template-columns: minmax(0, 1.55fr) minmax(20rem, 0.7fr);
+  gap: 24px;
+}
+
+.scholarship-center .scholarship-writing {
+  grid-template-columns: minmax(17rem, 0.58fr) minmax(0, 1.42fr);
+  gap: 24px;
+}
+
+.scholarship-center .match-inspector,
+.scholarship-center .writing-editor {
+  position: sticky;
+  top: 18px;
+  max-height: calc(100dvh - 8rem);
+  overflow: auto;
+}
+
+.scholarship-center .source-list > article,
+.scholarship-center .opportunity-list > button,
+.scholarship-center .application-list > article,
+.scholarship-center .story-list > article {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.scholarship-loading {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.scholarship-load-error {
+  max-width: 38rem;
+  margin: 10vh auto 0;
+}
+
+[data-interface-mode="compact"] .scholarship-center {
+  padding: 18px 20px 48px;
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-hero {
+  margin-bottom: 14px;
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-hero h1 {
+  color: var(--text-primary);
+  font-size: 28px;
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-tabs {
+  width: 100%;
+  margin: 0 0 12px;
+  border-radius: 0;
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-tabs button {
+  flex: 1;
+  justify-content: center;
+  border-radius: 3px;
+  padding-block: 7px;
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-grid,
+[data-interface-mode="compact"] .scholarship-center .scholarship-saved-layout,
+[data-interface-mode="compact"] .scholarship-center .scholarship-writing {
+  gap: 1px;
+  border: 1px solid var(--border-subtle);
+  background: var(--border-subtle);
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-panel {
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-primary);
+}
+
+@media (max-width: 1099px) {
+  .scholarship-center .scholarship-grid,
+  .scholarship-center .scholarship-saved-layout,
+  .scholarship-center .scholarship-writing,
+  [data-interface-mode="compact"] .scholarship-center .scholarship-grid,
+  [data-interface-mode="compact"] .scholarship-center .scholarship-saved-layout,
+  [data-interface-mode="compact"] .scholarship-center .scholarship-writing {
+    grid-template-columns: minmax(0, 1fr);
+    border: 0;
+    background: transparent;
+  }
+
+  .scholarship-center .match-inspector,
+  .scholarship-center .writing-editor {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 767px) {
+  [data-interface-mode="compact"] .scholarship-center {
+    padding: 16px 12px 92px;
+  }
+}

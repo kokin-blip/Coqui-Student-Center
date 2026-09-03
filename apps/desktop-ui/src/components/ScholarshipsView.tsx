@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   AlertTriangle,
@@ -41,6 +41,7 @@ import type {
   ScholarshipWritingPreview,
 } from "../native";
 import { AnimatedContent, CoquiProgress } from "./ui/CoquiPrimitives";
+import "../features/scholarships/scholarships.css";
 
 type Section = "discover" | "saved" | "applications" | "writing";
 type AutosaveState = "idle" | "saving" | "saved" | "error";
@@ -69,12 +70,23 @@ export function ScholarshipsView() {
   const [writingConsent, setWritingConsent] = useState(false);
   const [policyAcknowledged, setPolicyAcknowledged] = useState(false);
   const [selectedSnippets, setSelectedSnippets] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  useEffect(() => {
-    void getScholarshipWorkspace()
-      .then(setWorkspace)
-      .catch((error) => setMessage(String(error)));
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      setWorkspace(await getScholarshipWorkspace());
+    } catch (error) {
+      setLoadError(String(error));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
   const opportunities = useMemo(
     () =>
       workspace?.opportunities.filter(
@@ -370,17 +382,32 @@ export function ScholarshipsView() {
     );
   };
 
-  if (!workspace && !message)
+  if (loading)
     return (
       <div className="content scholarship-center">
-        <div className="scholarship-panel" aria-busy="true">
-          Loading Scholarship Center…
+        <div className="scholarship-panel scholarship-loading" aria-busy="true">
+          <div className="skeleton-line wide" />
+          <div className="skeleton-line" />
+          <div className="skeleton-block" />
+        </div>
+      </div>
+    );
+
+  if (!workspace)
+    return (
+      <div className="content scholarship-center">
+        <div className="scholarship-panel scholarship-load-error" role="alert">
+          <h1>Scholarships could not load</h1>
+          <p>{loadError}</p>
+          <button className="outline" onClick={() => void load()}>
+            Try again
+          </button>
         </div>
       </div>
     );
 
   return (
-    <div className="content scholarship-center">
+    <div className="content scholarship-center" data-route="scholarships">
       <div className="page-head scholarship-hero">
         <div>
           <p className="eyebrow">Funding workspace</p>
@@ -410,6 +437,7 @@ export function ScholarshipsView() {
           <button
             key={id}
             className={section === id ? "active" : ""}
+            aria-pressed={section === id}
             onClick={() => setSection(id)}
           >
             <Icon />

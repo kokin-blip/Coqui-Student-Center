@@ -148,3 +148,25 @@ Reference-sized evidence: `courses-comfy-1600.png`,
 `study-compact-1600.png`. Both screens measured document/body width of 320px at
 a 320px viewport in Compact mode. These are synthetic browser checks, not an
 installed-app certification.
+
+## C5 Scholarship visual preservation audit
+
+- Discover, Saved, Applications and Writing continue to use one local workspace
+  and the same encrypted native commands. This pass changes presentation and
+  loading/error behavior, not opportunity, application, requirement, draft or
+  AI-policy contracts.
+- Comfy provides a wider reading/work area with persistent supporting panes.
+  Compact uses a full-width section bar and dense edge-to-edge panels, while
+  preserving the approved dark shell. Supporting inspectors stack below 1100px.
+- A first-load failure now has an explicit retry instead of displaying an empty
+  workspace. The selected section is exposed to assistive technology, all headings
+  use bundled Inter, and reduced-motion behavior remains inherited from the shared
+  primitive.
+- Public-source attribution, independent source refresh, manual URL entry,
+  explainable matching, requirement review, application checklist, version restore,
+  story library, exact AI disclosure/consent and Apply/Dismiss suggestions remain
+  reachable. No auto-submission or fallback provider behavior was added.
+
+Evidence: `scholarships-comfy-1600.png`, `scholarships-compact-1600.png` and
+`scholarships-writing-compact-1600.png`. Discover in Comfy and Writing in Compact
+both measured a 320px document/body at a 320px viewport.
