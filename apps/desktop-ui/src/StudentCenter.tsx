@@ -46,10 +46,11 @@ import {
   StudentDestination,
 } from "./components/AppNavigation";
 import { AppLogo } from "./components/AppLogo";
+import { applyInterfacePreferences, initialInterfacePreferences, loadInterfacePreferences, saveInterfacePreferences, type InterfacePreferences } from "./features/shell/interfacePreferences";
 import { ScheduleImportReview } from "./components/ScheduleImportReview";
 import { SchedulePhotoEditor } from "./components/SchedulePhotoEditor";
 import { OnboardingExperience } from "./components/OnboardingExperience";
-import { isSetupChecklistDismissed } from "./components/SetupChecklist";
+import { isSetupChecklistDismissed, rememberDismissal } from "./components/SetupChecklist";
 import type { SettingsSection } from "./components/SettingsView";
 import { TodayView } from "./components/TodayView";
 import { Modal } from "./components/Modal";
@@ -131,7 +132,6 @@ import {
   toggleTask,
   unlockWithPin,
   updateAccent,
-  updateAppearance,
   updateNotificationSettings,
   verifyEmailCode,
   WorkspaceSnapshot,
@@ -240,6 +240,12 @@ export function StudentCenter() {
   const [appearance, setAppearance] =
     useState<AppearancePreference>(initialAppearance);
   const [accent, setAccent] = useState<AccentPreference>(initialAccent);
+  useEffect(() => applyAppearance(appearance, accent), [appearance, accent]);
+  const [interfacePreferences, setInterfacePreferences] = useState(initialInterfacePreferences);
+  const [interfaceBusy, setInterfaceBusy] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => import.meta.env.DEV && !isDesktop() && new URLSearchParams(location.search).get("reference") === "compact" ? "reference-task-0" : null);
+  const [workFilter, setWorkFilter] = useState<"all" | "high" | "completed">("all");
+  const interfaceMode = interfacePreferences.mode;
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
   // A "system" preference has to keep following the OS while the app is open.
@@ -248,6 +254,20 @@ export function StudentCenter() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || modal || security?.locked || !data) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() === "k") { event.preventDefault(); setModal("search"); return; }
+      const destinations: StudentDestination[] = ["today", "calendar", "work", "courses", "study", "scholarships"];
+      const destination = destinations[Number(event.key) - 1];
+      if (destination) { event.preventDefault(); setView(destination); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [modal, security?.locked, Boolean(data)]);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection | null>(null);
   const showSettingsSection = (section: SettingsSection) => {
@@ -330,6 +350,45 @@ export function StudentCenter() {
   const [bootPhase, setBootPhase] = useState<BootPhase>("loading");
   const [bootError, setBootError] = useState("");
   const [bootAttempt, setBootAttempt] = useState(0);
+  const changeInterface = async (next: InterfacePreferences) => {
+    if (interfaceBusy) return;
+    setInterfaceBusy(true);
+    try {
+      const saved = await saveInterfacePreferences(next);
+      setInterfacePreferences(saved);
+      applyInterfacePreferences(saved);
+      const theme = saved.themes[saved.mode];
+      setAppearance(theme);
+      applyAppearance(theme, accent);
+    } catch (error) { setError(String(error)); }
+    finally { setInterfaceBusy(false); }
+  };
+  useEffect(() => {
+    if (!data) return;
+    let active = true;
+    void getLocalWorkspace().then(workspace => {
+      if (!active) return;
+      setTodayWorkspace(workspace);
+      setAccent(workspace.accent);
+    }).catch(error => { if (active) setError(String(error)); });
+    return () => { active = false; };
+  }, [data]);
+  useEffect(() => {
+    if (!data) return;
+    let active = true;
+    setInterfaceBusy(true);
+    void loadInterfacePreferences().then(async value => {
+      if (!active) return;
+      await saveInterfacePreferences(value);
+      if (!active) return;
+      setInterfacePreferences(value);
+      applyInterfacePreferences(value);
+      setAppearance(value.themes[value.mode]);
+      applyAppearance(value.themes[value.mode]);
+    }).catch(error => { if (active) setError(String(error)); })
+      .finally(() => { if (active) setInterfaceBusy(false); });
+    return () => { active = false; };
+  }, [Boolean(data)]);
   const retryBoot = useCallback(
     () => setBootAttempt((attempt) => attempt + 1),
     [],
@@ -360,14 +419,6 @@ export function StudentCenter() {
         setOnboarding(result.onboarding);
         setData(result.dashboard);
         setBootPhase("ready");
-        getLocalWorkspace()
-          .then((workspace) => {
-            setTodayWorkspace(workspace);
-            setAppearance(workspace.appearance);
-            setAccent(workspace.accent);
-            applyAppearance(workspace.appearance, workspace.accent);
-          })
-          .catch(() => undefined);
       })
       .catch((e) => {
         if (!active) return;
@@ -416,20 +467,6 @@ export function StudentCenter() {
     };
   }, []);
 
-  // Keep the Today checklist honest as the student adds courses and work. Only
-  // runs while the checklist can still be shown.
-  useEffect(() => {
-    if (checklistDismissed || !data) return;
-    let active = true;
-    getLocalWorkspace()
-      .then((workspace) => {
-        if (active) setTodayWorkspace(workspace);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [data, checklistDismissed]);
   useEffect(() => {
     if (!security?.locked || security.retryAfterSeconds <= 0) return;
     const timer = setTimeout(
@@ -731,8 +768,14 @@ export function StudentCenter() {
       );
       setData(next);
       setToast(next.importNotice ?? "Encrypted profile restored.");
+      setSelectedTaskId(null);
       setBackupPassphrase("");
       closeSettingsSection();
+      void loadInterfacePreferences().then(restored => {
+        setInterfacePreferences(restored);
+        applyInterfacePreferences(restored);
+        setAppearance(restored.themes[restored.mode]);
+      }).catch(() => setError("Backup restored. Restart Coqui to reload its appearance preferences."));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1107,7 +1150,7 @@ export function StudentCenter() {
   // still say "checking" if it was built before the probe finished.
   const ocr = ocrStatus ?? data.ocr;
   return (
-    <div className="app-shell">
+    <div className={`app-shell rebuild-shell ${interfaceMode} ${view === "today" ? "today-destination" : ""}`}>
       {settingsSection === "account" && (
         <Suspense
           fallback={
@@ -1145,6 +1188,10 @@ export function StudentCenter() {
         </Suspense>
       )}
       <DesktopNavigation
+        mode={interfaceMode}
+        studentName={data.studentName}
+        onImport={() => setModal("import")}
+        onWorkFilter={(filter) => { setWorkFilter(filter); setView("work"); }}
         active={view}
         onNavigate={(next) => {
           setSettingsSection(null);
@@ -1161,7 +1208,8 @@ export function StudentCenter() {
       />
       <main className="main" aria-hidden={settingsSection ? true : undefined}>
         <header className="topbar">
-          <div className="crumb">
+          {interfaceMode === "compact" && <button className="shell-command" aria-label="Open command search" onClick={() => setModal("search")}><Search /> <span>Search or jump to…</span><kbd>{navigator.platform.includes("Mac") ? "⌘" : "Ctrl"} K</kbd></button>}
+          <div className="crumb" hidden={interfaceMode === "compact"}>
             <LayoutGrid />
             <span>
               {view === "today"
@@ -1182,6 +1230,9 @@ export function StudentCenter() {
             <span>{view === "today" ? "Agenda" : "Local workspace"}</span>
           </div>
           <div className="top-actions">
+            <div className="mode-picker" role="group" aria-label="Workspace layout">
+              {(["comfy", "compact"] as const).map(mode => <button key={mode} aria-pressed={interfaceMode === mode} disabled={interfaceBusy} onClick={() => void changeInterface({ ...interfacePreferences, mode })}>{mode === "comfy" ? "Comfy" : "Compact"}</button>)}
+            </div>
             <span className="offline">
               <WifiOff /> Works offline
             </span>
@@ -1219,6 +1270,12 @@ export function StudentCenter() {
         >
           {view === "today" ? (
             <TodayView
+              mode={interfaceMode}
+              selectedTaskId={selectedTaskId}
+              onSelectTask={setSelectedTaskId}
+              onEditTask={(id) => { setSelectedTaskId(id); setView("work"); }}
+              onCalendar={() => setView("calendar")}
+              onWork={() => { setWorkFilter("all"); setView("work"); }}
               data={data}
               workspace={todayWorkspace}
               ocr={ocr}
@@ -1231,7 +1288,7 @@ export function StudentCenter() {
               onOpenCourses={() => setView("courses")}
               onAddTask={() => setModal("task")}
               onImport={() => setModal("import")}
-              onDismissChecklist={() => setChecklistDismissed(true)}
+              onDismissChecklist={() => { rememberDismissal(); setChecklistDismissed(true); }}
               onStartBlock={(blockId) =>
                 void run(
                   () => startPlanBlock(blockId),
@@ -1265,6 +1322,8 @@ export function StudentCenter() {
             />
           ) : view === "work" ? (
             <WorkView
+              initialTaskId={selectedTaskId}
+              initialFilter={workFilter}
               onDashboard={setData}
               onImport={() => setModal("import")}
               onStudy={() => setView("study")}
@@ -1278,11 +1337,7 @@ export function StudentCenter() {
               busy={busy}
               institutionConfigured={Boolean(institutionId)}
               onAppearance={(next) => {
-                setAppearance(next);
-                applyAppearance(next, accent);
-                void updateAppearance(next).catch((value) =>
-                  setError(String(value)),
-                );
+                void changeInterface({ ...interfacePreferences, themes: { ...interfacePreferences.themes, [interfaceMode]: next } });
               }}
               onAccent={(next) => {
                 setAccent(next);
@@ -1291,6 +1346,9 @@ export function StudentCenter() {
                   setError(String(value)),
                 );
               }}
+              interfaceMode={interfaceMode}
+              onInterfaceMode={(mode) => void changeInterface({ ...interfacePreferences, mode })}
+              onDeleteProfile={() => { setDeleteConfirmation(""); setModal("delete-profile"); }}
               onCanvas={() => {
                 setCanvasMode("calendar");
                 showSettingsSection("canvas");
@@ -1326,6 +1384,7 @@ export function StudentCenter() {
             />
           )}
         </Suspense>
+        {interfaceMode === "compact" && <footer className="shell-shortcuts"><button onClick={() => setModal("search")}><kbd>{navigator.platform.includes("Mac") ? "⌘" : "Ctrl"} K</kbd> Command</button><button onClick={() => setModal("task")}><Plus size={14} /> Add task</button><button onClick={() => setView("calendar")}>Open Calendar</button><button onClick={() => setModal("replan")}>Replan</button></footer>}
       </main>
       <button
         className="fab"

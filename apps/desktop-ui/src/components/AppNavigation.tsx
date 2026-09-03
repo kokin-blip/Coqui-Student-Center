@@ -5,13 +5,16 @@ import {
   Home,
   ListChecks,
   LockKeyhole,
-  LogOut,
   Settings,
   GraduationCap,
   ShieldCheck,
+  Plus,
+  Upload,
+  UserRound,
 } from "lucide-react";
 import { useState } from "react";
 import { AppLogo } from "./AppLogo";
+import type { InterfaceMode } from "../features/shell/interfacePreferences";
 
 export type StudentDestination =
   | "today"
@@ -22,6 +25,10 @@ export type StudentDestination =
   | "scholarships";
 
 type AppNavigationProps = {
+  mode?: InterfaceMode;
+  studentName?: string;
+  onImport?: () => void;
+  onWorkFilter?: (filter: "all" | "high" | "completed") => void;
   active: StudentDestination | "academic-settings" | "settings";
   onNavigate: (destination: StudentDestination) => void;
   onQuickAdd: () => void;
@@ -40,6 +47,11 @@ const destinations = [
 ] as const;
 
 export function DesktopNavigation({
+  mode = "comfy",
+  studentName,
+  onQuickAdd,
+  onImport,
+  onWorkFilter,
   active,
   onNavigate,
   onSettings,
@@ -53,7 +65,7 @@ export function DesktopNavigation({
       </div>
       <p className="nav-label">Plan</p>
       <nav aria-label="Primary navigation">
-        {destinations.map(({ id, label, icon: Icon }) => (
+        {destinations.map(({ id, label, icon: Icon }, index) => (
           <button
             key={id}
             className={`nav-item ${active === id ? "active" : ""}`}
@@ -62,10 +74,16 @@ export function DesktopNavigation({
           >
             <Icon />
             <span>{label}</span>
+            {mode === "compact" && <kbd aria-hidden="true">{navigator.platform.includes("Mac") ? "⌘" : "Ctrl"} {index + 1}</kbd>}
           </button>
         ))}
       </nav>
+      {mode === "compact" && <>
+        <div className="sidebar-quick"><p>Quick actions</p><button onClick={onQuickAdd}><Plus /> Add task</button><button onClick={() => onNavigate("calendar")}><CalendarDays /> Add event</button><button onClick={onImport}><Upload /> Import work</button></div>
+        <div className="sidebar-quick"><p>Views</p><button onClick={() => onWorkFilter?.("all")}><ListChecks /> All tasks</button><button onClick={() => onWorkFilter?.("high")}><ShieldCheck /> High priority</button><button onClick={() => onNavigate("calendar")}><CalendarDays /> Calendar feed</button><button onClick={() => onWorkFilter?.("completed")}><ListChecks /> Completed</button></div>
+      </>}
       <div className="sidebar-foot">
+        {studentName && <div className="sidebar-student"><UserRound /><span><strong>{studentName}</strong><small>Student workspace</small></span></div>}
         <button
           className={`nav-item ${active === "settings" ? "active" : ""}`}
           aria-label="Settings"
@@ -77,14 +95,6 @@ export function DesktopNavigation({
         <button className="nav-item" aria-label="App lock" onClick={onSecurity}>
           <LockKeyhole />
           <span>App lock</span>
-        </button>
-        <button
-          className="nav-item danger-nav"
-          aria-label="Delete local profile"
-          onClick={onDeleteProfile}
-        >
-          <LogOut />
-          <span>Delete local profile</span>
         </button>
         <div className="privacy">
           <ShieldCheck />

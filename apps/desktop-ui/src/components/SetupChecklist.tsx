@@ -11,7 +11,7 @@ export const isSetupChecklistDismissed = () => {
   }
 };
 
-const rememberDismissal = () => {
+export const rememberDismissal = () => {
   try {
     window.localStorage.setItem(DISMISS_KEY, "true");
   } catch {

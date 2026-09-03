@@ -36,12 +36,14 @@ const formatDateTime = (value?: string) =>
     : "Not set";
 
 export function WorkView({
+  initialTaskId,
+  initialFilter,
   onDashboard,
   onImport,
   onStudy,
-}: WorkspaceRouteProps) {
+}: WorkspaceRouteProps & { initialTaskId?: string | null; initialFilter?: "all" | "high" | "completed" }) {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
-  const [filter, setFilter] = useState<WorkFilter>("upcoming");
+  const [filter, setFilter] = useState<WorkFilter | "all" | "high">(initialFilter ?? "upcoming");
   const [task, setTask] = useState<TaskInput>(emptyTask);
   const [editing, setEditing] = useState<TaskRecord | null>(null);
   const [busy, setBusy] = useState(false);
@@ -51,7 +53,11 @@ export function WorkView({
     let active = true;
     void getLocalWorkspace()
       .then((value) => {
-        if (active) setWorkspace(value);
+        if (active) {
+          setWorkspace(value);
+          const selected = value.tasks.find(t => t.id === initialTaskId);
+          if (selected) edit(selected);
+        }
       })
       .catch((reason) => {
         if (active) setError(String(reason));
@@ -59,7 +65,9 @@ export function WorkView({
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialTaskId]);
+
+  useEffect(() => { if (initialFilter) setFilter(initialFilter); }, [initialFilter]);
 
   const apply = async (operation: () => Promise<WorkspaceSnapshot>) => {
     setBusy(true);
@@ -82,6 +90,8 @@ export function WorkView({
           new Date(item.dueAt!).getTime() < Date.now() &&
           !item.completed;
         if (filter === "completed") return item.completed;
+        if (filter === "all") return true;
+        if (filter === "high") return !item.completed && item.priority >= 4;
         if (filter === "exams") return item.kind === "exam" && !item.completed;
         if (filter === "overdue") return overdue;
         if (filter === "inbox") return !item.completed && !item.dueAt;
@@ -175,7 +185,7 @@ export function WorkView({
             aria-label="Work filters"
           >
             {(
-              ["inbox", "upcoming", "overdue", "exams", "completed"] as const
+              ["all", "high", "inbox", "upcoming", "overdue", "exams", "completed"] as const
             ).map((value) => (
               <button
                 role="tab"

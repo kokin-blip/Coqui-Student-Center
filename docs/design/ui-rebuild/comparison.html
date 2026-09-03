@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Coqui · Today comparison</title>
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url("/fonts/InterVariable.woff2");
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #e7ebe8;
+        color: #17251e;
+        font-family: Inter, Arial, sans-serif;
+      }
+      header {
+        padding: 16px 24px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      header p {
+        margin: 0;
+        font-size: 12px;
+      }
+      button,
+      a {
+        font: inherit;
+        font-size: 13px;
+        color: inherit;
+      }
+      button {
+        padding: 7px 12px;
+        border: 1px solid #acbcb1;
+        border-radius: 5px;
+        background: white;
+        cursor: pointer;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        padding: 0 20px;
+      }
+      h2 {
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .frame {
+        position: relative;
+        overflow: hidden;
+        background: #fff;
+        outline: 1px solid #b6c2b9;
+      }
+      .source {
+        position: absolute;
+        width: 1586px;
+        max-width: none;
+        transform-origin: top left;
+      }
+      .app {
+        position: absolute;
+        border: 0;
+        width: 1586px;
+        height: 952px;
+        transform-origin: top left;
+      }
+      .note {
+        padding: 16px 24px;
+        font-size: 12px;
+        color: #45604e;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Today · reference comparison</h1>
+      <button id="comfy">Comfy</button><button id="compact">Compact</button
+      ><label
+        >Region
+        <select id="region">
+          <option value="full">Full layout</option>
+          <option value="nav">Navigation</option>
+          <option value="calendar">Calendar</option>
+          <option value="inspector">Inspector / support</option>
+        </select></label
+      ><label
+        >Width
+        <select id="width">
+          <option>1586</option>
+          <option>320</option>
+          <option>768</option>
+          <option>1024</option>
+          <option>1280</option>
+          <option>1920</option>
+        </select></label
+      >
+    </header>
+    <main>
+      <section>
+        <h2>Design reference</h2>
+        <div class="frame" id="source-frame">
+          <img class="source" id="source" alt="Supplied design reference" />
+        </div>
+      </section>
+      <section>
+        <h2>Running implementation</h2>
+        <div class="frame" id="app-frame">
+          <iframe
+            class="app"
+            id="app"
+            title="Coqui synthetic reference preview"
+          ></iframe>
+        </div>
+      </section>
+    </main>
+    <p class="note">
+      Synthetic records · not a release. At 1586px both viewports are 1586 ×
+      952, equally scaled (detail regions are 1:1). Other widths are reflow
+      probes, not reference matches. New approved logo replaces reference
+      branding. Weather, invented profile photography and not-yet-built task
+      metadata are intentionally absent.
+      <a id="direct" href="/?demo&reference=comfy">Open interactive preview</a>
+    </p>
+    <script>
+      const app = document.querySelector("#app"),
+        source = document.querySelector("#source");
+      let mode = "comfy";
+      function size() {
+        const width = document.querySelector("#app-frame").clientWidth,
+          scale = width / 1586;
+        document
+          .querySelectorAll(".frame")
+          .forEach((e) => (e.style.height = `${952 * scale}px`));
+        app.style.transform = `scale(${scale})`;
+        source.style.transform = `scale(${scale})`;
+        source.style.top = mode === "comfy" ? `${-40 * scale}px` : "0px";
+      }
+      function show(value) {
+        mode = value;
+        source.src = `reference-${mode}.png`;
+        app.src = `/?demo&reference=${mode}`;
+        document.querySelector("#direct").href = app.src;
+        document
+          .querySelectorAll("header button")
+          .forEach((b) =>
+            b.setAttribute("aria-pressed", String(b.id === mode)),
+          );
+        size();
+      }
+      document.querySelector("#comfy").onclick = () => show("comfy");
+      document.querySelector("#compact").onclick = () => show("compact");
+      window.addEventListener("resize", size);
+      show(
+        new URLSearchParams(location.search).get("mode") === "compact"
+          ? "compact"
+          : "comfy",
+      );
+      function region() {
+        const value = document.querySelector("#region").value,
+          w = Number(document.querySelector("#width").value),
+          frameWidth = document.querySelector("#app-frame").clientWidth;
+        app.style.width = `${w}px`;
+        size();
+        source.style.left = "0px";
+        app.style.left = "0px";
+        app.style.top = "0px";
+        if (value === "full") {
+          app.style.transform = `scale(${Math.min(frameWidth / w, 560 / 952)})`;
+          document.querySelector("#app-frame").style.height =
+            `${952 * Math.min(frameWidth / w, 560 / 952)}px`;
+          return;
+        }
+        const x =
+            value === "nav"
+              ? 0
+              : value === "calendar"
+                ? mode === "comfy"
+                  ? 314
+                  : 260
+                : mode === "comfy"
+                  ? 1000
+                  : 1252,
+          y = value === "nav" ? 0 : mode === "comfy" ? 150 : 56;
+        document
+          .querySelectorAll(".frame")
+          .forEach((e) => (e.style.height = "540px"));
+        source.style.transform = "scale(1)";
+        app.style.transform = "scale(1)";
+        source.style.left = app.style.left = `${-x}px`;
+        source.style.top = `${-y - (mode === "comfy" ? 40 : 0)}px`;
+        app.style.top = `${-y}px`;
+      }
+      document.querySelector("#region").onchange = region;
+      document.querySelector("#width").onchange = region;
+      const audit = document.createElement("button");
+      audit.textContent = "Measure frame";
+      document.querySelector("header").append(audit);
+      const report = document.createElement("pre");
+      report.style = "font-size:11px;white-space:pre-wrap;margin:20px";
+      document.body.append(report);
+      audit.onclick = () => {
+        const d = app.contentDocument,
+          w = app.contentWindow;
+        report.textContent = JSON.stringify(
+          {
+            viewport: [w.innerWidth, w.innerHeight],
+            pageWidth: d.documentElement.scrollWidth,
+            bodyWidth: d.body.scrollWidth,
+            fontReady: d.fonts.check("16px Inter"),
+            regions: [
+              ".today-heading",
+              ".day-schedule",
+              ".schedule-grid",
+              ".comfy-layout",
+              ".today-panel",
+              ".sidebar",
+            ].map((s) => {
+              const e = d.querySelector(s);
+              if (!e) return { selector: s };
+              const r = e.getBoundingClientRect();
+              return {
+                selector: s,
+                x: r.x,
+                y: r.y,
+                width: r.width,
+                height: r.height,
+              };
+            }),
+          },
+          null,
+          2,
+        );
+      };
+    </script>
+  </body>
+</html>

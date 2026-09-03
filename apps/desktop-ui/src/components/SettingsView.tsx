@@ -8,6 +8,7 @@ import {
   UserRound,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import type { InterfaceMode } from "../features/shell/interfacePreferences";
 import { AppearanceSettings } from "./AppearanceSettings";
 import type { AccentPreference, AppearancePreference } from "./ThemeControls";
 
@@ -22,6 +23,9 @@ export type SettingsSection =
   | "recovery";
 
 type SettingsViewProps = {
+  interfaceMode?: InterfaceMode;
+  onInterfaceMode?: (mode: InterfaceMode) => void;
+  onDeleteProfile?: () => void;
   appearance: AppearancePreference;
   accent: AccentPreference;
   busy: boolean;
@@ -55,6 +59,9 @@ const sections = [
 ] as const;
 
 export function SettingsView({
+  interfaceMode,
+  onInterfaceMode,
+  onDeleteProfile,
   appearance,
   accent,
   busy,
@@ -191,12 +198,15 @@ export function SettingsView({
             <p>Theme and density apply immediately and remain accessible.</p>
           </header>
           <AppearanceSettings
+            interfaceMode={interfaceMode}
+            onInterfaceMode={onInterfaceMode}
             theme={appearance}
             accent={accent}
             onTheme={onAppearance}
             onAccent={onAccent}
           />
         </section>
+        {onDeleteProfile && <section className="workspace-panel settings-route-section"><header><h2>Delete local profile</h2><p>Remove this device's local records only after confirmation. Export a backup first.</p></header><button className="outline danger" onClick={onDeleteProfile}>Delete local profile</button></section>}
       </div>
     </section>
   );

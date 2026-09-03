@@ -73,10 +73,10 @@
 [data-theme="coqui-dark"] {
   color-scheme: dark;
 
-  --bg-app: #111513;
-  --bg-sidebar: #151a18;
-  --bg-surface: #1a201d;
-  --bg-surface-raised: #202824;
+  --bg-app: #141718;
+  --bg-sidebar: #191d1f;
+  --bg-surface: #181c1e;
+  --bg-surface-raised: #202426;
   --bg-surface-hover: #252e2a;
   --bg-selected: #203c34;
 
@@ -182,12 +182,12 @@
   --scrim: rgb(0 0 0 / 0.35);
   color-scheme: light;
 
-  --bg-app: #f4f6f5;
-  --bg-sidebar: #ecefee;
+  --bg-app: #ffffff;
+  --bg-sidebar: #fbfcfb;
   --bg-surface: #ffffff;
   --bg-surface-raised: #fafbfa;
   --bg-surface-hover: #eff2f0;
-  --bg-selected: #dcefe8;
+  --bg-selected: #eaf1ed;
 
   --text-primary: #18201d;
   --text-secondary: #53615b;
@@ -239,8 +239,8 @@
 }
 
 [data-theme="light"] {
-  --accent: #147c69;
-  --accent-hover: #0f6959;
+  --accent: #075a45;
+  --accent-hover: #064c3b;
 }
 [data-theme="light"][data-accent="mint"] {
   --accent: #12806a;

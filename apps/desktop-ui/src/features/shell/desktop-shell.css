@@ -1,0 +1,328 @@
+.rebuild-shell {
+  --sidebar-width: 260px;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+}
+.rebuild-shell.comfy {
+  --sidebar-width: 314px;
+}
+.rebuild-shell .main {
+  min-width: 0;
+}
+@media (min-width: 900px) {
+  .rebuild-shell.comfy.today-destination .main {
+    position: relative;
+  }
+  .rebuild-shell.comfy.today-destination .topbar {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 3;
+    background: transparent;
+    min-height: 32px;
+    padding: 4px 16px;
+  }
+  .rebuild-shell.comfy.today-destination .today-comfy {
+    padding-top: 36px;
+  }
+}
+.rebuild-shell [hidden] {
+  display: none !important;
+}
+.rebuild-shell .sidebar {
+  width: auto;
+  padding: 36px 16px 22px;
+  box-shadow: none;
+  backdrop-filter: none;
+  background: var(--bg-sidebar);
+}
+.rebuild-shell .brand {
+  padding: 0 24px 44px;
+}
+.rebuild-shell .nav-label {
+  display: none;
+}
+.rebuild-shell .nav-item {
+  min-height: 54px;
+  gap: 20px;
+  border-radius: 6px;
+  padding: 12px 26px;
+  font-size: 16px;
+  font-weight: 500;
+}
+.rebuild-shell .nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.7;
+}
+.rebuild-shell .nav-item.active {
+  background: var(--bg-selected);
+  color: var(--accent);
+  font-weight: 600;
+}
+.rebuild-shell .sidebar nav {
+  gap: 12px;
+}
+.rebuild-shell .sidebar-foot {
+  margin-top: auto;
+  padding-top: 32px;
+  border: 0;
+}
+.rebuild-shell .sidebar-foot .nav-item {
+  padding: 8px 14px;
+  min-height: 40px;
+  font-size: 14px;
+}
+.sidebar-student {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  margin-bottom: 8px;
+}
+.sidebar-student > svg {
+  width: 32px;
+  height: 32px;
+  color: var(--text-secondary);
+}
+.sidebar-student span {
+  display: grid;
+  font-size: 14px;
+}
+.sidebar-student small {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.rebuild-shell .privacy {
+  padding: 12px 14px;
+}
+.rebuild-shell .topbar {
+  min-height: 56px;
+  height: auto;
+  padding: 8px 24px;
+  gap: 16px;
+  box-shadow: none;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.rebuild-shell.comfy.today-destination .topbar {
+  border-bottom: 0;
+}
+.rebuild-shell.comfy.today-destination .crumb {
+  display: none;
+}
+.rebuild-shell.comfy.today-destination .top-actions {
+  margin-left: auto;
+}
+.mode-picker {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.mode-picker button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 5px 9px;
+  font: 500 12px/1.3 var(--font-ui);
+}
+.mode-picker button[aria-pressed="true"] {
+  color: var(--text-primary);
+  background: var(--bg-selected);
+}
+.rebuild-shell .top-actions {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.shell-command {
+  flex: 1;
+  max-width: 530px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--bg-surface-raised);
+  text-align: left;
+  padding: 8px 12px;
+}
+.shell-command svg {
+  width: 16px;
+  height: 16px;
+}
+.shell-command kbd {
+  margin-left: auto;
+}
+.rebuild-shell kbd {
+  font: 400 12px/1.4 var(--font-ui);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.rebuild-shell.compact .sidebar {
+  padding: 18px 10px;
+}
+.rebuild-shell.compact .brand {
+  padding: 0 10px 24px;
+}
+.rebuild-shell.compact .coqui-logo {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.rebuild-shell.compact .coqui-logo .brand-art {
+  width: 82px;
+}
+.rebuild-shell.compact .brand-descriptor {
+  font-size: 12px;
+}
+.rebuild-shell.compact .nav-item {
+  min-height: 36px;
+  font-size: 13px;
+  padding: 7px 10px;
+  gap: 12px;
+}
+.rebuild-shell.compact .nav-item svg {
+  width: 17px;
+  height: 17px;
+}
+.rebuild-shell.compact .sidebar nav {
+  gap: 3px;
+}
+.nav-item kbd {
+  margin-left: auto;
+}
+.sidebar-quick {
+  margin: 18px 8px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.sidebar-quick p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+.sidebar-quick button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 7px 2px;
+  font-size: 13px;
+  text-align: left;
+}
+.sidebar-quick button svg {
+  width: 16px;
+  height: 16px;
+}
+.rebuild-shell.compact .fab {
+  display: none;
+}
+.shell-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 8px 20px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.shell-shortcuts {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--bg-app);
+}
+.shell-shortcuts button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: inherit;
+}
+.rebuild-shell button:focus-visible,
+.rebuild-shell a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (min-width: 1200px) and (max-width: 1439px) {
+  .rebuild-shell.comfy {
+    --sidebar-width: 248px;
+  }
+}
+@media (max-width: 1199px) {
+  .rebuild-shell.comfy,
+  .rebuild-shell.compact {
+    --sidebar-width: 78px;
+  }
+  .rebuild-shell .sidebar {
+    padding: 20px 10px;
+  }
+  .rebuild-shell .brand {
+    padding: 0 0 26px;
+  }
+  .rebuild-shell .coqui-logo .brand-art {
+    width: 40px;
+    aspect-ratio: 410 / 350;
+  }
+  .rebuild-shell .coqui-logo .brand-art img {
+    width: 464.9%;
+    left: -63.4%;
+  }
+  .rebuild-shell .brand-descriptor,
+  .rebuild-shell .nav-item span,
+  .rebuild-shell .nav-item kbd,
+  .sidebar-quick,
+  .sidebar-student,
+  .rebuild-shell .privacy {
+    display: none;
+  }
+  .rebuild-shell .nav-item,
+  .rebuild-shell.compact .nav-item {
+    justify-content: center;
+    padding: 12px;
+  }
+}
+@media (max-width: 767px) {
+  .rebuild-shell.comfy,
+  .rebuild-shell.compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rebuild-shell .sidebar {
+    display: none;
+  }
+  .rebuild-shell .topbar {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+  }
+  .rebuild-shell .crumb,
+  .rebuild-shell .top-actions .offline {
+    display: none;
+  }
+  .shell-command {
+    min-width: 80px;
+  }
+  .shell-command kbd {
+    display: none;
+  }
+  .rebuild-shell .top-actions {
+    margin-left: 0;
+    gap: 4px;
+  }
+  .shell-shortcuts {
+    display: none;
+  }
+}

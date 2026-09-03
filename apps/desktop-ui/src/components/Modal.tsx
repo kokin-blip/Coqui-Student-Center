@@ -9,12 +9,14 @@ export function Modal({
   close,
   children,
   presentation = "dialog",
+  className = "",
 }: {
   title: string;
   subtitle: string;
   close: () => void;
   children: ReactNode;
   presentation?: "dialog" | "settings";
+  className?: string;
 }) {
   if (presentation === "settings") {
     return (
@@ -24,7 +26,7 @@ export function Modal({
     );
   }
   return (
-    <DialogModal title={title} subtitle={subtitle} close={close}>
+    <DialogModal title={title} subtitle={subtitle} close={close} className={className}>
       {children}
     </DialogModal>
   );
@@ -35,11 +37,13 @@ function DialogModal({
   subtitle,
   close,
   children,
+  className,
 }: {
   title: string;
   subtitle: string;
   close: () => void;
   children: ReactNode;
+  className: string;
 }) {
   const modalRef = useRef<HTMLElement>(null);
   const closeRef = useRef(close);
@@ -81,7 +85,7 @@ function DialogModal({
   }, []);
   return (
     <div
-      className="overlay"
+      className={`overlay ${className}`}
       onMouseDown={(event) => event.target === event.currentTarget && close()}
     >
       <section

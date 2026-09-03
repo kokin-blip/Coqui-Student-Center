@@ -426,7 +426,7 @@ test("the school descriptor states its sources as data rather than in code", () 
 test("browser test mode mocks local mutations without becoming a product site", () => {
   assert.match(native, /if \(!isDesktop\(\)\)/);
   assert.match(native, /structuredClone\(browserWorkspace\)/);
-  assert.match(shellSources, /UI test mode/);
+  assert.match(shellSources, /Synthetic browser preview/);
   assert.doesNotMatch(
     native,
     /serviceWorker|beforeinstallprompt|manifest\.webmanifest/,
@@ -495,7 +495,11 @@ test("startup work is deferred off the main thread", () => {
     native,
     /export type OcrPhase = "checking" \| "ready" \| "unavailable";/,
   );
-  assert.ok(shellSources.includes("Checking local OCR"));
+  // Diagnostics moved into the expandable workspace status instead of a
+  // permanently visible OCR card. The event and live message remain connected.
+  assert.ok(shellSources.includes("Workspace status"));
+  assert.ok(shellSources.includes("p.ocr.message"));
+  assert.ok(ui.includes("ocrStatus ?? data.ocr"));
 });
 
 test("vault and BYOK AI remain review-first and explicitly consented", () => {

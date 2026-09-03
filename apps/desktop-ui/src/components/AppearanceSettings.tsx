@@ -1,5 +1,6 @@
 import { Check } from "lucide-react";
 import { useState } from "react";
+import type { InterfaceMode } from "../features/shell/interfacePreferences";
 import {
   ACCENTS,
   AccentPreference,
@@ -16,18 +17,23 @@ import {
  * apply to any element that wears the attribute, not only the document root.
  */
 export function AppearanceSettings({
+  interfaceMode,
+  onInterfaceMode,
   theme,
   accent,
   onTheme,
   onAccent,
 }: {
+  interfaceMode?: InterfaceMode;
+  onInterfaceMode?: (mode: InterfaceMode) => void;
   theme: AppearancePreference;
   accent: AccentPreference;
   onTheme: (next: AppearancePreference) => void;
   onAccent: (next: AccentPreference) => void;
 }) {
   const [density,setDensity]=useState<"comfortable"|"power">(()=>localStorage.getItem("student-center-density")==="power"?"power":"comfortable");
-  const chooseDensity=(next:"comfortable"|"power")=>{setDensity(next);document.documentElement.dataset.density=next;localStorage.setItem("student-center-density",next);};
+  const chooseDensity=(next:"comfortable"|"power")=>{if(onInterfaceMode){onInterfaceMode(next==="power"?"compact":"comfy");return;}setDensity(next);document.documentElement.dataset.density=next;localStorage.setItem("student-center-density",next);};
+  const chosenDensity = interfaceMode ? (interfaceMode === "compact" ? "power" : "comfortable") : density;
   return (
     <div className="appearance-settings">
       <fieldset>
@@ -89,7 +95,7 @@ export function AppearanceSettings({
           ))}
         </div>
       </fieldset>
-      <fieldset><legend>Interface density</legend><p className="field-help">Comfortable gives work room to breathe. Power fits more rows and details on screen.</p><div className="theme-controls" role="radiogroup" aria-label="Interface density"><button type="button" role="radio" aria-checked={density==="comfortable"} className={density==="comfortable"?"active":""} onClick={()=>chooseDensity("comfortable")}>Comfortable</button><button type="button" role="radio" aria-checked={density==="power"} className={density==="power"?"active":""} onClick={()=>chooseDensity("power")}>Power</button></div></fieldset>
+      <fieldset><legend>Interface density</legend><p className="field-help">Comfy gives your day room to breathe. Compact combines your week, work queue, and inspector.</p><div className="theme-controls" role="radiogroup" aria-label="Interface density"><button type="button" role="radio" aria-checked={chosenDensity==="comfortable"} className={chosenDensity==="comfortable"?"active":""} onClick={()=>chooseDensity("comfortable")}>Comfy</button><button type="button" role="radio" aria-checked={chosenDensity==="power"} className={chosenDensity==="power"?"active":""} onClick={()=>chooseDensity("power")}>Compact</button></div></fieldset>
     </div>
   );
 }

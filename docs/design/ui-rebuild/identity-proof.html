@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coqui — identity checkpoint</title>
+  <style>
+    @font-face { font-family: Inter; src: url('../../../apps/desktop-ui/public/fonts/InterVariable.woff2') format('woff2'); font-style: normal; font-weight: 100 900; font-display: swap; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f6f7f7; color: #17221e; font: 15px/1.6 Inter, sans-serif; }
+    main { max-width: 1200px; margin: auto; padding: 40px 32px 64px; }
+    h1,h2,h3,p { margin: 0; }
+    h1 { font-size: 32px; line-height: 1.2; letter-spacing: -.025em; }
+    h2 { font-size: 20px; margin-bottom: 8px; }
+    h3 { font-size: 14px; font-weight: 600; }
+    header p { margin-top: 12px; max-width: 78ch; color: #4c5953; }
+    .status { display: inline-block; color: #7b4c0d; background: #f9ebd1; padding: 4px 10px; border-radius: 4px; margin-bottom: 16px; font-size: 13px; }
+    section { margin-top: 32px; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; margin-top: 16px; border: 1px solid #d8dfdb; border-radius: 6px; overflow: hidden; }
+    .panel { padding: 28px; min-width: 0; background: white; }
+    .panel.dark { background: #141718; color: #edf0ed; }
+    .hint { color: #53635b; font-size: 13px; margin-top: 12px; }
+    .dark .hint { color: #b7c1bb; }
+    .source-slot { height: 138px; display: flex; align-items: center; }
+    .source-crop { width: 140px; flex: none; }
+    .source-crop img { display: block; width: 100%; height: auto; }
+    .enlarged { width: min(100%, 430px); }
+    .sample-title { font-size: 56px; line-height: 1.15; font-weight: 700; letter-spacing: -.035em; color: #064f3d; margin-top: 22px; }
+    .dark .sample-title { font-size: 22px; color: #f2f4f3; letter-spacing: -.015em; }
+    .sample-task { margin-top: 24px; padding: 14px 0; border-top: 1px solid #dde3e0; border-bottom: 1px solid #dde3e0; }
+    .dark .sample-task { border-color: #303637; padding: 8px 0; font-size: 13px; }
+    .sample-task strong { font-weight: 600; }
+    .sample-task small { display: block; color: #53635b; }
+    .dark .sample-task small { color: #b7c1bb; }
+    .numerals { font-variant-numeric: tabular-nums; margin-top: 20px; }
+    .reference-links { display: flex; gap: 20px; margin-top: 18px; flex-wrap: wrap; }
+    a { color: #07644b; text-underline-offset: 3px; }
+    a:focus-visible { outline: 2px solid #07644b; outline-offset: 4px; }
+    details { margin-top: 24px; border-top: 1px solid #d8dfdb; padding-top: 18px; }
+    summary { cursor: pointer; font-weight: 600; }
+    .rejected { max-width: 640px; width: 100%; display: block; margin-top: 16px; }
+    footer { margin-top: 32px; color: #53635b; font-size: 13px; }
+    @media(max-width: 760px) { main { padding: 24px 16px; } .panels { grid-template-columns: 1fr; } .panel { padding: 22px; } h1 { font-size: 26px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="status">Checkpoint A · selected artwork, background removed</span>
+    <h1>Your chosen frog and rounded wordmark.</h1>
+    <p>You selected this design over the earlier screenshot logo. The cleanup below has real PNG transparency, including the spaces inside the letters. Production branding has not changed yet.</p>
+  </header>
+  <section aria-labelledby="identity-title">
+    <h2 id="identity-title">Transparent logo</h2>
+    <p>Small lockup above; enlarged inspection below. The same PNG is used on both surfaces.</p>
+    <div class="panels">
+      <div class="panel">
+        <h3>On the Comfy surface</h3>
+        <div class="source-slot"><div class="source-crop"><img src="logo-background-removed.png" alt="Selected coqui frog and wordmark on light"></div></div>
+        <div class="source-slot"><div class="source-crop enlarged"><img src="logo-background-removed.png" alt="Transparent logo enlarged on light"></div></div>
+        <p class="hint">The surface shows through the background and letter openings.</p>
+      </div>
+      <div class="panel dark">
+        <h3>On the Compact surface</h3>
+        <div class="source-slot"><div class="source-crop"><img src="logo-background-removed.png" alt="Selected coqui frog and wordmark on dark"></div></div>
+        <div class="source-slot"><div class="source-crop enlarged"><img src="logo-background-removed.png" alt="Transparent logo enlarged on dark"></div></div>
+        <p class="hint">No square badge or checkerboard background.</p>
+      </div>
+    </div>
+  </section>
+  <section aria-labelledby="type-title">
+    <h2 id="type-title">Locally bundled interface typography</h2>
+    <p>Inter for interface text; the brand wordmark remains source artwork. These are type specimens, not rebuilt screens.</p>
+    <div class="panels">
+      <div class="panel">
+        <h3>Comfy · light</h3>
+        <p class="sample-title">Today</p>
+        <p class="hint">Friday, May 9, 2025 · Week 15 of 16</p>
+        <div class="sample-task"><strong>Draft scholarship essay</strong><small>Make progress on your application essay.</small></div>
+        <p class="numerals">9:00 AM &nbsp; 45 min &nbsp; 3 days</p>
+      </div>
+      <div class="panel dark">
+        <h3>Compact · dark</h3>
+        <p class="sample-title">This week</p>
+        <p class="hint">Work queue · 12 tasks</p>
+        <div class="sample-task"><strong>Finish Problem Set 4</strong><small>Calculus I · High priority · Today</small></div>
+        <p class="numerals">9:00 AM &nbsp; 2h &nbsp; 2 / 4</p>
+      </div>
+    </div>
+  </section>
+  <details>
+    <summary>Selected source before background removal</summary>
+    <p class="hint">This is the design you chose. Its painted checkerboard has been removed in the PNG shown above.</p>
+    <img class="rejected" src="logo-selected-source.png" alt="User-selected frog and wordmark before background removal">
+  </details>
+  <nav class="reference-links" aria-label="Original design references">
+    <a href="reference-comfy.png">Open original Comfy reference</a>
+    <a href="reference-compact.png">Open original Compact reference</a>
+  </nav>
+  <footer>Local proof only. No native commands, profile changes, analytics, external images, or remote fonts. Example text is from the supplied mockups, not a student's records.</footer>
+</main>
+</body>
+</html>

@@ -975,7 +975,7 @@ let browserOnboardingState: OnboardingState = {
       custom: false,
     },
     courses: [],
-    appearance: "system",
+    appearance: "light",
     sleepStart: "23:00",
     sleepEnd: "07:00",
     maxSessionMinutes: 60,
@@ -995,7 +995,7 @@ const browserSeed: Dashboard = {
   studentName: "Alex Morgan",
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   offline: true,
-  planDate: new Date().toISOString().slice(0, 10),
+  planDate: [browserDayStart.getFullYear(), String(browserDayStart.getMonth()+1).padStart(2,"0"), String(browserDayStart.getDate()).padStart(2,"0")].join("-"),
   unsettledScheduleSources: [],
   candidates: [
     {
@@ -1154,6 +1154,13 @@ async function call<T>(
 
 export async function initialize(): Promise<AppBootstrap> {
   if (!isDesktop()) {
+    if (import.meta.env.DEV) {
+      const reference = new URLSearchParams(window.location.search).get("reference");
+      if (reference === "comfy" || reference === "compact") {
+        const { fillReferenceFixture } = await import("./features/today/referenceFixture");
+        fillReferenceFixture(reference, browserSeed, browserWorkspace);
+      }
+    }
     const demoMode = new URLSearchParams(window.location.search).has("demo");
     const onboardingMode = !demoMode;
     return {
