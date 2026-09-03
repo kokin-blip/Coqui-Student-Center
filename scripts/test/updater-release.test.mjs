@@ -87,6 +87,9 @@ test("unsigned prereleases publish only after both packaged desktop lanes", asyn
   assert.match(workflow, /foreach \(\$launch in 1\.\.2\)/);
   assert.match(workflow, /for launch in 1 2; do/);
   assert.match(workflow, /test ! -e "\$profile_root"/);
+  assert.match(workflow, /security create-keychain/);
+  assert.match(workflow, /security unlock-keychain/);
+  assert.match(workflow, /security delete-keychain/);
   assert.match(workflow, /codesign --verify --deep --strict/);
   const buildJob = workflow.slice(
     workflow.indexOf("  build-packages:"),

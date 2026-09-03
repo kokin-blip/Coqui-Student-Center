@@ -150,25 +150,38 @@ jobs:
           test "$RUNNER_ENVIRONMENT" = github-hosted
           profile_root="$HOME/Library/Application Support/app.studentcenter.desktop"
           test ! -e "$profile_root"
+          keychain="$RUNNER_TEMP/coqui-smoke.keychain-db"
+          keychain_password=$(uuidgen)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
           dmg=$(find apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
           mount_point="$RUNNER_TEMP/coqui-dmg"
           copy_root="$RUNNER_TEMP/coqui-app"
           mkdir -p "$mount_point" "$copy_root"
           hdiutil attach "$dmg" -nobrowse -mountpoint "$mount_point"
-          trap 'hdiutil detach "$mount_point" -force || true' EXIT
+          trap 'hdiutil detach "$mount_point" -force || true; security delete-keychain "$keychain" || true' EXIT
           cp -R "$mount_point/Coqui Student Center.app" "$copy_root/"
           codesign --verify --deep --strict "$copy_root/Coqui Student Center.app"
           binary="$copy_root/Coqui Student Center.app/Contents/MacOS/student-center"
           for launch in 1 2; do
             "$binary" &
             app_pid=$!
-            sleep 8
+            for attempt in {1..30}; do
+              kill -0 "$app_pid"
+              test -s "$profile_root/student-center.db" && break
+              sleep 1
+            done
             kill -0 "$app_pid"
             test -s "$profile_root/student-center.db"
+            sleep 2
             kill "$app_pid"
             wait "$app_pid" || true
           done
           hdiutil detach "$mount_point"
+          security delete-keychain "$keychain"
           trap - EXIT
       - uses: actions/upload-artifact@v4
         with:
