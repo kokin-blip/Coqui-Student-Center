@@ -118,7 +118,7 @@ export function OnboardingExperience({
       : state.draft.courseTitle
         ? [{ code: state.draft.courseCode, title: state.draft.courseTitle, color: courseColors[0], meetings: [] }]
         : [emptyCourse(0)],
-    appearance: state.draft.appearance ?? "system",
+    appearance: state.draft.appearance ?? "light",
   }), [state.draft]);
   const [draft, setDraft] = useState(normalized);
   const [step, setStep] = useState(0);

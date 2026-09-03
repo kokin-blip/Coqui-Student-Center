@@ -44,7 +44,7 @@ input:focus-visible {
   align-items: center;
   gap: 11px;
   padding: 0 8px 28px;
-  font: 800 18px Manrope;
+  font: 800 18px var(--font-ui);
 }
 .brand-mark {
   width: 38px;
@@ -198,7 +198,7 @@ input:focus-visible {
   margin: 0 0 7px;
 }
 .page-head h1 {
-  font: 800 clamp(28px, 3vw, 40px) / 1.1 Manrope;
+  font: 800 clamp(28px, 3vw, 40px) / 1.1 var(--font-ui);
   margin: 0 0 8px;
   letter-spacing: -0.04em;
 }
@@ -297,7 +297,7 @@ input:focus-visible {
 .next-card h2 {
   position: relative;
   z-index: 1;
-  font: 750 clamp(22px, 2.4vw, 31px) / 1.15 Manrope;
+  font: 750 clamp(22px, 2.4vw, 31px) / 1.15 var(--font-ui);
   margin: 21px 0 8px;
   letter-spacing: -0.035em;
 }
@@ -385,7 +385,7 @@ input:focus-visible {
   gap: 6px;
 }
 .capacity strong {
-  font: 800 29px Manrope;
+  font: 800 29px var(--font-ui);
 }
 .capacity span {
   font-size: var(--text-meta);
@@ -558,7 +558,7 @@ input:focus-visible {
 }
 .small-head h3,
 .vault-card h3 {
-  font: 800 13px Manrope;
+  font: 800 13px var(--font-ui);
   margin: 0;
 }
 .small-head span {
@@ -663,7 +663,7 @@ input:focus-visible {
   margin-bottom: 19px;
 }
 .modal h2 {
-  font: 800 22px/1.2 Manrope;
+  font: 800 22px/1.2 var(--font-ui);
   margin: 0 0 5px;
 }
 .modal header p {
@@ -1465,7 +1465,7 @@ input:focus-visible {
   margin-bottom: 24px;
 }
 .lock-card h1 {
-  font: 800 30px/1.1 Manrope;
+  font: 800 30px/1.1 var(--font-ui);
   margin: 0 0 10px;
   letter-spacing: -0.04em;
 }
@@ -1797,34 +1797,6 @@ textarea:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--cobalt) 42%, transparent);
   outline-offset: 2px;
 }
-.coqui-logo {
-  display: inline-flex;
-  align-items: center;
-  gap: 11px;
-  color: var(--ink);
-}
-.coqui-logo > svg {
-  width: 42px;
-  height: 42px;
-  flex: none;
-  filter: drop-shadow(0 8px 14px color-mix(in srgb, var(--teal) 25%, transparent));
-}
-.logo-bg { fill: var(--coqui-green); }
-.logo-book { fill: var(--warning); }
-.logo-book-line { fill: none; stroke: var(--info); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.logo-frog,
-.logo-eye { fill: var(--coqui-mint); }
-.logo-pupil { fill: #17352f; }
-.logo-smile,
-.logo-hand { fill: none; stroke: #17352f; stroke-width: 1.8; stroke-linecap: round; }
-.coqui-logo.monochrome .logo-bg { fill: currentColor; }
-.coqui-logo.monochrome .logo-frog,
-.coqui-logo.monochrome .logo-eye { fill: var(--surface); }
-.coqui-logo.monochrome .logo-pupil { fill: currentColor; }
-.coqui-logo.monochrome .logo-smile { stroke: currentColor; }
-.coqui-wordmark { display: grid; line-height: 1; gap: 3px; }
-.coqui-wordmark strong { font: 800 18px/1 Manrope, sans-serif; letter-spacing: -.035em; }
-.coqui-wordmark small { color: var(--muted); font-size: var(--text-meta); font-weight: 750; letter-spacing: .04em; }
 .brand { padding: 0 8px 24px; }
 .sidebar {
   width: auto;
@@ -1902,7 +1874,7 @@ textarea:focus-visible {
 .onboarding-story .coqui-wordmark small,
 .onboarding-story p { color: #d5ebe5; }
 .onboarding-story .eyebrow { color: #bde8da; }
-.onboarding-story h1 { font: 800 clamp(34px, 4.8vw, 64px)/.98 Manrope, sans-serif; letter-spacing: -.035em; margin: 8px 0 18px; max-width: 8ch; }
+.onboarding-story h1 { font: 800 clamp(34px, 4.8vw, 64px)/.98 var(--font-ui); letter-spacing: -.035em; margin: 8px 0 18px; max-width: 8ch; }
 .onboarding-story > div > p:last-child { max-width: 32ch; line-height: 1.65; font-size: 14px; }
 .setup-steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
 .setup-steps li { display: flex; align-items: center; gap: 12px; color: #d0e6df99; }
@@ -2031,7 +2003,7 @@ textarea:focus-visible {
   margin-bottom: 20px;
 }
 .onboarding-card h1 {
-  font: 800 clamp(27px, 4vw, 38px) / 1.1 Manrope;
+  font: 800 clamp(27px, 4vw, 38px) / 1.1 var(--font-ui);
   margin: 0 0 12px;
   letter-spacing: -0.04em;
 }
@@ -2303,7 +2275,7 @@ textarea:focus-visible {
 }
 .workspace-panel > h2,
 .inline-editor h3 {
-  font: 800 17px Manrope;
+  font: 800 17px var(--font-ui);
   margin: 0;
 }
 .workspace-panel .section-head {
@@ -2436,7 +2408,7 @@ textarea:focus-visible {
   border-top: 1px solid var(--line);
 }
 .workspace-panel .section-head.subhead h3 {
-  font: 800 14px Manrope;
+  font: 800 14px var(--font-ui);
   margin: 0;
 }
 .alternatives {
@@ -2652,7 +2624,7 @@ textarea:focus-visible {
 }
 .week-calendar h3 {
   margin: 0;
-  font: 800 12px Manrope;
+  font: 800 12px var(--font-ui);
   color: var(--muted);
 }
 .week-calendar p {

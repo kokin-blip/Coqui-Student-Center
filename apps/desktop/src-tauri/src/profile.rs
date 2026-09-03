@@ -669,7 +669,7 @@ fn migrate_inner(conn: &Connection, previous_schema_version: i64) -> Result<()> 
     }
     quarantine_untouched_legacy_demo(conn)?;
     set_setting(conn, "demo_review_status", "retired")?;
-    set_default(conn, "appearance", "system")?;
+    set_default(conn, "appearance", if previous_schema_version == 0 { "light" } else { "system" })?;
     Ok(())
 }
 
@@ -1610,7 +1610,7 @@ fn default_draft(profile: Option<(String, String, i64)>) -> OnboardingDraft {
         course_code: String::new(),
         institution: InstitutionSelection::default(),
         courses: Vec::new(),
-        appearance: AppearancePreference::System,
+        appearance: AppearancePreference::Light,
         sleep_start: "23:00".into(),
         sleep_end: "07:00".into(),
         max_session_minutes: 60,

@@ -1,0 +1,47 @@
+@font-face {
+  font-family: Inter;
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+/* Clip the approved raster master; do not redraw or retype its artwork. */
+.coqui-logo {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+  width: auto;
+  height: auto;
+  flex: none;
+}
+.coqui-logo .brand-art {
+  display: block;
+  position: relative;
+  width: 154px;
+  aspect-ratio: 1465 / 350;
+  overflow: hidden;
+}
+.coqui-logo .brand-art img {
+  position: absolute;
+  max-width: none;
+  width: 130.1%;
+  height: auto;
+  left: -17.75%;
+  top: -70%;
+}
+.coqui-logo .brand-descriptor {
+  color: var(--text-secondary);
+  font: 400 15px/1.3 var(--font-ui);
+}
+.coqui-logo .face-only {
+  width: 40px;
+  aspect-ratio: 410 / 350;
+}
+.coqui-logo .face-only img {
+  width: 464.9%;
+  left: -63.4%;
+  top: -70%;
+}
+.coqui-logo.monochrome .brand-art img {
+  filter: grayscale(1);
+}

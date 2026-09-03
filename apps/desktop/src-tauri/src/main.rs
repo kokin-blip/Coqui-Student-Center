@@ -7,6 +7,7 @@ mod canvas;
 mod canvas_calendar;
 mod device_key;
 mod imports;
+mod interface_preferences;
 mod managed_ai;
 mod pdf_renderer;
 mod pin;
@@ -4302,6 +4303,19 @@ fn update_accent(
     let conn = state.db.lock().unwrap();
     profile::set_accent(&conn, &accent)?;
     Ok(profile::workspace(&conn)?)
+}
+
+#[tauri::command]
+fn get_interface_preferences(state: tauri::State<AppState>, legacy_mode: interface_preferences::InterfaceMode) -> Result<interface_preferences::InterfacePreferences> {
+    state.require_unlocked()?;
+    interface_preferences::load(&state.db.lock().unwrap(), legacy_mode)
+}
+
+#[tauri::command]
+fn set_interface_preferences(state: tauri::State<AppState>, preferences: interface_preferences::InterfacePreferences) -> Result<interface_preferences::InterfacePreferences> {
+    state.require_unlocked()?;
+    interface_preferences::save(&state.db.lock().unwrap(), &preferences)?;
+    Ok(preferences)
 }
 
 #[derive(Debug,Serialize)]
@@ -9841,6 +9855,8 @@ fn main() {
             update_academic_event,
             delete_academic_event,
             update_appearance,
+            get_interface_preferences,
+            set_interface_preferences,
             update_accent,
             get_academic_cleanup_preview,
             apply_academic_cleanup,
@@ -10191,6 +10207,8 @@ mod tests {
             "complete_onboarding",
             "update_appearance",
             "update_accent",
+            "get_interface_preferences",
+            "set_interface_preferences",
             "get_local_workspace",
             "update_student_profile",
             "create_academic_term",
@@ -11914,6 +11932,11 @@ mod tests {
         let source_key = random_key();
         let source_db_path = source_root.join("student-center.db");
         let source_db = open_database(&source_db_path, &source_key).unwrap();
+        let saved_interface = interface_preferences::InterfacePreferences {
+            mode: interface_preferences::InterfaceMode::Compact,
+            themes: interface_preferences::ModeThemes { comfy: "system".into(), compact: "forest".into() },
+        };
+        interface_preferences::save(&source_db, &saved_interface).unwrap();
         source_db
             .execute(
                 "INSERT INTO tasks(id,title,minutes,priority,created_at) VALUES('portable-task','Private capstone plan',75,3,?1)",
@@ -12012,6 +12035,7 @@ mod tests {
         install_staged_profile(&state, staged).unwrap();
 
         let restored = state.db.lock().unwrap();
+        assert_eq!(interface_preferences::load(&restored, interface_preferences::InterfaceMode::Comfy).unwrap(), saved_interface);
         assert_eq!(
             restored
                 .query_row(
