@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileLock2, Pencil, Save } from "lucide-react";
+import { FileLock2, Link2, Pencil, Save } from "lucide-react";
 import {
   CandidateEditInput,
   Dashboard,
@@ -42,9 +42,12 @@ const candidateInput = (candidate: ImportCandidate, terms: AcademicTermRecord[])
 type Props = {
   candidates: ImportCandidate[];
   selectedIds: string[];
+  linkedTaskCandidateIds: string[];
+  canvasScoped: boolean;
   conflictedIds: Set<string>;
   busy: boolean;
   onSelection: (ids: string[]) => void;
+  onLinkedTaskSelection: (ids: string[]) => void;
   onDashboard: (dashboard: Dashboard) => void;
   onError: (message: string) => void;
   terms: AcademicTermRecord[];
@@ -53,9 +56,12 @@ type Props = {
 export function ScheduleImportReview({
   candidates,
   selectedIds,
+  linkedTaskCandidateIds,
+  canvasScoped,
   conflictedIds,
   busy,
   onSelection,
+  onLinkedTaskSelection,
   onDashboard,
   onError,
   terms,
@@ -69,6 +75,12 @@ export function ScheduleImportReview({
   const [previewNotice, setPreviewNotice] = useState("");
   const [editing, setEditing] = useState("");
   const [draft, setDraft] = useState<CandidateEditInput | null>(null);
+  const visible = candidates.filter(
+    (candidate) => candidate.documentId === activeSource,
+  );
+  const remoteCanvasSource = visible.some((candidate) =>
+    candidate.sourceType.startsWith("canvas"),
+  );
 
   useEffect(() => {
     if (!sources.includes(activeSource)) setActiveSource(sources[0] ?? "");
@@ -78,7 +90,7 @@ export function ScheduleImportReview({
     let current = true;
     setPreview(null);
     setPreviewNotice("");
-    if (!activeSource) return;
+    if (!activeSource || remoteCanvasSource) return;
     void getScheduleSourcePreview(activeSource)
       .then((value) => {
         if (current) setPreview(value);
@@ -89,9 +101,8 @@ export function ScheduleImportReview({
     return () => {
       current = false;
     };
-  }, [activeSource]);
+  }, [activeSource, remoteCanvasSource]);
 
-  const visible = candidates.filter((candidate) => candidate.documentId === activeSource);
   const setField = <K extends keyof CandidateEditInput>(field: K, value: CandidateEditInput[K]) =>
     setDraft((current) => (current ? { ...current, [field]: value } : current));
 
@@ -115,12 +126,30 @@ export function ScheduleImportReview({
             Source
             <select value={activeSource} onChange={(event) => setActiveSource(event.target.value)}>
               {sources.map((source, index) => (
-                <option key={source} value={source}>Schedule source {index + 1}</option>
+                <option key={source} value={source}>
+                  {candidates.some(
+                    (candidate) =>
+                      candidate.documentId === source &&
+                      candidate.sourceType.startsWith("canvas"),
+                  )
+                    ? "Canvas"
+                    : "Schedule"}{" "}
+                  source {index + 1}
+                </option>
               ))}
             </select>
           </label>
         )}
-        {preview?.mime.startsWith("image/") ? (
+        {remoteCanvasSource ? (
+          <div className="source-preview-empty canvas-source-preview">
+            <Link2 />
+            <strong>Canvas source</strong>
+            <p>
+              The private feed link stays hidden. Verify each item against the
+              source evidence shown beside it.
+            </p>
+          </div>
+        ) : preview?.mime.startsWith("image/") ? (
           <img src={preview.dataUrl} alt={`Imported schedule: ${preview.fileName}`} />
         ) : preview?.mime === "application/pdf" ? (
           <object data={preview.dataUrl} type="application/pdf" aria-label={`Imported schedule: ${preview.fileName}`}>
@@ -205,6 +234,42 @@ export function ScheduleImportReview({
                     <em>{candidate.sourceLocator} · {Math.round(candidate.confidence * 100)}% confidence</em>
                     {candidate.studentEditedFields?.length ? <mark>Edited by you</mark> : null}
                     <small>Approval action: {action.toLowerCase()}.</small>
+                    {canvasScoped && candidate.kind === "task" && (
+                      <small className="candidate-destination">Destination: Work</small>
+                    )}
+                    {canvasScoped && candidate.kind === "commitment" && (
+                      <>
+                        <small className="candidate-destination">Destination: Calendar</small>
+                        <label className="check-row candidate-linked-task">
+                          <input
+                            type="checkbox"
+                            disabled={
+                              conflicted ||
+                              incomplete ||
+                              busy ||
+                              candidate.hasLinkedTask
+                            }
+                            checked={linkedTaskCandidateIds.includes(
+                              candidate.id,
+                            )}
+                            onChange={(event) =>
+                              onLinkedTaskSelection(
+                                event.target.checked
+                                  ? [...linkedTaskCandidateIds, candidate.id]
+                                  : linkedTaskCandidateIds.filter(
+                                      (id) => id !== candidate.id,
+                                    ),
+                              )
+                            }
+                          />
+                          <span>
+                            {candidate.hasLinkedTask
+                              ? "Update the linked to-do in Work"
+                              : "Also add a linked to-do in Work"}
+                          </span>
+                        </label>
+                      </>
+                    )}
                     {conflicted && <mark>Resolve this linked-record conflict before approval.</mark>}
                     {incomplete && <mark>Complete the highlighted schedule fields before approval.</mark>}
                     {candidate.warnings.map((warning) => <mark key={warning}>{warning}</mark>)}

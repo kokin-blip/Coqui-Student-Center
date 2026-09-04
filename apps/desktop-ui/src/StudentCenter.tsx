@@ -64,6 +64,7 @@ import {
 } from "./components/ThemeControls";
 import {
   AccountStatus,
+  applyCanvasImport,
   approveCandidates,
   CalendarDiff,
   Dashboard,
@@ -326,6 +327,12 @@ export function StudentCenter() {
     [],
   );
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
+  const [reviewConnectionId, setReviewConnectionId] = useState<string | null>(
+    null,
+  );
+  const [linkedTaskCandidateIds, setLinkedTaskCandidateIds] = useState<
+    string[]
+  >([]);
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(
     null,
   );
@@ -603,6 +610,11 @@ export function StudentCenter() {
     };
   }, [onboarding?.required]);
   const pending = data?.candidates.filter((c) => c.status === "pending") ?? [];
+  const pendingForReview = reviewConnectionId
+    ? pending.filter(
+        (candidate) => candidate.sourceConnectionId === reviewConnectionId,
+      )
+    : pending;
   const conflictCandidateIds = useMemo(
     () =>
       new Set(
@@ -613,7 +625,7 @@ export function StudentCenter() {
     [data?.conflicts],
   );
   const activeImportTerm = todayWorkspace?.terms.find((term) => term.active);
-  const reviewablePending = pending.filter((candidate) => {
+  const reviewablePending = pendingForReview.filter((candidate) => {
     if (conflictCandidateIds.has(candidate.id) || !candidate.title.trim())
       return false;
     if (candidate.kind !== "class_meeting") return true;
@@ -629,14 +641,23 @@ export function StudentCenter() {
     );
   });
   useEffect(() => {
-    if (modal === "review")
+    if (modal === "review") {
       setSelectedCandidates(reviewablePending.map((candidate) => candidate.id));
+      setLinkedTaskCandidateIds(
+        reviewablePending
+          .filter((candidate) => candidate.hasLinkedTask)
+          .map((candidate) => candidate.id),
+      );
+    }
   }, [
     modal,
     data?.candidates.length,
     data?.conflicts.length,
     todayWorkspace?.terms.map((term) => `${term.id}:${term.active}`).join("|"),
   ]);
+  useEffect(() => {
+    if (modal !== "review") setReviewConnectionId(null);
+  }, [modal]);
   useEffect(() => {
     if (modal !== "review") return;
     getLocalWorkspace()
@@ -672,23 +693,49 @@ export function StudentCenter() {
     }
   };
   const decideCandidates = async (choice: "approve" | "reject") => {
+    const selected = pendingForReview.filter((item) =>
+      selectedCandidates.includes(item.id),
+    );
+    const workCount =
+      selected.filter((item) => item.kind === "task").length +
+      selected.filter(
+        (item) =>
+          item.kind === "commitment" &&
+          linkedTaskCandidateIds.includes(item.id),
+      ).length;
+    const calendarCount = selected.filter(
+      (item) => item.kind === "commitment",
+    ).length;
     const selectedSources = [
-      ...new Set(
-        pending
-          .filter((item) => selectedCandidates.includes(item.id))
-          .map((item) => item.documentId),
-      ),
+      ...new Set(selected.map((item) => item.documentId)),
     ];
     const next = await run(
       () =>
         choice === "approve"
-          ? approveCandidates(selectedCandidates)
+          ? reviewConnectionId
+            ? applyCanvasImport(
+                selectedCandidates.map((candidateId) => ({
+                  candidateId,
+                  createLinkedTask:
+                    linkedTaskCandidateIds.includes(candidateId),
+                })),
+              )
+            : approveCandidates(selectedCandidates)
           : rejectCandidates(selectedCandidates),
       choice === "approve"
         ? `${selectedCandidates.length} items approved and planned.`
         : `${selectedCandidates.length} candidates rejected.`,
     );
     if (!next) return;
+    if (choice === "approve" && reviewConnectionId) {
+      closeSettingsSection();
+      if (workCount > 0) {
+        setWorkFilter("all");
+        setView("work");
+      } else if (calendarCount > 0) {
+        setView("calendar");
+      }
+    }
     const ready = selectedSources.filter(
       (id) =>
         next.unsettledScheduleSources.includes(id) &&
@@ -1112,6 +1159,10 @@ export function StudentCenter() {
                     close={closeSettingsSection}
                     onDashboard={setData}
                     onToast={setToast}
+                    onReview={(connectionId) => {
+                      setReviewConnectionId(connectionId);
+                      setModal("review");
+                    }}
                   />
                 )}
                 {settingsSection === "backups" && (
@@ -1210,7 +1261,10 @@ export function StudentCenter() {
                     .catch((next) => setError(String(next)));
                 }}
                 onConflicts={() => setModal("conflicts")}
-                onReview={() => setModal("review")}
+                onReview={() => {
+                  setReviewConnectionId(null);
+                  setModal("review");
+                }}
                 onCanvas={() => showSettingsSection("canvas")}
               />
             ) : view === "study" ? (
@@ -1428,8 +1482,10 @@ export function StudentCenter() {
         )}
         {modal === "review" && (
           <ReviewDialog
-            candidates={pending}
+            candidates={pendingForReview}
             selectedIds={selectedCandidates}
+            linkedTaskCandidateIds={linkedTaskCandidateIds}
+            canvasScoped={Boolean(reviewConnectionId)}
             conflictedIds={conflictCandidateIds}
             busy={busy}
             terms={todayWorkspace?.terms ?? []}
@@ -1439,6 +1495,7 @@ export function StudentCenter() {
             close={() => setModal(null)}
             openConflicts={() => setModal("conflicts")}
             onSelection={setSelectedCandidates}
+            onLinkedTaskSelection={setLinkedTaskCandidateIds}
             onDashboard={setData}
             onError={setError}
             decide={(choice) => void decideCandidates(choice)}

@@ -17,6 +17,7 @@ const props = () => ({
   close: vi.fn(),
   onDashboard: vi.fn(),
   onToast: vi.fn(),
+  onReview: vi.fn(),
 });
 
 test("Canvas clears submitted credentials and retains partial-success diagnostics", async () => {
@@ -51,6 +52,35 @@ test("Canvas clears submitted credentials and retains partial-success diagnostic
     true,
   );
   expect(callbacks.onToast).toHaveBeenCalledWith(result.importNotice);
+});
+
+test("Canvas exposes pending review and opens it after a manual refresh", async () => {
+  const data = await native.getDashboard();
+  const connection: native.CanvasConnection = {
+    id: "canvas-connection",
+    provider: "canvas_calendar",
+    baseUrl: "https://canvas.example.edu",
+    accountName: "Canvas calendar",
+    status: "connected",
+    refreshOnStartup: true,
+    pendingCandidates: 2,
+  };
+  const result = { ...data, canvasConnections: [connection] };
+  vi.spyOn(native, "refreshCanvasCalendar").mockResolvedValue(result);
+  const callbacks = props();
+  const user = userEvent.setup();
+  render(<CanvasSettings data={result} {...callbacks} />);
+
+  await user.click(
+    screen.getByRole("button", { name: "Review 2 pending" }),
+  );
+  expect(callbacks.onReview).toHaveBeenCalledWith(connection.id);
+
+  callbacks.onReview.mockClear();
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(callbacks.onReview).toHaveBeenCalledWith(connection.id),
+  );
 });
 
 test("AI settings require age/billing consent and clear the submitted secret even on failure", async () => {

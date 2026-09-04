@@ -289,7 +289,8 @@ export function TodayView(p: Props) {
           )}
           {p.pendingCount > 0 && (
             <button aria-label="Review candidates" onClick={p.onReview}>
-              {p.pendingCount} imported items to review <ChevronRight />
+              {p.pendingCount} Canvas or schedule item
+              {p.pendingCount === 1 ? "" : "s"} to review <ChevronRight />
             </button>
           )}
         </div>

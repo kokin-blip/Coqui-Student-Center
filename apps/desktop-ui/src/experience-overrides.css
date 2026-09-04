@@ -948,10 +948,13 @@ body {
 .schedule-source-pane object { width: 100%; min-height: 340px; max-height: 560px; object-fit: contain; border: 0; border-radius: 10px; background: var(--surface); }
 .source-preview-empty { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 320px; text-align: center; color: var(--muted); }
 .source-preview-empty svg { color: var(--teal); }
+.canvas-source-preview { min-height: 334px; padding: 24px; }
 .editable-candidates .candidate { grid-template-columns: 1fr auto; align-items: start; }
 .candidate-select { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: var(--text-meta); font-weight: 700; }
 .candidate-summary { display: grid; gap: 5px; min-width: 0; }
 .candidate-summary q { display: block; }
+.candidate-destination { font-weight: 700; color: var(--text-primary) !important; }
+.candidate-linked-task { margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--line); font-weight: 600; }
 .candidate-editor { grid-column: 1 / -1; display: grid; gap: 12px; }
 .candidate-editor .form-grid { margin: 0; }
 .candidate-edit { align-self: start; }

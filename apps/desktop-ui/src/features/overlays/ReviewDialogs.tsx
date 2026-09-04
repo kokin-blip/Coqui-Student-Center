@@ -14,6 +14,8 @@ const changeKey = (change: TermChange) => `${change.termName}:${change.field}`;
 export function ReviewDialog({
   candidates,
   selectedIds,
+  linkedTaskCandidateIds,
+  canvasScoped,
   conflictedIds,
   busy,
   terms,
@@ -21,12 +23,15 @@ export function ReviewDialog({
   close,
   openConflicts,
   onSelection,
+  onLinkedTaskSelection,
   onDashboard,
   onError,
   decide,
 }: {
   candidates: ImportCandidate[];
   selectedIds: string[];
+  linkedTaskCandidateIds: string[];
+  canvasScoped: boolean;
   conflictedIds: Set<string>;
   busy: boolean;
   terms: AcademicTermRecord[];
@@ -34,14 +39,19 @@ export function ReviewDialog({
   close: () => void;
   openConflicts: () => void;
   onSelection: (ids: string[]) => void;
+  onLinkedTaskSelection: (ids: string[]) => void;
   onDashboard: (dashboard: Dashboard) => void;
   onError: (message: string) => void;
   decide: (choice: "approve" | "reject") => void;
 }) {
   return (
     <Modal
-      title="Review extracted facts"
-      subtitle="Every candidate shows its source evidence. Approve only what is correct."
+      title={canvasScoped ? "Review Canvas imports" : "Review extracted facts"}
+      subtitle={
+        canvasScoped
+          ? "Assignments go to Work. Timed events go to Calendar, with an optional linked to-do."
+          : "Every candidate shows its source evidence. Approve only what is correct."
+      }
       close={close}
     >
       {candidates.length ? (
@@ -49,9 +59,12 @@ export function ReviewDialog({
           <ScheduleImportReview
             candidates={candidates}
             selectedIds={selectedIds}
+            linkedTaskCandidateIds={linkedTaskCandidateIds}
+            canvasScoped={canvasScoped}
             conflictedIds={conflictedIds}
             busy={busy}
             onSelection={onSelection}
+            onLinkedTaskSelection={onLinkedTaskSelection}
             onDashboard={onDashboard}
             onError={onError}
             terms={terms}

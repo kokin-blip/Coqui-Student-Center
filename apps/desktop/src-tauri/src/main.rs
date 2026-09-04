@@ -443,6 +443,15 @@ struct Candidate {
     term_id: String,
     suggested_action: String,
     student_edited_fields: Vec<String>,
+    has_linked_task: bool,
+    source_connection_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CanvasImportDecision {
+    candidate_id: String,
+    create_linked_task: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -2705,8 +2714,13 @@ fn dashboard_with_notice(
               (ic.kind='commitment' AND EXISTS(SELECT 1 FROM commitments c WHERE c.source_uid=ic.source_uid)) OR
               (ic.kind='course' AND EXISTS(SELECT 1 FROM courses c WHERE c.source_uid=ic.source_uid)) OR
               (ic.kind='class_meeting' AND EXISTS(SELECT 1 FROM class_meeting_series m WHERE m.source_uid=ic.source_uid))
-            ) THEN 'update' ELSE 'add' END
-     FROM import_candidates ic ORDER BY status,confidence DESC",
+            ) THEN 'update' ELSE 'add' END,
+            EXISTS(SELECT 1 FROM tasks linked WHERE linked.source_uid=ic.source_uid || ':linked-task'),
+            so.connection_id
+     FROM import_candidates ic
+     LEFT JOIN (SELECT id AS source_object_id,connection_id FROM source_objects) so
+       ON so.source_object_id=ic.source_object_id
+     ORDER BY status,confidence DESC",
   )?;
     let candidates = candidate_query
         .query_map([], |row| {
@@ -2717,7 +2731,7 @@ fn dashboard_with_notice(
                 kind: row.get(2)?, title: row.get(3)?, course: row.get(4)?, due_at: row.get(5)?, starts_at: row.get(6)?, ends_at: row.get(7)?, duration_minutes: row.get(8)?, evidence: row.get(9)?, source_locator: row.get(10)?, source_type: row.get(11)?, source_url: row.get(12)?, confidence: row.get(13)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
                 status: row.get(15)?, weekdays: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(), starts_at_local: row.get(17)?, ends_at_local: row.get(18)?, timezone: row.get(19)?,
-                section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?,
+                section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?, has_linked_task:row.get::<_,i64>(26)? != 0, source_connection_id:row.get(27)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -8708,8 +8722,13 @@ fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candid
                   (ic.kind='commitment' AND EXISTS(SELECT 1 FROM commitments c WHERE c.source_uid=ic.source_uid)) OR
                   (ic.kind='course' AND EXISTS(SELECT 1 FROM courses c WHERE c.source_uid=ic.source_uid)) OR
                   (ic.kind='class_meeting' AND EXISTS(SELECT 1 FROM class_meeting_series m WHERE m.source_uid=ic.source_uid))
-                ) THEN 'update' ELSE 'add' END
-         FROM import_candidates ic WHERE document_id=?1
+                ) THEN 'update' ELSE 'add' END,
+                EXISTS(SELECT 1 FROM tasks linked WHERE linked.source_uid=ic.source_uid || ':linked-task'),
+                so.connection_id
+         FROM import_candidates ic
+         LEFT JOIN (SELECT id AS source_object_id,connection_id FROM source_objects) so
+           ON so.source_object_id=ic.source_object_id
+         WHERE document_id=?1
          ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
                   confidence DESC,id",
     )?;
@@ -8721,7 +8740,7 @@ fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candid
                 document_id: row.get(1)?, kind: row.get(2)?, title: row.get(3)?, course: row.get(4)?, due_at: row.get(5)?, starts_at: row.get(6)?, ends_at: row.get(7)?, duration_minutes: row.get(8)?, evidence: row.get(9)?, source_locator: row.get(10)?, source_type: row.get(11)?, source_url: row.get(12)?, confidence: row.get(13)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
                 status: row.get(15)?, weekdays: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(), starts_at_local: row.get(17)?, ends_at_local: row.get(18)?, timezone: row.get(19)?,
-                section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?,
+                section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?, has_linked_task:row.get::<_,i64>(26)? != 0, source_connection_id:row.get(27)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -9250,6 +9269,61 @@ fn apply_candidate(
     Ok(entity_id)
 }
 
+fn apply_linked_canvas_task(conn: &Connection, candidate: &PendingCandidate) -> Result<String> {
+    if candidate.title.trim().is_empty() {
+        return Err(AppError::Invalid("Canvas event has no title".into()));
+    }
+    let base_source_uid = if candidate.source_uid.is_empty() {
+        format!("candidate:{}", candidate.id)
+    } else {
+        candidate.source_uid.clone()
+    };
+    let source_uid = format!("{base_source_uid}:linked-task");
+    let due_at = candidate
+        .starts_at
+        .clone()
+        .ok_or_else(|| AppError::Invalid("Canvas event has no start time".into()))?;
+    let minutes = match (
+        candidate.starts_at.as_deref().and_then(parse_rfc3339),
+        candidate.ends_at.as_deref().and_then(parse_rfc3339),
+    ) {
+        (Some(start), Some(end)) if end > start => (end - start).num_minutes().clamp(5, 480),
+        _ => 45,
+    };
+    let existing = existing_entity_for_source(conn, "tasks", &source_uid)?;
+    let (task_id, operation) = if let Some(id) = existing {
+        conn.execute(
+            "UPDATE tasks SET title=?2,minutes=?3,due_at=?4,source_candidate_id=?5,version=version+1 WHERE id=?1",
+            params![id, candidate.title.trim(), minutes, due_at, candidate.id],
+        )?;
+        (id, "source_updated")
+    } else {
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO tasks(id,title,minutes,due_at,created_at,source_uid,source_candidate_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![id, candidate.title.trim(), minutes, due_at, Utc::now().to_rfc3339(), source_uid, candidate.id],
+        )?;
+        (id, "source_created")
+    };
+    link_candidate_provenance(conn, "task", &task_id, &candidate.id)?;
+    mutation(conn, "task", &task_id, operation, "{}")?;
+    Ok(task_id)
+}
+
+fn is_canvas_candidate(conn: &Connection, candidate_id: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM import_candidates ic
+           JOIN source_objects so ON so.id=ic.source_object_id
+           JOIN integration_connections c ON c.id=so.connection_id
+           WHERE ic.id=?1 AND c.provider IN ('canvas','canvas_calendar')
+         )",
+        params![candidate_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0)
+}
+
 /// The replicated entity a candidate of this kind becomes.
 fn candidate_entity_type(kind: &str) -> &str {
     match kind {
@@ -9283,6 +9357,79 @@ fn approve_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result
 fn apply_schedule_import(state: tauri::State<AppState>, ids: Vec<String>) -> Result<Dashboard> {
     state.require_unlocked()?;
     approve_candidates(state, ids)
+}
+
+#[tauri::command]
+fn apply_canvas_import(
+    state: tauri::State<AppState>,
+    decisions: Vec<CanvasImportDecision>,
+) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let mut db = state.db.lock().unwrap();
+    require_onboarded(&db)?;
+    let transaction = db.transaction()?;
+    let mut approved = 0_usize;
+    let mut tasks = 0_usize;
+    let mut events = 0_usize;
+    for (index, decision) in decisions.iter().enumerate() {
+        if decisions[..index]
+            .iter()
+            .any(|item| item.candidate_id == decision.candidate_id)
+        {
+            return Err(AppError::Invalid(
+                "Canvas review contains a duplicate item".into(),
+            ));
+        }
+        if !is_canvas_candidate(&transaction, &decision.candidate_id)? {
+            return Err(AppError::Invalid(
+                "Canvas review contains an invalid item".into(),
+            ));
+        }
+        if has_unresolved_candidate_conflict(&transaction, &decision.candidate_id)? {
+            return Err(AppError::Invalid(
+                "A critical source change must be resolved explicitly before import".into(),
+            ));
+        }
+        let Some(candidate) = pending_candidate(&transaction, &decision.candidate_id)? else {
+            continue;
+        };
+        if decision.create_linked_task && candidate.kind != "commitment" {
+            return Err(AppError::Invalid(
+                "Only a timed Canvas event can create a linked to-do".into(),
+            ));
+        }
+        let kind = candidate.kind.clone();
+        apply_candidate(&transaction, &candidate, None)?;
+        approved += 1;
+        match kind.as_str() {
+            "task" => tasks += 1,
+            "commitment" => {
+                events += 1;
+                let linked_source_uid = if candidate.source_uid.is_empty() {
+                    format!("candidate:{}:linked-task", candidate.id)
+                } else {
+                    format!("{}:linked-task", candidate.source_uid)
+                };
+                let linked_exists =
+                    existing_entity_for_source(&transaction, "tasks", &linked_source_uid)?
+                        .is_some();
+                if decision.create_linked_task || linked_exists {
+                    apply_linked_canvas_task(&transaction, &candidate)?;
+                    tasks += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    transaction.commit()?;
+    regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
+    let notice = format!(
+        "{approved} Canvas item{} approved · {tasks} task{} planned in Work · {events} event{} planned in Calendar.",
+        if approved == 1 { "" } else { "s" },
+        if tasks == 1 { "" } else { "s" },
+        if events == 1 { "" } else { "s" },
+    );
+    dashboard_with_notice(&db, &state.ocr, Some(notice))
 }
 
 #[tauri::command]
@@ -10088,6 +10235,7 @@ fn main() {
             update_import_candidate,
             approve_candidates,
             apply_schedule_import,
+            apply_canvas_import,
             reject_candidates,
             resolve_source_conflict,
             connect_canvas,
@@ -11681,6 +11829,86 @@ mod tests {
             }],
             next_cursor: "2026-08-12T12:00:00Z".into(),
         }
+    }
+
+    #[test]
+    fn linked_canvas_event_tasks_are_source_scoped_and_deduplicated() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(
+            &directory.path().join("canvas-linked-task.db"),
+            &random_key(),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO integration_connections(id,provider,base_url,status,created_at)
+             VALUES('connection','canvas_calendar','https://canvas.example.edu','connected',?1)",
+            params![Utc::now().to_rfc3339()],
+        )
+        .unwrap();
+        let document_id = ensure_canvas_source_document(
+            &conn,
+            "connection",
+            "https://canvas.example.edu",
+        )
+        .unwrap();
+
+        let insert_candidate = |id: &str, object_id: &str, hash: &str, title: &str| {
+            conn.execute(
+                "INSERT INTO source_objects(id,connection_id,source_type,source_uid,source_url,observed_at,payload_hash,payload)
+                 VALUES(?1,'connection','canvas_calendar','canvas-calendar:event','https://canvas.example.edu',?2,?3,'{}')",
+                params![object_id, Utc::now().to_rfc3339(), hash],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO import_candidates(
+                   id,document_id,source_object_id,kind,title,course,starts_at,ends_at,evidence,
+                   source_locator,source_type,source_uid,confidence
+                 ) VALUES(?1,?2,?3,'commitment',?4,'Canvas','2026-09-03T18:00:00Z',
+                          '2026-09-03T19:30:00Z','Canvas event','Canvas calendar · event',
+                          'canvas_calendar','canvas-calendar:event',1)",
+                params![id, document_id, object_id, title],
+            )
+            .unwrap();
+        };
+        insert_candidate("candidate-1", "object-1", "hash-1", "Study group");
+        let first = pending_candidate(&conn, "candidate-1").unwrap().unwrap();
+        let first_task = apply_linked_canvas_task(&conn, &first).unwrap();
+
+        insert_candidate("candidate-2", "object-2", "hash-2", "Study group moved");
+        let second = pending_candidate(&conn, "candidate-2").unwrap().unwrap();
+        let second_task = apply_linked_canvas_task(&conn, &second).unwrap();
+
+        assert_eq!(first_task, second_task);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE source_uid='canvas-calendar:event:linked-task'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT title,minutes,due_at FROM tasks WHERE id=?1",
+                params![second_task],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?)),
+            )
+            .unwrap(),
+            ("Study group moved".into(), 90, "2026-09-03T18:00:00Z".into())
+        );
+        assert!(is_canvas_candidate(&conn, "candidate-2").unwrap());
+        let dashboard = dashboard(&conn, &OcrRuntime::discover(None)).unwrap();
+        let refreshed = dashboard
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == "candidate-2")
+            .unwrap();
+        assert!(refreshed.has_linked_task);
+        assert_eq!(
+            refreshed.source_connection_id.as_deref(),
+            Some("connection")
+        );
     }
 
     #[test]

@@ -41,6 +41,8 @@ export type ImportCandidate = {
   termId?: string;
   suggestedAction?: "add" | "update";
   studentEditedFields?: string[];
+  hasLinkedTask?: boolean;
+  sourceConnectionId?: string;
   evidence: string;
   sourceLocator: string;
   sourceType: string;
@@ -48,6 +50,10 @@ export type ImportCandidate = {
   confidence: number;
   warnings: string[];
   status: "pending" | "approved" | "rejected";
+};
+export type CanvasImportDecision = {
+  candidateId: string;
+  createLinkedTask: boolean;
 };
 export type DocumentSummary = {
   id: string;
@@ -2324,6 +2330,9 @@ export async function dismissReminder(blockId: string) {
 }
 export async function approveCandidates(ids: string[]) {
   return call<Dashboard>("apply_schedule_import", { ids });
+}
+export async function applyCanvasImport(decisions: CanvasImportDecision[]) {
+  return call<Dashboard>("apply_canvas_import", { decisions });
 }
 export async function rejectCandidates(ids: string[]) {
   return call<Dashboard>("reject_candidates", { ids });

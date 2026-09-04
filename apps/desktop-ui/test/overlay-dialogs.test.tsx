@@ -10,6 +10,7 @@ import { PlanningDialogs } from "../src/features/overlays/PlanningDialogs";
 import {
   CalendarRefreshDialog,
   RetentionDialog,
+  ReviewDialog,
 } from "../src/features/overlays/ReviewDialogs";
 import type { Dashboard } from "../src/native";
 
@@ -33,6 +34,64 @@ const dashboard = {
     },
   ],
 } as unknown as Dashboard;
+
+test("Canvas review identifies destinations and offers a linked Work to-do", async () => {
+  const user = userEvent.setup();
+  const onLinkedTaskSelection = vi.fn();
+  const candidate = {
+    id: "canvas-event",
+    documentId: "canvas-calendar-source:connection",
+    sourceConnectionId: "connection",
+    kind: "commitment" as const,
+    title: "Study group",
+    course: "Canvas",
+    startsAt: "2026-09-03T18:00:00Z",
+    endsAt: "2026-09-03T19:00:00Z",
+    evidence: "Canvas calendar event at 11 AM",
+    sourceLocator: "Canvas calendar · event",
+    sourceType: "canvas_calendar",
+    confidence: 1,
+    warnings: [],
+    status: "pending" as const,
+  };
+  const { container } = render(
+    <ReviewDialog
+      candidates={[candidate]}
+      selectedIds={[candidate.id]}
+      linkedTaskCandidateIds={[]}
+      canvasScoped
+      conflictedIds={new Set()}
+      busy={false}
+      terms={[]}
+      hasSourceChanges={false}
+      close={vi.fn()}
+      openConflicts={vi.fn()}
+      onSelection={vi.fn()}
+      onLinkedTaskSelection={onLinkedTaskSelection}
+      onDashboard={vi.fn()}
+      onError={vi.fn()}
+      decide={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("heading", { name: "Review Canvas imports" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Canvas source")).toBeInTheDocument();
+  expect(screen.getByText("Destination: Calendar")).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "Also add a linked to-do in Work",
+    }),
+  );
+  expect(onLinkedTaskSelection).toHaveBeenCalledWith([candidate.id]);
+  expect(
+    (
+      await axe.run(container, {
+        rules: { "color-contrast": { enabled: false } },
+      })
+    ).violations,
+  ).toEqual([]);
+});
 
 test("planning dialogs preserve review choices and replan reasons", async () => {
   const user = userEvent.setup();

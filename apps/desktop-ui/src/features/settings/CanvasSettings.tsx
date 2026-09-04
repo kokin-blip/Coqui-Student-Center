@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Link2, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
+import {
+  ClipboardCheck,
+  Link2,
+  RefreshCw,
+  ShieldCheck,
+  Unplug,
+} from "lucide-react";
 import { SettingsDetail } from "../../components/SettingsDetail";
 import {
   connectCanvas,
@@ -16,11 +22,13 @@ export function CanvasSettings({
   close,
   onDashboard,
   onToast,
+  onReview,
 }: {
   data: Dashboard;
   close: () => void;
   onDashboard: (data: Dashboard) => void;
   onToast: (message: string) => void;
+  onReview: (connectionId: string) => void;
 }) {
   const [canvasUrl, setCanvasUrl] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
@@ -35,8 +43,10 @@ export function CanvasSettings({
       const next = await action();
       onDashboard(next);
       onToast(next.importNotice ?? message);
+      return next;
     } catch (reason) {
       setError(String(reason));
+      return null;
     } finally {
       setBusy(false);
     }
@@ -92,20 +102,41 @@ export function CanvasSettings({
               )}
               {connection.lastError && <mark>{connection.lastError}</mark>}
               <div className="connection-actions">
+                {connection.pendingCandidates > 0 && (
+                  <button
+                    className="solid"
+                    disabled={busy}
+                    onClick={() => onReview(connection.id)}
+                  >
+                    <ClipboardCheck /> Review {connection.pendingCandidates}{" "}
+                    pending
+                  </button>
+                )}
                 <button
                   className="outline"
                   disabled={
                     busy || !["connected", "error"].includes(connection.status)
                   }
-                  onClick={() =>
-                    run(
-                      () =>
-                        connection.provider === "canvas_calendar"
-                          ? refreshCanvasCalendar(connection.id)
-                          : syncCanvas(connection.id),
-                      "Canvas refresh completed.",
-                    )
-                  }
+                  onClick={() => {
+                    void (async () => {
+                      const next = await run(
+                        () =>
+                          connection.provider === "canvas_calendar"
+                            ? refreshCanvasCalendar(connection.id)
+                            : syncCanvas(connection.id),
+                        "Canvas refresh completed.",
+                      );
+                      if (!next) return;
+                      const refreshed = next.canvasConnections.find(
+                        (item) => item.id === connection.id,
+                      );
+                      if (refreshed?.pendingCandidates) onReview(connection.id);
+                      else
+                        onToast(
+                          "Canvas is up to date. No new items to review.",
+                        );
+                    })();
+                  }}
                 >
                   <RefreshCw /> Refresh
                 </button>
@@ -254,19 +285,30 @@ export function CanvasSettings({
                 onClick={() => {
                   const submittedUrl = canvasUrl.trim();
                   const submittedToken = canvasToken;
+                  const existingIds = new Set(
+                    data.canvasConnections.map((connection) => connection.id),
+                  );
                   setCanvasUrl("");
                   setCanvasToken("");
-                  void run(
-                    () =>
-                      canvasMode === "calendar"
-                        ? connectCanvasCalendar(
-                            submittedUrl,
-                            "Canvas calendar",
-                            canvasRefreshOnStartup,
-                          )
-                        : connectCanvas(submittedUrl, submittedToken),
-                    "Canvas connected; review the imported facts.",
-                  );
+                  void (async () => {
+                    const next = await run(
+                      () =>
+                        canvasMode === "calendar"
+                          ? connectCanvasCalendar(
+                              submittedUrl,
+                              "Canvas calendar",
+                              canvasRefreshOnStartup,
+                            )
+                          : connectCanvas(submittedUrl, submittedToken),
+                      "Canvas connected; review the imported facts.",
+                    );
+                    if (!next) return;
+                    const connected = next.canvasConnections.find(
+                      (connection) => !existingIds.has(connection.id),
+                    );
+                    if (connected?.pendingCandidates) onReview(connected.id);
+                    else onToast("Canvas connected. No new items to review.");
+                  })();
                 }}
               >
                 Validate and connect
