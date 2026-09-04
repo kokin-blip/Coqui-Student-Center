@@ -102,7 +102,7 @@ test("unsigned prereleases publish only after both packaged desktop lanes", asyn
   );
 });
 
-test("0.12.0 is aligned across desktop release manifests", async () => {
+test("0.12.1 is aligned across desktop release manifests", async () => {
   const root = JSON.parse(await readFile("package.json", "utf8"));
   const desktop = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
   const ui = JSON.parse(await readFile("apps/desktop-ui/package.json", "utf8"));
@@ -111,7 +111,7 @@ test("0.12.0 is aligned across desktop release manifests", async () => {
   );
   const cargo = await readFile("apps/desktop/src-tauri/Cargo.toml", "utf8");
   for (const manifest of [root, desktop, ui, tauri]) {
-    assert.equal(manifest.version, "0.12.0");
+    assert.equal(manifest.version, "0.12.1");
   }
-  assert.match(cargo, /^version = "0\.12\.0"$/m);
+  assert.match(cargo, /^version = "0\.12\.1"$/m);
 });

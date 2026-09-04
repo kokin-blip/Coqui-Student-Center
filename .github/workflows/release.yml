@@ -208,11 +208,16 @@ jobs:
           pattern: package-*
           path: release-artifacts
           merge-multiple: true
+      - name: Resolve release notes
+        id: release-notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: echo "path=docs/releases/${RELEASE_TAG#v}.md" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           prerelease: true
-          body_path: docs/releases/0.12.0.md
+          body_path: ${{ steps.release-notes.outputs.path }}
           fail_on_unmatched_files: true
           files: release-artifacts/*
 
@@ -262,10 +267,15 @@ jobs:
           pattern: updater-*
           path: release-artifacts
           merge-multiple: true
+      - name: Resolve release notes
+        id: release-notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: echo "path=docs/releases/${RELEASE_TAG#v}.md" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           prerelease: true
-          body_path: docs/releases/0.12.0.md
+          body_path: ${{ steps.release-notes.outputs.path }}
           fail_on_unmatched_files: true
           files: release-artifacts/*
