@@ -72,7 +72,7 @@
   box-sizing: border-box;
 }
 .mode-assignments .work-inspector input[type="checkbox"] {
-  width: auto;
+  width: 16px;
 }
 .mode-assignments .work-inspector h2,
 .mode-assignments .work-list-panel h2 {

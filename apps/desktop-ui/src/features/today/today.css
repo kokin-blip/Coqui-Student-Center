@@ -788,8 +788,8 @@
 }
 .work-queue td input {
   accent-color: var(--success);
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 .work-queue tr.selected {
   background: var(--bg-selected);

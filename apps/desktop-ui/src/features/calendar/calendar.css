@@ -20,7 +20,7 @@
   width: 100%;
 }
 .mode-timetable .calendar-inspector input[type="checkbox"] {
-  width: auto;
+  width: 16px;
 }
 .mode-timetable .page-head h1 {
   font-size: 48px;

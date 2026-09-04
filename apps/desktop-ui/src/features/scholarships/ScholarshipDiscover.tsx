@@ -172,7 +172,7 @@ export function DiscoverSection({
           </div>
         )}
       </section>
-      <section className="scholarship-panel">
+      <section className="scholarship-panel manual-scholarship-form">
         <h2>Add an opportunity</h2>
         <p className="panel-copy">
           Paste a public source page or import supporting requirements. Coqui

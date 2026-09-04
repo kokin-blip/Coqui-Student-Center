@@ -461,7 +461,7 @@ export function OnboardingExperience({
                   } finally {
                     setScreenshotBusy(false);
                   }
-                }}><LayoutGrid /><strong>Capture screen area</strong><span>Use the system snipping tool, then paste here</span></button>
+                }}><span className="import-choice-title"><LayoutGrid aria-hidden="true" /><strong>Capture screen area</strong></span><span className="import-choice-copy">Use the system snipping tool, then paste here</span></button>
                 <button className="outline" disabled={screenshotBusy} onClick={async () => {
                   setScreenshotBusy(true);
                   setScreenshotNotice("");
@@ -476,7 +476,7 @@ export function OnboardingExperience({
                   } finally {
                     setScreenshotBusy(false);
                   }
-                }}><FileUp /><strong>Import a file or document</strong><span>PDF, image, calendar, Word, Excel, CSV, PowerPoint, or text</span></button>
+                }}><span className="import-choice-title"><FileUp aria-hidden="true" /><strong>Import a file or document</strong></span><span className="import-choice-copy">PDF, image, calendar, Word, Excel, CSV, PowerPoint, or text</span></button>
               </div>}
             </section>
             {/* The fastest path in, for the students who have a screenshot and

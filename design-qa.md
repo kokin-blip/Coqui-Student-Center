@@ -409,3 +409,101 @@ gates, both native suites, both first-run/IPC smokes, NSIS/DMG packaging, macOS 
 checksums and both installed-package restart/persistence smokes passed. It uploaded
 `student-center-windows-latest` and `student-center-macos-15` test artifacts. No
 release was created or modified by this certification workflow.
+
+## Checkpoint D2 — Scholarship form polish (September 3, 2026)
+
+- Source visual truth: `docs/design/ui-rebuild/current-audit/07-scholarship-form-before.png`
+  (553×451 pixels, user-supplied Compact/dark crop).
+- Rendered implementation: `docs/design/ui-rebuild/current-audit/07-scholarship-form-polished-full.png`
+  (884×806 pixels at an 884×806 CSS viewport and 1× captured density).
+- Focused implementation region: `docs/design/ui-rebuild/current-audit/08-scholarship-form-polished-crop.png`
+  (766×480 pixels).
+- Combined comparison evidence: `docs/design/ui-rebuild/current-audit/09-scholarship-form-comparison.png`.
+- State: Compact, Coqui Dark, Discover, empty required fields, disabled Save
+  opportunity action, Opportunity title focused.
+
+The source is a differently scaled crop, so the comparison preserves each image's
+native pixels and judges the same form state rather than claiming pixel-for-pixel
+normalization. The combined view and focused crop make the controls, typography,
+spacing, colors, icon geometry and button baseline readable without relying on a
+full-workspace screenshot.
+
+### Comparison history
+
+- Earlier P2: text inputs inherited browser-native inset borders, minimal padding,
+  zero radius and a 21.5px height, visibly breaking Coqui's control vocabulary.
+- Earlier P2: the Save opportunity button used block layout; its 24px Plus icon sat
+  independently from the label instead of sharing a centered baseline.
+- Fix: Scholarship text, date, select and textarea controls now use semantic surface,
+  text, border, radius, spacing, typography and motion tokens. Placeholders use the
+  readable secondary-text token. Hover, focus and disabled treatments remain intact.
+- Fix: the manual-save action now uses centered inline-flex geometry, an 8px tokenized
+  gap and a fixed 18px icon; Comfy uses a 40px control height and Compact uses 36px.
+- Post-fix evidence: the rendered inputs are consistently 36px high in Compact with
+  12px horizontal padding and a 6px radius. The button reports centered alignment,
+  an 8px gap and an 18×18px icon. No P0, P1 or P2 visual mismatch remains in this form.
+
+### Required fidelity surfaces
+
+- Fonts and typography: bundled Inter and existing label/body weights are preserved.
+- Spacing and layout: labels, fields and action use the 4px spacing scale and aligned
+  control heights; the Plus icon and label share one centered flex row.
+- Colors and tokens: all new values use the existing semantic theme/accent tokens and
+  were visually checked in Comfy/light and Compact/dark.
+- Image and icon quality: no raster imagery is present; the existing Lucide Plus is
+  retained and optically normalized to 18px.
+- Copy and content: labels, placeholders and action copy are unchanged.
+
+Focused Scholarship workflow test, TypeScript check and production build pass. The
+live preview was navigated through the Compact control and Scholarship destination;
+focus scrolling and the disabled action state were exercised, with no browser console
+errors or warnings. The Impeccable detector reports no findings for the changed
+component and feature sheet.
+
+final result: passed
+
+## Checkpoint D3 — Desktop control consistency (September 3, 2026)
+
+- Audit output: `docs/design/ui-rebuild/control-polish-audit/audit-report.md`.
+- Before evidence: 14 captures covering Compact and Comfy primary destinations,
+  Settings, Quick Add, and Import.
+- After evidence: Comfy Work, Quick Add, Import, Scholarship manual entry, Compact
+  Today/work queue, and Compact Scholarship manual entry.
+- Scope: text inputs, date/time inputs, selects, text areas, native checkboxes and
+  radios, shared icon-and-label actions, Settings toggles, and import controls.
+
+The shared form baseline prevents unwrapped controls from reverting to browser-native
+inset fields. Shared actions now align their icon and label through centered flex
+geometry. Settings, Work, and Calendar checkbox overrides no longer defeat the
+16px checkbox contract, and Compact's work queue now uses the same box size.
+
+Every primary destination was scanned in both modes. All nine nested Settings
+sections were scanned in both modes, along with all Scholarship, Course, and Study
+subsections plus Quick Add, Search, Import, and the Calendar event editor. The only
+borderless input found is intentionally nested inside a fully bordered document
+search control.
+
+The complete desktop UI suite passes (78 tests across 17 files), including axe
+coverage. TypeScript, production build, and whitespace checks pass. The mechanical
+design detector has no control-related finding; its three existing Today side-accent
+warnings match approved reference semantics and were not changed in this pass.
+
+final result: passed
+
+## Checkpoint D4 — Import card optical alignment (September 3, 2026)
+
+- Before evidence: `docs/design/ui-rebuild/control-polish-audit/25-import-card-alignment-before.png`.
+- Comfy after evidence: `docs/design/ui-rebuild/control-polish-audit/26-import-card-alignment-after.png`.
+- Compact after evidence: `docs/design/ui-rebuild/control-polish-audit/27-compact-import-card-alignment-after.png`.
+
+The schedule-source cards no longer distribute their icon, title, and supporting
+copy across stretched implicit grid rows. Each card now has 16px edge padding, a
+20px icon aligned with its title, and supporting copy aligned beneath the title.
+The phone-photo action uses a single-line label with its 16px icon centered in the
+same 36px control. The equivalent onboarding import choices share this structure.
+
+Both Comfy/light and Compact/dark were visually inspected. The focused overlay and
+onboarding tests pass, the complete 78-test desktop suite remains green, and the
+TypeScript check, production build, and whitespace check pass.
+
+final result: passed

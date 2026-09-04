@@ -1547,7 +1547,10 @@ input:focus-visible {
   background: var(--bg-surface);
 }
 .setting-toggle input {
-  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  justify-self: center;
   accent-color: var(--teal);
 }
 .setting-toggle span {

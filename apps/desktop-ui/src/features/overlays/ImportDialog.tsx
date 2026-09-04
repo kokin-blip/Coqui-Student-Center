@@ -65,14 +65,22 @@ export function ImportDialog({
     >
       <div className="import-choice-grid">
         <button className="outline" onClick={openCanvas}>
-          <Link2 aria-hidden="true" />
-          <strong>Canvas calendar link</strong>
-          <span>Paste the one link Canvas provides</span>
+          <span className="import-choice-title">
+            <Link2 aria-hidden="true" />
+            <strong>Canvas calendar link</strong>
+          </span>
+          <span className="import-choice-copy">
+            Paste the one link Canvas provides
+          </span>
         </button>
         <button className="outline" disabled={busy} onClick={capture}>
-          <LayoutGrid aria-hidden="true" />
-          <strong>Capture screen area</strong>
-          <span>Use the system snipping tool, then paste</span>
+          <span className="import-choice-title">
+            <LayoutGrid aria-hidden="true" />
+            <strong>Capture screen area</strong>
+          </span>
+          <span className="import-choice-copy">
+            Use the system snipping tool, then paste
+          </span>
         </button>
       </div>
       <SchedulePhotoEditor

@@ -56,6 +56,42 @@ body {
   background: var(--bg-app);
 }
 
+/* A quiet author-level baseline keeps feature forms from falling back to
+   platform-default inset fields or differently sized native checkboxes. More
+   specific feature styles still win without needing override selectors. */
+:where(#root) :where(
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+  select,
+  textarea
+) {
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 8px 11px;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
+:where(#root) :where(
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+  textarea
+)::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+:where(#root) input:is([type="checkbox"], [type="radio"]) {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  vertical-align: middle;
+  flex: 0 0 16px;
+}
+
 /* Scholarship Center — a feature-owned workspace rather than another modal. */
 .scholarship-center { max-width: 1500px; }
 .scholarship-hero { align-items: center; }
@@ -110,7 +146,8 @@ body {
 @media(max-width:900px){.scholarship-grid,.scholarship-writing,.scholarship-saved-layout{grid-template-columns:1fr}.match-inspector{position:static}.scholarship-writing-sidebar{order:1}.writing-editor{min-height:480px}}
 @media(max-width:640px){.scholarship-center{padding-bottom:96px}.scholarship-privacy{display:none}.scholarship-panel{padding:16px}.scholarship-tabs{width:100%;box-sizing:border-box}.scholarship-tabs button{flex:1;min-width:0;justify-content:center;padding-inline:8px;font-size:12px}.scholarship-tabs button svg{display:none}.scholarship-panel .section-head{align-items:stretch}.scholarship-search{min-width:0}.writing-foot,.application-heading{align-items:stretch;flex-direction:column}.writing-foot button,.application-heading select{width:100%}.source-list>article,.discovered-list article,.scholarship-diffs{align-items:stretch;flex-direction:column}.source-list>article>div{justify-content:flex-end}.scholarship-profile{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.scholarship-center *{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
-.photo-editor{display:grid;gap:14px;margin:18px 0;padding:16px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-muted)}.photo-editor h3{margin:0}.photo-editor .section-head p{margin:4px 0 0}.photo-picker{position:relative;cursor:pointer}.photo-picker input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.photo-list{display:grid;gap:10px}.photo-list article{display:grid;grid-template-columns:90px minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);overflow:hidden}.photo-list img{width:90px;height:90px;object-fit:contain;border-radius:var(--radius-sm);background:white}.photo-list article>div{display:grid;gap:8px}.photo-list label{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:8px;align-items:center;color:var(--text-secondary);font-size:var(--text-meta)}.photo-list label svg{width:16px}.photo-actions{display:flex;gap:6px}.photo-actions button{padding:5px}.photo-actions svg{width:16px}.photo-list .icon-button{font-size:20px}@media(max-width:640px){.photo-list article{grid-template-columns:64px minmax(0,1fr)}.photo-list img{width:64px;height:64px}.photo-list article>.icon-button{grid-column:1/-1;justify-self:end}}
+.photo-editor{display:grid;gap:14px;margin:18px 0;padding:16px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-muted)}.photo-editor h3{margin:0}.photo-editor .section-head p{margin:4px 0 0}.photo-picker{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);cursor:pointer}.photo-picker>svg{width:16px;height:16px;flex:none}.photo-picker input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.photo-list{display:grid;gap:10px}.photo-list article{display:grid;grid-template-columns:90px minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);overflow:hidden}.photo-list img{width:90px;height:90px;object-fit:contain;border-radius:var(--radius-sm);background:white}.photo-list article>div{display:grid;gap:8px}.photo-list label{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:8px;align-items:center;color:var(--text-secondary);font-size:var(--text-meta)}.photo-list label svg{width:16px}.photo-actions{display:flex;gap:6px}.photo-actions button{padding:5px}.photo-actions svg{width:16px}.photo-list .icon-button{font-size:20px}@media(max-width:640px){.photo-list article{grid-template-columns:64px minmax(0,1fr)}.photo-list img{width:64px;height:64px}.photo-list article>.icon-button{grid-column:1/-1;justify-self:end}}
+.photo-editor .section-head{align-items:center;gap:16px;margin:0}.photo-editor .section-head>div{min-width:0}.photo-picker{min-width:132px;padding-inline:14px;white-space:nowrap;flex:none}@media(max-width:640px){.photo-editor .section-head{align-items:stretch;flex-direction:column}.photo-picker{width:100%}}
 .cleanup-option{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-top:1px solid var(--border-subtle)}.cleanup-option span{display:grid;gap:4px}.cleanup-option small{color:var(--text-secondary)}@media(max-width:640px){.cleanup-option{align-items:stretch;flex-direction:column}}
 .mobile-more{position:fixed;z-index:80;right:10px;bottom:82px;display:grid;gap:4px;width:200px;padding:8px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);box-shadow:var(--shadow-md)}
 .mobile-more button{display:flex;align-items:center;gap:10px;justify-content:flex-start;padding:12px;border:0;border-radius:var(--radius-md);background:transparent;color:var(--text-primary)}
@@ -633,15 +670,26 @@ body {
 .ghost,
 .solid,
 .outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   min-height: 36px;
   padding: 0 var(--space-4);
   border-radius: var(--radius-sm);
   font-size: var(--text-secondary-size);
   font-weight: 600;
+  line-height: 1.2;
   transition:
     background-color var(--motion-fast) var(--ease),
     border-color var(--motion-fast) var(--ease),
     color var(--motion-fast) var(--ease);
+}
+
+:where(.primary, .ghost, .solid, .outline) > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 
 .primary,
@@ -844,9 +892,10 @@ body {
 
 .import-choice-grid,
 .settings-link-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 12px; }
-.import-choice-grid button { display: grid; justify-items: start; gap: 4px; min-height: 108px; text-align: left; }
-.import-choice-grid button svg { color: var(--teal); }
-.import-choice-grid button span { color: var(--muted); font-size: var(--text-meta); }
+.import-choice-grid > button { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 8px; min-height: 108px; padding: 16px; text-align: left; }
+.import-choice-title { display: flex; align-items: center; gap: 10px; color: var(--ink); line-height: 1.25; }
+.import-choice-title svg { width: 20px; height: 20px; flex: none; color: var(--teal); }
+.import-choice-copy { padding-left: 30px; color: var(--muted); font-size: var(--text-meta); line-height: 1.4; }
 .settings-link-grid button { justify-content: flex-start; text-align: left; }
 .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 14px; border-radius: 12px; background: var(--surface-soft); }
 .segmented button { min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); }

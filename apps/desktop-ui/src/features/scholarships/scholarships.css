@@ -42,6 +42,70 @@
   box-shadow: none;
 }
 
+.scholarship-center .scholarship-panel
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  width: 100%;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: 500 var(--text-secondary-size) / var(--leading-normal) var(--font-ui);
+  transition:
+    background-color var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
+}
+
+.scholarship-center .scholarship-panel
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea)::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.scholarship-center .scholarship-panel
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):hover:not(:disabled) {
+  background: var(--bg-surface-raised);
+}
+
+.scholarship-center .scholarship-panel
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):focus {
+  border-color: var(--accent);
+}
+
+.scholarship-center .scholarship-panel
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.scholarship-center .manual-scholarship-form label {
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  color: var(--text-primary);
+  line-height: var(--leading-tight);
+}
+
+.scholarship-center .manual-scholarship-actions {
+  margin-top: var(--space-5);
+}
+
+.scholarship-center .manual-scholarship-actions .solid {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  line-height: 1;
+}
+
+.scholarship-center .manual-scholarship-actions .solid svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
 .scholarship-loading {
   display: grid;
   gap: var(--space-4);
@@ -90,6 +154,12 @@
   border: 0;
   border-radius: 0;
   background: var(--surface-primary);
+}
+
+[data-interface-mode="compact"] .scholarship-center .scholarship-panel
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea),
+[data-interface-mode="compact"] .scholarship-center .manual-scholarship-actions .solid {
+  min-height: 36px;
 }
 
 @media (max-width: 1099px) {
