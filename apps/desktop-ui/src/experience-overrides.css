@@ -942,17 +942,22 @@ body {
 .week-calendar.day-calendar { grid-template-columns: minmax(280px,1fr); overflow-x: visible; }
 .week-calendar.day-calendar > section { min-width: 0; }
 .unscheduled-tray { margin-top: 18px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); }
-.schedule-review-layout { display: grid; grid-template-columns: minmax(260px,.9fr) minmax(360px,1.35fr); gap: 16px; align-items: start; }
-.schedule-source-pane { position: sticky; top: 0; display: grid; gap: 10px; min-height: 360px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); }
+.schedule-review-layout { display: grid; grid-template-columns: minmax(0,.85fr) minmax(0,1.15fr); gap: 16px; align-items: start; min-width: 0; }
+.schedule-review-layout > * { min-width: 0; }
+.schedule-source-pane { position: sticky; top: 0; display: grid; gap: 10px; min-width: 0; min-height: 360px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); }
 .schedule-source-pane img,
 .schedule-source-pane object { width: 100%; min-height: 340px; max-height: 560px; object-fit: contain; border: 0; border-radius: 10px; background: var(--surface); }
 .source-preview-empty { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 320px; text-align: center; color: var(--muted); }
 .source-preview-empty svg { color: var(--teal); }
 .canvas-source-preview { min-height: 334px; padding: 24px; }
-.editable-candidates .candidate { grid-template-columns: 1fr auto; align-items: start; }
+.editable-candidates { min-width: 0; }
+.editable-candidates .candidate { grid-template-columns: minmax(0,1fr) auto; align-items: start; min-width: 0; max-width: 100%; }
 .candidate-select { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: var(--text-meta); font-weight: 700; }
 .candidate-summary { display: grid; gap: 5px; min-width: 0; }
-.candidate-summary q { display: block; }
+.candidate-summary q { display: block; overflow-wrap: anywhere; }
+.candidate-summary small,
+.candidate-summary em,
+.candidate-summary mark { overflow-wrap: anywhere; }
 .candidate-destination { font-weight: 700; color: var(--text-primary) !important; }
 .candidate-linked-task { margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--line); font-weight: 600; }
 .candidate-editor { grid-column: 1 / -1; display: grid; gap: 12px; }
