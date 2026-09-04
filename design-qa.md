@@ -397,9 +397,15 @@ whitespace check are clean.
 Cross-platform certification now includes a non-publishing installed-package gate.
 On disposable GitHub-hosted accounts, Windows installs the NSIS package, launches
 twice against a new profile, verifies persistence and uninstalls; macOS mounts the
-DMG, verifies its ad-hoc seal, copies the app, launches twice against a new profile
-and verifies persistence. This avoids touching a developer's real local database
-or credential vault. The workflow also keeps the existing prepared-OCR native IPC,
-first-run, package signature and checksum gates. Cross-platform results are pending
-for this checkpoint and must not be represented as passed until the hosted run is
-green. No release is created or modified by this certification workflow.
+DMG, verifies its ad-hoc seal, copies the app, provisions an isolated temporary
+Keychain, launches twice against a new profile and verifies persistence. This avoids
+touching a developer's real local database or credential vault. The workflow also
+keeps the existing prepared-OCR native IPC, first-run, package signature and checksum
+gates.
+
+Hosted run [33808756987](https://github.com/kokin-blip/Coqui-Student-Center/actions/runs/33808756987)
+passed the contracts, Windows x64 and macOS Apple Silicon jobs. Both OCR release
+gates, both native suites, both first-run/IPC smokes, NSIS/DMG packaging, macOS seal,
+checksums and both installed-package restart/persistence smokes passed. It uploaded
+`student-center-windows-latest` and `student-center-macos-15` test artifacts. No
+release was created or modified by this certification workflow.
