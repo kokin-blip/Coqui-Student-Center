@@ -514,6 +514,38 @@
   margin-bottom: 12px;
   font-size: 13px;
 }
+.plan-ready-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 16px 0;
+  border-block: 1px solid var(--border-subtle);
+}
+.plan-ready-summary h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.plan-ready-summary p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.plan-ready-summary button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.plan-ready-summary svg {
+  width: 16px;
+  height: 16px;
+}
+.priority-explanation p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+}
 .today-notice {
   color: var(--danger);
 }
@@ -595,6 +627,17 @@
 .today-compact > .today-review-notice {
   padding-inline: 20px;
   margin-bottom: 0;
+}
+.today-compact > .plan-ready-summary {
+  margin: 0;
+  padding: 14px 20px;
+}
+@media (max-width: 720px) {
+  .plan-ready-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 .compact-layout {
   display: grid;

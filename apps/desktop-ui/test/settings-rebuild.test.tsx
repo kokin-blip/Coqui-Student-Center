@@ -40,7 +40,7 @@ test("Canvas clears submitted credentials and retains partial-success diagnostic
     "https://canvas.example.edu/feeds/calendars/synthetic-only.ics",
   );
   await user.click(
-    screen.getByRole("button", { name: "Validate and connect" }),
+    screen.getByRole("button", { name: "Validate feed and connect" }),
   );
   await waitFor(() =>
     expect(callbacks.onDashboard).toHaveBeenCalledWith(result),
@@ -52,6 +52,51 @@ test("Canvas clears submitted credentials and retains partial-success diagnostic
     true,
   );
   expect(callbacks.onToast).toHaveBeenCalledWith(result.importNotice);
+});
+
+test("Canvas guides calendar setup and gates advanced tokens behind institutional approval", async () => {
+  const data = await native.getDashboard();
+  const result = { ...data, canvasConnections: [] };
+  const connect = vi.spyOn(native, "connectCanvas").mockResolvedValue(result);
+  const user = userEvent.setup();
+  render(<CanvasSettings data={result} {...props()} />);
+
+  expect(screen.getByRole("heading", { name: "Find your Calendar Feed" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Official screenshots/ })).toHaveAttribute(
+    "href",
+    expect.stringContaining("community.instructure.com"),
+  );
+  for (const [name, file] of [
+    ["Canvas global navigation with Calendar outlined", "open-calendar.png"],
+    ["Canvas Calendar sidebar with the Calendar Feed link outlined", "calendar-feed.png"],
+    ["Canvas Calendar Feed window with an example URL outlined and redacted", "copy-feed-url.png"],
+  ]) {
+    expect(screen.getByRole("img", { name })).toHaveAttribute("src", `/guides/canvas-calendar/v1/${file}`);
+  }
+  expect(screen.getByText(/redacted for this guide · v1/)).toBeInTheDocument();
+  expect(screen.getByText(/Canvas To Do items/)).toBeInTheDocument();
+
+  await user.click(screen.getByText("Advanced: institution-approved API access"));
+  expect(screen.getByText(/Do not create a personal token solely for Coqui/)).toBeInTheDocument();
+  await user.type(screen.getByLabelText("Canvas address"), "https://canvas.example.edu");
+  await user.type(
+    screen.getByLabelText("Institution-approved access token"),
+    "synthetic-approved-token",
+  );
+  const submit = screen.getByRole("button", { name: "Validate approved connection" });
+  expect(submit).toBeDisabled();
+  await user.click(
+    screen.getByRole("checkbox", { name: /institution issued or explicitly approved/ }),
+  );
+  expect(submit).toBeEnabled();
+  await user.click(submit);
+  await waitFor(() =>
+    expect(connect).toHaveBeenCalledWith(
+      "https://canvas.example.edu",
+      "synthetic-approved-token",
+    ),
+  );
+  expect(screen.getByLabelText("Institution-approved access token")).toHaveValue("");
 });
 
 test("Canvas exposes pending review and opens it after a manual refresh", async () => {
@@ -70,6 +115,9 @@ test("Canvas exposes pending review and opens it after a manual refresh", async 
   const callbacks = props();
   const user = userEvent.setup();
   render(<CanvasSettings data={result} {...callbacks} />);
+
+  expect(screen.getByText("Waiting for review").parentElement).toHaveTextContent("2 items");
+  expect(screen.getByText(/approved stay in Coqui/)).toBeInTheDocument();
 
   await user.click(
     screen.getByRole("button", { name: "Review 2 pending" }),

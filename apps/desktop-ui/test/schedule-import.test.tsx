@@ -15,6 +15,9 @@ test("schedule review keeps the source beside editable candidates", async () => 
   );
   const dialog = await screen.findByRole("dialog", undefined, { timeout: 8000 });
   expect(within(dialog).getByLabelText("Imported schedule source")).toBeInTheDocument();
+  expect(within(dialog).getByText("Paper", { selector: "strong" })).toBeInTheDocument();
+  expect(within(dialog).getByText("High priority")).toBeInTheDocument();
+  expect(within(dialog).getByText("Paper or essay")).toBeInTheDocument();
 
   await user.selectOptions(within(dialog).getByLabelText("Source"), "00000000-0000-4000-8000-000000000202");
   expect(within(dialog).getByText(/Approval action: add new record/)).toBeInTheDocument();

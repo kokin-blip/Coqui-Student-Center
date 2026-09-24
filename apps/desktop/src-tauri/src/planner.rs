@@ -64,6 +64,8 @@ pub struct PlannerTask {
     pub max_session_minutes: i64,
     pub dependencies: Vec<String>,
     pub completed: bool,
+    #[serde(default)]
+    pub overdue: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -362,6 +364,10 @@ pub fn generate(snapshot: &PlannerSnapshot) -> Result<PlanOutcome, String> {
                 .find(|(_, old_start, old_end)| *old_start == start && *old_end == end)
                 .map(|(id, _, _)| id.clone())
                 .unwrap_or_else(|| stable_session_id(&task.id, index, start));
+            let mut reasons = reasons;
+            if task.overdue {
+                reasons.push("overdue_recovery".into());
+            }
             blocks.push(PlannedBlock {
                 id,
                 task_id: task.id.clone(),
@@ -887,6 +893,7 @@ mod tests {
                 max_session_minutes: 60,
                 dependencies: Vec::new(),
                 completed: false,
+                overdue: false,
             }],
             existing_blocks: Vec::new(),
             trigger: PlannerTrigger::Initial,
@@ -956,6 +963,7 @@ mod tests {
                 max_session_minutes: 60,
                 dependencies: Vec::new(),
                 completed: false,
+                overdue: false,
             },
         );
         input.tasks[1].dependencies = vec!["prep".into()];
@@ -1033,6 +1041,7 @@ mod tests {
                     max_session_minutes: 60,
                     dependencies: Vec::new(),
                     completed: false,
+                    overdue: false,
                 })
                 .collect();
             let outcome = generate(&input).unwrap();

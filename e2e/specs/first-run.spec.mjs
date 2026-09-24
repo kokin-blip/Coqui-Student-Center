@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 describe("installed Student Center", () => {
   // The second test completes onboarding, so the test profile is reset back to a
@@ -14,7 +17,7 @@ describe("installed Student Center", () => {
     await body.waitForDisplayed();
     await browser.waitUntil(async () => (await body.getText()).includes("Make it yours"));
     const bootstrap = await browser.tauri.execute(async ({ core }) => core.invoke("app_initialize"));
-    assert.equal(bootstrap.schemaVersion, 26);
+    assert.equal(bootstrap.schemaVersion, 30);
     assert.equal(bootstrap.onboarding.required, true);
     assert.equal(bootstrap.dashboard, null);
     assert.doesNotMatch(await body.getText(), /Alex Morgan/);
@@ -51,7 +54,8 @@ describe("installed Student Center", () => {
       ["Work", "Work"],
       ["Courses", "Courses"],
       ["Study", "Study"],
-      ["Scholarships", "Scholarships"],
+      ["Semester", "Semester planner"],
+      ["Funding", "Find funding that fits you"],
       ["Settings", "Settings"],
     ];
     for (const [label, heading] of destinations) {
@@ -70,6 +74,22 @@ describe("installed Student Center", () => {
     assert.equal(await detail.$('h1').getText(), "Connect Canvas");
     await browser.keys(["Escape"]);
     await detail.waitForDisplayed({ reverse: true });
+  });
+
+  it("classifies a quiz and keeps its deadline separate from planned sessions", async () => {
+    const result = await browser.tauri.execute(async ({ core }) => {
+      const dueAt = new Date(Date.now() + 3 * 86400000).toISOString();
+      const dashboard = await core.invoke("add_task", { title: "Quiz 1: Foundations", minutes: 60, dueAt, courseId: null });
+      const workspace = await core.invoke("get_local_workspace");
+      const agenda = await core.invoke("get_calendar_agenda", {});
+      return { dashboard, workspace, agenda };
+    });
+    const quiz = result.workspace.tasks.find((task) => task.title === "Quiz 1: Foundations");
+    assert.ok(quiz, "the approved local task must persist");
+    assert.equal(quiz.kind, "quiz");
+    assert.ok(quiz.priority >= 4, "quizzes must receive high priority");
+    assert.ok(result.agenda.deadlines.some((deadline) => deadline.taskId === quiz.id));
+    assert.ok(result.dashboard.blocks.every((block) => block.kind !== "deadline"));
   });
 
   it("persists appearance and Scholarship Center records through native storage", async () => {
@@ -132,5 +152,40 @@ describe("installed Student Center", () => {
     assert.equal(opportunity.taskIds.length, 1, "deadline planning must be idempotently linked");
     const draft = result.scholarships.drafts.find((item) => item.id === "e2e-draft");
     assert.equal(draft.versions.length, 1, "an explicit draft version must persist");
+  });
+
+  it("exports, previews, and restores an encrypted backup in the disposable profile", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "coqui-backup-e2e-"));
+    const archive = path.join(directory, "profile.studentcenter");
+    const passphrase = "disposable backup smoke passphrase";
+    try {
+      const restored = await browser.tauri.execute(async ({ core }, { archive, passphrase }) => {
+        const exported = await core.invoke("export_backup", { destination: archive, passphrase });
+        const preview = await core.invoke("preview_backup", { path: archive, passphrase });
+        await core.invoke("update_appearance", { appearance: "dark" });
+        await core.invoke("restore_backup", { path: archive, passphrase, expectedFingerprint: preview.fingerprint, confirmed: true });
+        return {
+          exported,
+          preview,
+          workspace: await core.invoke("get_local_workspace"),
+          scholarships: await core.invoke("get_scholarship_workspace"),
+        };
+      }, { archive, passphrase });
+      assert.equal(restored.exported.fingerprint, restored.preview.fingerprint);
+      assert.equal(restored.workspace.appearance, "light");
+      assert.ok(restored.workspace.tasks.some((task) => task.title === "Quiz 1: Foundations"));
+      assert.ok(restored.scholarships.opportunities.some((item) => item.id === "e2e-scholarship"));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reopens the disposable profile after a native session restart", async () => {
+    await browser.reloadSession();
+    const bootstrap = await browser.tauri.execute(async ({ core }) => core.invoke("app_initialize"));
+    assert.equal(bootstrap.onboarding.required, false);
+    assert.equal(bootstrap.dashboard.studentName, "Skip Test");
+    const workspace = await browser.tauri.execute(async ({ core }) => core.invoke("get_local_workspace"));
+    assert.ok(workspace.tasks.some((task) => task.title === "Quiz 1: Foundations"));
   });
 });

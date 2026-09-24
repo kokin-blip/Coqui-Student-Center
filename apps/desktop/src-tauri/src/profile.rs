@@ -9,6 +9,7 @@ pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000000010";
 pub const ONBOARDING_VERSION: i64 = 2;
 const MAX_COMMITMENTS: usize = 50;
 const MAX_AVAILABILITY_RULES: usize = 28;
+const MAX_RHYTHM_RULES: usize = 70;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProfileError {
@@ -49,6 +50,37 @@ pub struct OnboardingDraft {
     pub default_commute_minutes: i64,
     pub availability: Vec<AvailabilityInput>,
     pub commitments: Vec<CommitmentInput>,
+    #[serde(default = "default_rhythm_mode")]
+    pub rhythm_mode: String,
+    #[serde(default)]
+    pub protected_time_notes: String,
+    #[serde(default)]
+    pub days_off: Vec<i64>,
+    #[serde(default)]
+    pub rhythm_rules: Vec<RhythmRuleInput>,
+}
+
+fn default_rhythm_mode() -> String { "manual".into() }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RhythmRuleInput {
+    pub kind: String,
+    pub weekday: i64,
+    pub starts_at_local: String,
+    pub ends_at_local: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RhythmRuleRecord {
+    pub id: String,
+    pub kind: String,
+    pub weekday: i64,
+    pub starts_at_local: String,
+    pub ends_at_local: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -214,6 +246,7 @@ pub struct WorkspaceSnapshot {
     pub academic_events: Vec<AcademicCalendarEventRecord>,
     pub preferences: Option<PlanningPreferenceRecord>,
     pub availability: Vec<AvailabilityInput>,
+    pub rhythm_rules: Vec<RhythmRuleRecord>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -268,6 +301,10 @@ pub struct TaskRecord {
     pub dependencies: Vec<String>,
     pub record_origin: String,
     pub kind: String,
+    pub priority_source: String,
+    pub priority_reason_codes: Vec<String>,
+    pub effort_source: String,
+    pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -528,6 +565,17 @@ fn migrate_inner(conn: &Connection, previous_schema_version: i64) -> Result<()> 
            version INTEGER NOT NULL DEFAULT 1,
            FOREIGN KEY(profile_id) REFERENCES student_profiles(id) ON DELETE CASCADE
          );
+         CREATE TABLE IF NOT EXISTS weekly_rhythm_rules(
+           id TEXT PRIMARY KEY,
+           profile_id TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           weekday INTEGER NOT NULL,
+           starts_at_local TEXT NOT NULL,
+           ends_at_local TEXT NOT NULL,
+           label TEXT NOT NULL DEFAULT '',
+           version INTEGER NOT NULL DEFAULT 1,
+           FOREIGN KEY(profile_id) REFERENCES student_profiles(id) ON DELETE CASCADE
+         );
          CREATE TABLE IF NOT EXISTS task_dependencies(
            task_id TEXT NOT NULL,
            depends_on_task_id TEXT NOT NULL,
@@ -610,6 +658,10 @@ fn migrate_inner(conn: &Connection, previous_schema_version: i64) -> Result<()> 
         ),
         ("tasks", "record_origin", "TEXT NOT NULL DEFAULT 'user'"),
         ("tasks", "task_kind", "TEXT NOT NULL DEFAULT 'assignment'"),
+        ("tasks", "priority_source", "TEXT NOT NULL DEFAULT 'legacy'"),
+        ("tasks", "priority_reason_codes", "TEXT NOT NULL DEFAULT '[]'"),
+        ("tasks", "effort_source", "TEXT NOT NULL DEFAULT 'legacy'"),
+        ("tasks", "completed_at", "TEXT"),
         ("commitments", "location", "TEXT NOT NULL DEFAULT ''"),
         (
             "commitments",
@@ -872,6 +924,16 @@ pub fn complete_onboarding(
             params![Uuid::new_v4().to_string(), PROFILE_ID, rule.weekday, rule.starts_at_local, rule.ends_at_local],
         )?;
     }
+    transaction.execute(
+        "DELETE FROM weekly_rhythm_rules WHERE profile_id=?1",
+        params![PROFILE_ID],
+    )?;
+    for rule in &input.rhythm_rules {
+        transaction.execute(
+            "INSERT INTO weekly_rhythm_rules(id,profile_id,kind,weekday,starts_at_local,ends_at_local,label) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![Uuid::new_v4().to_string(), PROFILE_ID, rule.kind, rule.weekday, rule.starts_at_local, rule.ends_at_local, rule.label.trim()],
+        )?;
+    }
     for commitment in &input.commitments {
         transaction.execute(
             "INSERT INTO commitments(id,title,starts_at,ends_at,kind,locked,location,travel_before_minutes,travel_after_minutes,protected,record_origin)
@@ -924,7 +986,24 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
             })
         },
     )?;
-    let mut tasks = query_records(conn, "SELECT id,title,minutes,due_at,course_id,priority,academic_risk,earliest_start,energy_demand,location,splittable,min_session_minutes,max_session_minutes,completed,version,record_origin,task_kind FROM tasks ORDER BY completed,due_at IS NULL,due_at,title,id", |row| Ok(TaskRecord { id: row.get(0)?, title: row.get(1)?, minutes: row.get(2)?, due_at: row.get(3)?, course_id: row.get(4)?, priority: row.get(5)?, academic_risk: row.get(6)?, earliest_start: row.get(7)?, energy_demand: row.get(8)?, location: row.get(9)?, splittable: row.get::<_, i64>(10)? != 0, min_session_minutes: row.get(11)?, max_session_minutes: row.get(12)?, completed: row.get::<_, i64>(13)? != 0, version: row.get(14)?, dependencies: Vec::new(), record_origin: row.get(15)?, kind: row.get(16)? }))?;
+    let mut tasks = query_records(
+        conn,
+        "SELECT id,title,minutes,due_at,course_id,priority,academic_risk,earliest_start,energy_demand,location,splittable,min_session_minutes,max_session_minutes,completed,version,record_origin,task_kind,priority_source,priority_reason_codes,effort_source,completed_at FROM tasks ORDER BY completed,due_at IS NULL,due_at,title,id",
+        |row| {
+            let raw: String = row.get(18)?;
+            Ok(TaskRecord {
+                id: row.get(0)?, title: row.get(1)?, minutes: row.get(2)?, due_at: row.get(3)?,
+                course_id: row.get(4)?, priority: row.get(5)?, academic_risk: row.get(6)?,
+                earliest_start: row.get(7)?, energy_demand: row.get(8)?, location: row.get(9)?,
+                splittable: row.get::<_, i64>(10)? != 0, min_session_minutes: row.get(11)?,
+                max_session_minutes: row.get(12)?, completed: row.get::<_, i64>(13)? != 0,
+                version: row.get(14)?, dependencies: Vec::new(), record_origin: row.get(15)?,
+                kind: row.get(16)?, priority_source: row.get(17)?,
+                priority_reason_codes: serde_json::from_str(&raw).unwrap_or_default(),
+                effort_source: row.get(19)?, completed_at: row.get(20)?,
+            })
+        },
+    )?;
     let mut dependency_query = conn.prepare("SELECT depends_on_task_id FROM task_dependencies WHERE task_id=?1 ORDER BY depends_on_task_id")?;
     for task in &mut tasks {
         task.dependencies = dependency_query
@@ -940,6 +1019,7 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
     let academic_events = query_records(conn, "SELECT id,term_id,title,starts_on,ends_on,all_day,no_class,source,version FROM academic_calendar_events ORDER BY starts_on,title,id", |row| Ok(AcademicCalendarEventRecord { id: row.get(0)?, term_id: row.get(1)?, title: row.get(2)?, starts_on: row.get(3)?, ends_on: row.get(4)?, all_day: row.get::<_, i64>(5)? != 0, no_class: row.get::<_, i64>(6)? != 0, source: row.get(7)?, version: row.get(8)? }))?;
     let preferences = conn.query_row("SELECT sleep_start,sleep_end,max_session_minutes,break_minutes,transition_minutes,default_commute_minutes,version FROM planning_preferences WHERE profile_id=?1", params![PROFILE_ID], |row| Ok(PlanningPreferenceRecord { sleep_start: row.get(0)?, sleep_end: row.get(1)?, max_session_minutes: row.get(2)?, break_minutes: row.get(3)?, transition_minutes: row.get(4)?, default_commute_minutes: row.get(5)?, version: row.get(6)? })).optional()?;
     let availability = query_records(conn, "SELECT weekday,starts_at_local,ends_at_local FROM availability_rules WHERE profile_id='00000000-0000-4000-8000-000000000010' ORDER BY weekday,starts_at_local", |row| Ok(AvailabilityInput { weekday: row.get(0)?, starts_at_local: row.get(1)?, ends_at_local: row.get(2)? }))?;
+    let rhythm_rules = query_records(conn, "SELECT id,kind,weekday,starts_at_local,ends_at_local,label FROM weekly_rhythm_rules WHERE profile_id='00000000-0000-4000-8000-000000000010' ORDER BY weekday,starts_at_local,id", |row| Ok(RhythmRuleRecord { id: row.get(0)?, kind: row.get(1)?, weekday: row.get(2)?, starts_at_local: row.get(3)?, ends_at_local: row.get(4)?, label: row.get(5)? }))?;
     Ok(WorkspaceSnapshot {
         profile,
         institution,
@@ -954,6 +1034,7 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
         academic_events,
         preferences,
         availability,
+        rhythm_rules,
     })
 }
 
@@ -1625,6 +1706,10 @@ fn default_draft(profile: Option<(String, String, i64)>) -> OnboardingDraft {
             })
             .collect(),
         commitments: Vec::new(),
+        rhythm_mode: default_rhythm_mode(),
+        protected_time_notes: String::new(),
+        days_off: Vec::new(),
+        rhythm_rules: Vec::new(),
     }
 }
 
@@ -1637,6 +1722,7 @@ fn validate_draft_limits(input: &OnboardingDraft) -> Result<()> {
         || input.institution.name.len() > 200
         || input.courses.len() > 30
         || input.availability.len() > MAX_AVAILABILITY_RULES
+        || input.rhythm_rules.len() > MAX_RHYTHM_RULES
         || input.commitments.len() > MAX_COMMITMENTS
     {
         return Err(ProfileError::Invalid(
@@ -1720,6 +1806,20 @@ fn validate_complete(input: &OnboardingDraft) -> Result<()> {
             return Err(ProfileError::Invalid(
                 "availability must end after it starts".into(),
             ));
+        }
+    }
+    for rule in &input.rhythm_rules {
+        if !(0..=6).contains(&rule.weekday)
+            || !matches!(rule.kind.as_str(), "work" | "commute" | "recurring_obligation" | "meal" | "exercise" | "avoid" | "protected_free_time")
+            || rule.label.trim().is_empty()
+            || rule.label.chars().count() > 100
+        {
+            return Err(ProfileError::Invalid("weekly rhythm rule is invalid".into()));
+        }
+        let start = validate_clock(&rule.starts_at_local)?;
+        let end = validate_clock(&rule.ends_at_local)?;
+        if end <= start {
+            return Err(ProfileError::Invalid("weekly rhythm rule must end after it starts".into()));
         }
     }
     for commitment in &input.commitments {

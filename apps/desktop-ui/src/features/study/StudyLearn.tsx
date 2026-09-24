@@ -1,11 +1,14 @@
 import { ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
+import { useState } from "react";
 import {
   generateGroundedStudyArtifact,
   listAiProviders,
   reviewStudyArtifact,
+  rerankStudyMaterials,
   updateStudyArtifact,
 } from "../../native";
 import type { StudyViewModel } from "./studyModel";
+import { aiRerankCandidateIds, applyAiRerank, recommendationReasonLabels, recommendStudyMaterials, studyTargets } from "./recommendations";
 
 export function StudyLearn({
   vm,
@@ -46,11 +49,57 @@ export function StudyLearn({
     setSelectedMaterials,
     setStudy,
     study,
+    tasks,
   } = vm;
+  const [selectedTargetId, setSelectedTargetId] = useState("");
+  const [rerankConsent, setRerankConsent] = useState(false);
+  const [reranking, setReranking] = useState(false);
+  const [rerankError, setRerankError] = useState("");
+  const [aiOrder, setAiOrder] = useState<{ key: string; ids: string[]; provider: string } | null>(null);
+  const recommendationCourseId = selectedCourses[0] ?? "";
+  const targets = studyTargets(tasks, recommendationCourseId);
+  const target = targets.find((item) => item.id === selectedTargetId) ?? targets[0];
+  const recommendations = recommendStudyMaterials(study?.materials ?? [], recommendationCourseId, target).slice(0, 5);
+  const candidateIds = aiRerankCandidateIds(recommendations);
+  const rerankKey = JSON.stringify([recommendationCourseId, target?.id, recommendations.map((item) => [item.materialId, item.score])]);
+  const visibleRecommendations = aiOrder?.key === rerankKey ? applyAiRerank(recommendations, aiOrder.ids) : recommendations;
 
   return (
     <div className="study-grid study-learn-grid">
       <section className="workspace-panel study-builder-panel">
+        <div className="study-recommendations">
+          <div className="section-head"><div><h2>Recommended for you</h2><p>Materials for your next assessment, ranked with visible reasons.</p></div></div>
+          {recommendationCourseId && targets.length > 0 && <label className="field recommendation-target">Study target
+            <select value={target?.id ?? ""} onChange={(event) => setSelectedTargetId(event.target.value)}>
+              {targets.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.dueAt ? new Date(item.dueAt).toLocaleDateString() : "No due date"}</option>)}
+            </select>
+          </label>}
+          {recommendations.length ? <div className="course-chip-list">{visibleRecommendations.map((recommendation) => {
+            const material = study?.materials.find((item) => item.id === recommendation.materialId);
+            if (!material) return null;
+            return <button type="button" aria-pressed={selectedMaterials.includes(material.id)} className={selectedMaterials.includes(material.id) ? "mode-pill active" : "mode-pill"} key={material.id} onClick={() => setSelectedMaterials((current) => current.includes(material.id) ? current.filter((id) => id !== material.id) : [...current, material.id])}><strong>{material.title ?? material.fileName}</strong><small>{(material.materialType ?? "other").replaceAll("_", " ")} · {recommendation.reasonCodes.map((code) => recommendationReasonLabels[code]).join(" · ")}</small></button>;
+          })}</div> : <p className="field-help">{recommendationCourseId ? "No materials are assigned to this course yet. Add them in Materials to get recommendations." : "Choose a course to see scoped recommendations. Coqui never recommends material from another course."}</p>}
+          {target && candidateIds.length >= 2 && <div className="recommendation-refine">
+            <p>Optional AI tie-break: only this target title and the titles, types, and topics of {candidateIds.length} uncertain materials are sent to {provider?.provider ?? "your connected provider"}. Document text and other courses stay on this device. Strong matches keep their place.</p>
+            <label><input type="checkbox" checked={rerankConsent} onChange={(event) => setRerankConsent(event.target.checked)} /> I approve sending this metadata for AI refinement.</label>
+            <button type="button" className="outline" disabled={!provider || !rerankConsent || reranking} onClick={async () => {
+              setReranking(true);
+              setRerankError("");
+              try {
+                const result = await rerankStudyMaterials({ courseId: recommendationCourseId, targetId: target.id, materialIds: candidateIds, consent: true });
+                setAiOrder({ key: rerankKey, ids: result.rankedIds, provider: result.provider });
+              } catch (error) {
+                setRerankError(`${String(error)} Deterministic recommendations remain available.`);
+              } finally {
+                setReranking(false);
+                setRerankConsent(false);
+              }
+            }}>{reranking ? "Refining…" : "Refine uncertain matches with AI"}</button>
+            {!provider && <button type="button" className="outline" onClick={onOpenAssistant}>Connect AI provider</button>}
+            {aiOrder?.key === rerankKey && <small>Uncertain matches refined by {aiOrder.provider}; course scope and strong matches unchanged.</small>}
+            {rerankError && <p role="alert">{rerankError}</p>}
+          </div>}
+        </div>
         <div className="section-head">
           <div>
             <h2>Ask selected materials</h2>

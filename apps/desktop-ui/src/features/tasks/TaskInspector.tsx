@@ -1,6 +1,7 @@
 import type { TaskInput, TaskRecord, WorkspaceSnapshot } from "../../native";
 import { TaskDetailsEditor } from "./TaskDetailsEditor";
 import { dateTimeValue } from "./taskEditorModel";
+import { priorityReasonLabel } from "./taskPresentation";
 
 export function TaskInspector({
   editorRef,
@@ -28,6 +29,12 @@ export function TaskInspector({
       aria-label="Selected task inspector"
     >
       <h2>{editing ? `Edit ${task.kind}` : "Add an assignment or exam"}</h2>
+      {editing && editing.priorityReasonCodes.length > 0 && (
+        <div className="priority-explanation">
+          <strong>Why this priority</strong>
+          <p>{editing.priorityReasonCodes.map(priorityReasonLabel).join(" · ")}</p>
+        </div>
+      )}
       <div className="form-grid compact">
         <label className="field full">
           Task

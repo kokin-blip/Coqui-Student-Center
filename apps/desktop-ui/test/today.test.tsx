@@ -81,6 +81,8 @@ describe("Today", () => {
         name: "Read Chapter 6: Social Influence",
       }),
     ).toBeInTheDocument();
+    expect(within(dialog).getByText("Why this priority")).toBeInTheDocument();
+    expect(within(dialog).getByText("Reading")).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", { name: "Close", exact: true }),
     ).toHaveFocus();

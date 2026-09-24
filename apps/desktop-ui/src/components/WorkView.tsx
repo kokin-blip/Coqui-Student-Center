@@ -8,7 +8,7 @@ import {
   updateLocalTask,
   toggleTask,
 } from "../native";
-import type { TaskInput, TaskRecord, WorkspaceSnapshot } from "../native";
+import type { Dashboard, TaskInput, TaskRecord, WorkspaceSnapshot } from "../native";
 import type { WorkspaceRouteProps } from "./workspaceTypes";
 import { TaskInspector } from "../features/tasks/TaskInspector";
 import { useTaskDetailsSession } from "../features/tasks/TaskDetailsSession";
@@ -36,12 +36,14 @@ export function WorkView({
   onDashboard,
   onImport,
   onStudy,
+  onTaskCompleted,
 }: WorkspaceRouteProps & {
   initialTaskId?: string | null;
   initialFilter?: WorkFilter;
   onSelectTask?: (id: string | null) => void;
   onFilterChange?: (filter: WorkFilter) => void;
   mode?: InterfaceMode;
+  onTaskCompleted?: (task: TaskRecord, dashboard: Dashboard) => void;
 }) {
   const session = useTaskDetailsSession();
   const draft = session.workDrafts.get(initialTaskId ?? "new");
@@ -355,12 +357,15 @@ export function WorkView({
                           aria-label={`Complete ${item.title}`}
                           checked={item.completed}
                           disabled={busy}
-                          onChange={() =>
+                          onChange={() => {
+                            let savedDashboard: Dashboard | null = null;
                             void apply(async () => {
-                              await toggleTask(item.id);
+                              savedDashboard = await toggleTask(item.id);
                               return getLocalWorkspace();
-                            })
-                          }
+                            }).then((updated) => {
+                              if (!item.completed && savedDashboard && updated?.tasks.find((task) => task.id === item.id)?.completed) onTaskCompleted?.(item, savedDashboard);
+                            });
+                          }}
                         />
                       </td>
                       <th scope="row">

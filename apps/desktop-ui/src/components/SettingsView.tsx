@@ -6,13 +6,15 @@ import {
   Link2,
   LockKeyhole,
   RefreshCw,
+  Sparkles,
   UserRound,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode } from "react";
 import type { InterfaceMode } from "../features/shell/interfacePreferences";
 import { AppearanceSettings } from "./AppearanceSettings";
 import type { AccentPreference, AppearancePreference } from "./ThemeControls";
 import "../features/settings/settings.css";
+import type { DelightPreferences } from "../features/shell/delightPreferences";
 
 export type SettingsSection =
   | "academic"
@@ -45,6 +47,8 @@ type SettingsViewProps = {
   onAcademic: () => void;
   onRecovery: () => void;
   onCalendarRefresh: () => void;
+  delight: DelightPreferences;
+  onDelightChange: (next: DelightPreferences) => void;
 };
 
 const sections = [
@@ -82,7 +86,10 @@ export function SettingsView({
   onAcademic,
   onRecovery,
   onCalendarRefresh,
+  delight,
+  onDelightChange,
 }: SettingsViewProps) {
+  const updateDelight=(patch:Partial<DelightPreferences>)=>onDelightChange({...delight,...patch});
   return (
     <section
       className="content settings-page"
@@ -178,6 +185,18 @@ export function SettingsView({
               detail="Reminder timing, quiet hours, and title privacy"
               onClick={onNotifications}
             />
+            <div className="settings-delight">
+              <div><Sparkles /><span><strong>Sounds & celebrations</strong><small>Supportive feedback, stored on this device</small></span></div>
+              <label><input type="checkbox" checked={delight.celebrations} onChange={(event)=>updateDelight({celebrations:event.target.checked})}/>Visual celebrations</label>
+              <label><input type="checkbox" checked={delight.completionSounds} onChange={(event)=>updateDelight({completionSounds:event.target.checked})}/>Completion sounds</label>
+              <label><input type="checkbox" checked={delight.interfaceSounds} onChange={(event)=>updateDelight({interfaceSounds:event.target.checked})}/>Navigation sounds</label>
+              <label><input type="checkbox" checked={delight.reminderSounds} onChange={(event)=>updateDelight({reminderSounds:event.target.checked})}/>Reminder notification sounds</label>
+              <label><input type="checkbox" checked={delight.momentumDisplay} onChange={(event)=>updateDelight({momentumDisplay:event.target.checked})}/>Momentum display</label>
+              <label>Weekly task goal (0 turns off)<input className="weekly-goal-input" type="number" min="0" max="20" step="1" value={delight.weeklyGoalTasks} onChange={(event)=>updateDelight({weeklyGoalTasks:Math.max(0,Math.min(20,Math.floor(Number(event.target.value)||0)))})}/></label>
+              <small>Counts tasks completed Monday–Sunday in your profile’s timezone. Reach your goal for one celebration; missed weeks do not reduce anything.</small>
+              <label>In-app volume<input type="range" min="0" max="1" step="0.05" value={delight.volume} onChange={(event)=>updateDelight({volume:Number(event.target.value)})}/></label>
+              <small>Reminder sounds follow your system volume and Do Not Disturb settings.</small>
+            </div>
           </div>
           <div className="settings-calendar-refresh">
             <div>

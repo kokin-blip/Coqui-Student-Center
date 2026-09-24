@@ -87,6 +87,7 @@ test("the gate accepts a well-formed catalog", () => {
       termId: "asu-fall-2026-c",
       sourceLabel: "ASU Class Search",
       sourceUrl: "https://catalog.apps.asu.edu/catalog/classes",
+      capturedAt: "2026-08-19",
       courses: foldIntoCourses(parseClassSearch(EXPORT)),
     }],
     institutionIds: new Set(["104151"]),
@@ -103,6 +104,7 @@ test("the gate rejects the shapes a bad regeneration produces", () => {
     [{ institutionId: "104151", sourceLabel: "s", sourceUrl: "u", termId: "t", courses: [{ code: "A 1", title: "t", sections: [{ lineNumber: "1", weekdays: [9], startsAtLocal: "10:00", endsAtLocal: "11:00" }] }] }, /outside 0-6/],
     [{ institutionId: "104151", sourceLabel: "s", sourceUrl: "u", termId: "t", courses: [{ code: "A 1", title: "t", sections: [{ lineNumber: "1", weekdays: [1], startsAtLocal: "14:00", endsAtLocal: "11:00" }] }] }, /before it starts/],
     [{ institutionId: "104151", sourceLabel: "s", sourceUrl: "u", courses: [{ code: "A 1", title: "t", sections: [{ lineNumber: "1", weekdays: [1], startsAtLocal: "10:00", endsAtLocal: "11:00" }] }] }, /without a termId/],
+    [{ institutionId: "104151", sourceLabel: "s", sourceUrl: "u", capturedAt: "2026-02-30", courses: [{ code: "A 1", title: "t" }] }, /capturedAt/],
   ];
   for (const [catalog, expected] of cases) {
     const result = verifyCatalogs({ catalogs: [catalog], institutionIds: new Set(["104151"]) });

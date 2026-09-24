@@ -40,6 +40,9 @@ export function verifyCatalogs({ catalogs, institutionIds }) {
     if (!catalog.sourceLabel?.trim() || !catalog.sourceUrl?.trim()) {
       problems.push(`${where}: ships ${courses.length} courses without sourceLabel and sourceUrl`);
     }
+    if (catalog.capturedAt != null && (!/^\d{4}-\d{2}-\d{2}$/.test(catalog.capturedAt) || Number.isNaN(Date.parse(`${catalog.capturedAt}T00:00:00Z`)) || new Date(`${catalog.capturedAt}T00:00:00Z`).toISOString().slice(0, 10) !== catalog.capturedAt)) {
+      problems.push(`${where}: capturedAt must be a real YYYY-MM-DD date`);
+    }
     // Sections are term-specific. Without a term nothing can warn a student that
     // they are looking at last semester's meeting times.
     if (!catalog.termId?.trim() && courses.some((course) => course.sections?.length)) {

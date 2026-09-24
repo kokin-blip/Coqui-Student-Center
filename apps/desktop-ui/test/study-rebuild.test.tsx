@@ -119,3 +119,87 @@ test("what-if preview reports that it was not saved", async () => {
   expect(screen.getByText(/Nothing was saved/)).toBeVisible();
   expect(save).not.toHaveBeenCalled();
 });
+
+test("material metadata is editable and organized with persisted filters", async () => {
+  const workspace = await native.getLocalWorkspace();
+  const course = workspace.courses[0];
+  const material: native.StudyMaterial = {
+    id: "00000000-0000-4000-8000-000000000301",
+    fileName: "lecture-four.pdf",
+    title: "Lecture four",
+    mime: "application/pdf",
+    materialType: "slides",
+    courseIds: [course.id],
+    topics: ["biomolecules"],
+    segmentCount: 8,
+    dateAdded: "2026-09-20T12:00:00Z",
+    extractionStatus: "complete",
+    source: "Professor Rivera",
+    favorite: false,
+    teacherProvided: true,
+  };
+  vi.spyOn(native, "getStudyWorkspace").mockResolvedValue({...emptyStudy, materials: [material]});
+  const update = vi.spyOn(native, "updateStudyMaterial").mockImplementation(async (input) => ({...emptyStudy, materials: [{...material,...input,id:material.id}]}));
+  const user = userEvent.setup();
+  render(<StudyView onOpenAssistant={vi.fn()} initialTab="materials" initialCourseId={course.id}/>);
+
+  expect(await screen.findByRole("heading", {name: new RegExp(`${course.code}.*Slides`, "i")})).toBeVisible();
+  expect(screen.getByText("biomolecules")).toBeVisible();
+  await user.click(screen.getByRole("button", {name:"Edit details"}));
+  const editor = screen.getByText("Edit material details").closest(".material-editor")!;
+  await user.clear(within(editor).getByLabelText("Title"));
+  await user.type(within(editor).getByLabelText("Title"), "Cell chemistry slides");
+  await user.selectOptions(within(editor).getByLabelText("Type"), "study_guide");
+  await user.click(within(editor).getByRole("checkbox", {name:"Pin this material"}));
+  await user.click(within(editor).getByRole("button", {name:"Save details"}));
+  await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({title:"Cell chemistry slides",materialType:"study_guide",favorite:true,teacherProvided:true,topics:["biomolecules"]})));
+});
+
+test("recommended materials follow the selected assessment and keep Ask selected materials available", async () => {
+  const workspace = await native.getLocalWorkspace();
+  const course = workspace.courses[0];
+  const dueAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+  const baseTask = workspace.tasks[0];
+  vi.spyOn(native, "getLocalWorkspace").mockResolvedValue({
+    ...workspace,
+    tasks: [
+      { ...baseTask, id: "quiz-one", title: "Biomolecules quiz", kind: "quiz", dueAt },
+      { ...baseTask, id: "exam-two", title: "Cells exam", kind: "exam", dueAt },
+    ],
+  });
+  const exact = { id: "exact", fileName: "quiz.pdf", title: "Quiz practice", mime: "application/pdf", courseIds: [course.id], segmentCount: 2, materialType: "previous_quiz" as const, topics: [], relatedTargetId: "quiz-one", dateAdded: "2026-09-01T00:00:00Z", extractionStatus: "complete", source: "", favorite: false, teacherProvided: false };
+  const other = { ...exact, id: "other", fileName: "other.pdf", title: "Other class", courseIds: ["different-course"] };
+  vi.spyOn(native, "getStudyWorkspace").mockResolvedValue({ ...emptyStudy, materials: [exact, other] });
+  const user = userEvent.setup();
+  render(<StudyView onOpenAssistant={vi.fn()} initialCourseId={course.id} />);
+  const target = await screen.findByRole("combobox", { name: "Study target" });
+  await user.selectOptions(target, "quiz-one");
+  expect(screen.getByRole("button", { name: /Quiz practice.*linked to this task/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Other class/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Ask selected materials" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Quiz practice.*linked to this task/ }));
+  expect(screen.getByRole("checkbox", { name: "quiz.pdf" })).toBeChecked();
+});
+
+test("AI refinement requires consent and preserves deterministic results on failure", async () => {
+  const workspace = await native.getLocalWorkspace();
+  const course = workspace.courses[0];
+  const dueAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+  vi.spyOn(native, "getLocalWorkspace").mockResolvedValue({ ...workspace, tasks: [{ ...workspace.tasks[0], id: "quiz", title: "Cells quiz", kind: "quiz", dueAt }] });
+  const base: native.StudyMaterial = { id: "notes-a", fileName: "a.pdf", title: "Notes A", mime: "application/pdf", courseIds: [course.id], segmentCount: 2, materialType: "notes", topics: [], dateAdded: "2026-08-01T00:00:00Z", extractionStatus: "complete", source: "", favorite: false, teacherProvided: false };
+  vi.spyOn(native, "getStudyWorkspace").mockResolvedValue({ ...emptyStudy, materials: [base, { ...base, id: "notes-b", fileName: "b.pdf", title: "Notes B" }] });
+  vi.spyOn(native, "listAiProviders").mockResolvedValue([{ provider: "openai", connected: true, healthy: true, model: "test-model", capabilities: ["study_rerank"], disclosureUrl: "https://example.invalid" }]);
+  const rerank = vi.spyOn(native, "rerankStudyMaterials").mockRejectedValue(new Error("Provider unavailable"));
+  const user = userEvent.setup();
+  render(<StudyView onOpenAssistant={vi.fn()} initialCourseId={course.id} />);
+  const refine = await screen.findByRole("button", { name: "Refine uncertain matches with AI" });
+  expect(refine).toBeDisabled();
+  expect(rerank).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("checkbox", { name: "I approve sending this metadata for AI refinement." }));
+  await user.click(refine);
+  await waitFor(() => expect(rerank).toHaveBeenCalledWith({ courseId: course.id, targetId: "quiz", materialIds: ["notes-a", "notes-b"], consent: true }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Deterministic recommendations remain available");
+  expect(screen.getByRole("button", { name: /Notes A/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Notes B/ })).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "I approve sending this metadata for AI refinement." })).not.toBeChecked();
+});

@@ -50,6 +50,9 @@ export type ImportCandidate = {
   confidence: number;
   warnings: string[];
   status: "pending" | "approved" | "rejected";
+  taskKind?: TaskRecord["kind"];
+  suggestedPriority?: number;
+  priorityReasonCodes?: string[];
 };
 export type CanvasImportDecision = {
   candidateId: string;
@@ -137,6 +140,10 @@ export type AiProviderStatus = {
   lastCheckedAt?: string;
   disclosureUrl: string;
 };
+export type RhythmRuleKind="work"|"commute"|"recurring_obligation"|"meal"|"exercise"|"avoid"|"protected_free_time";
+export type RhythmRuleInput={kind:RhythmRuleKind;weekday:number;startsAtLocal:string;endsAtLocal:string;label:string};
+export type RhythmRuleRecord=RhythmRuleInput&{id:string};
+export type RhythmProposal={sleepStart:string;sleepEnd:string;maxSessionMinutes:number;breakMinutes:number;availability:AvailabilityInput[];daysOff:number[];protectedTimeNotes:string;rhythmRules:RhythmRuleInput[];summary:string};
 export type AiUsageSummary = {
   provider: string;
   model: string;
@@ -199,6 +206,7 @@ export type ScholarshipOpportunity = {
     | "declined"
     | "archived";
   taskIds: string[];
+  opportunityType?: "scholarship" | "grant" | "fellowship" | "stipend" | "award" | "emergency_fund" | "tuition_assistance" | "research_funding" | "internship_stipend" | "competition";
 };
 export type ScholarshipRequirementDocument = {
   id: string;
@@ -280,6 +288,17 @@ export type ScholarshipProfile = {
   citizenship: string[];
   residency: string[];
   gpa: number | null;
+  school?: string;
+  degree?: string;
+  academicYear?: string;
+  interests?: string[];
+  preferredOpportunityTypes?: string[];
+  awardMinimum?: number | null;
+  deadlineToleranceDays?: number | null;
+  notificationsEnabled?: boolean;
+};
+export type FundingProfileProposal = {
+  suggestions: { field: "school" | "degree" | "academicYear" | "studyLevel" | "fieldsOfStudy" | "locations" | "interests" | "preferredOpportunityTypes"; quote: string }[];
 };
 export type ScholarshipMatchExplanation = {
   opportunityId: string;
@@ -335,7 +354,19 @@ export type StudyMaterial = {
   mime: string;
   courseIds: string[];
   segmentCount: number;
+  title: string;
+  materialType: StudyMaterialType;
+  topics: string[];
+  relatedTargetId?: string;
+  dateAdded: string;
+  extractionStatus: string;
+  source: string;
+  favorite: boolean;
+  teacherProvided: boolean;
+  lastUsedAt?: string;
 };
+export type StudyMaterialType = "textbook" | "slides" | "notes" | "syllabus" | "assignment_instructions" | "lab_instructions" | "study_guide" | "practice_exam" | "previous_quiz" | "previous_exam" | "worksheet" | "reference_sheet" | "article" | "video" | "website" | "dataset" | "other";
+export type StudyMaterialInput = Pick<StudyMaterial,"title"|"materialType"|"courseIds"|"topics"|"relatedTargetId"|"source"|"favorite"|"teacherProvided"> & {documentId:string};
 export type StudyArtifact = {
   id: string;
   courseId: string;
@@ -478,13 +509,35 @@ export type Dashboard = {
   ocr: OcrStatus;
   importNotice?: string;
   unsettledScheduleSources: string[];
+  planGenerationSummary?: PlanGenerationSummary;
+};
+export type PlanGenerationSummary = {
+  undoToken: string;
+  generatedAt: string;
+  importedAssignments: number;
+  assessments: number;
+  availableStudyMinutes: number;
+  generatedSessions: number;
+  preservedSessions: number;
+  conflictCount: number;
 };
 export type CalendarAgenda = {
   timezone: string;
   startsAt: string;
   endsAt: string;
   blocks: PlanBlock[];
+  deadlines: CalendarDeadline[];
   overloadConflicts: SourceConflict[];
+};
+export type CalendarDeadline = {
+  taskId: string;
+  title: string;
+  dueAt: string;
+  courseId?: string;
+  priority: number;
+  taskKind: string;
+  priorityReasonCodes: string[];
+  completed: boolean;
 };
 export type BackupPreview = {
   fingerprint: string;
@@ -544,6 +597,10 @@ export type OnboardingDraft = {
   defaultCommuteMinutes: number;
   availability: AvailabilityInput[];
   commitments: CommitmentInput[];
+  rhythmMode: "manual" | "ai-guided";
+  protectedTimeNotes: string;
+  daysOff: number[];
+  rhythmRules: RhythmRuleInput[];
 };
 // Mirrors profile::ACCENTS.
 export type AccentPreference =
@@ -762,7 +819,11 @@ export type TaskRecord = {
   version: number;
   dependencies: string[];
   recordOrigin: string;
-  kind: "task" | "assignment" | "exam";
+  kind: "exam" | "midterm" | "final" | "test" | "quiz" | "project" | "paper" | "lab" | "homework" | "reading" | "other" | "task" | "assignment";
+  prioritySource: "rules" | "student" | "legacy" | string;
+  priorityReasonCodes: string[];
+  effortSource: "import" | "student" | "legacy" | string;
+  completedAt?: string;
 };
 export type InstructorRecord = {
   id: string;
@@ -772,6 +833,37 @@ export type InstructorRecord = {
   officeLocation: string;
   officeHours: string;
   version: number;
+};
+export type ProfessorSourceSnapshot = {
+  kind: "official_course_catalog" | "local_course";
+  label: string;
+  url: string;
+  termLabel: string;
+  campusId: string;
+  sectionNumbers: string[];
+  capturedAt: string | null;
+};
+export type ProfessorRecord = {
+  id: string;
+  name: string;
+  institutionId: string;
+  courseId: string;
+  courseCode: string;
+  email: string;
+  officeLocation: string;
+  officeHours: string;
+  rating?: { value: number; reviewCount: number; sourceUrl: string; updatedAt: string; biasWarning: string } | null;
+  source: ProfessorSourceSnapshot;
+};
+export type ProfessorRatingSummary = NonNullable<ProfessorRecord["rating"]>;
+export type SemesterCatalogSection = {
+  courseId: string;
+  courseCode: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  termLabel: string;
+  section: CatalogSection;
+  professorRecordId?: string;
 };
 export type ClassMeetingSeriesRecord = {
   id: string;
@@ -789,6 +881,36 @@ export type ClassMeetingSeriesRecord = {
   rotationOffsetWeeks: number;
   version: number;
 };
+export type SemesterScenarioSection = {
+  id: string;
+  courseId: string;
+  importedCourseLabel?: string;
+  instructorId?: string;
+  professorRecordId?: string;
+  catalogSectionLineNumber?: string;
+  weekdays: number[];
+  startsAtLocal: string;
+  endsAtLocal: string;
+  location: string;
+  modality: "in_person" | "online" | "hybrid" | "unknown";
+  rotationIntervalWeeks?: number;
+  rotationOffsetWeeks?: number;
+  sourceMeetingId?: string;
+};
+export type SemesterScenario = {
+  id: string;
+  termId: string;
+  name: string;
+  sections: SemesterScenarioSection[];
+  version: number;
+};
+export type PlannerProfile = { program: string; catalogYear: string; studyGoals: string; careerInterests: string; constraints: string; version: number };
+export type RoadmapPreview = { institutionId: string; program: string; catalogYear: string; sourceUrl: string; sourceLabel: string; format: "sequenced_major_map" | "unsequenced_checksheet" | "unknown"; excerpt: string; fetchedAt: string };
+export type RoadmapDiscoveryMatch = { institutionId: string; program: string; degree: string; catalogYear: string; sourceUrl: string };
+export type RoadmapEvidence = Omit<RoadmapPreview, "excerpt"> & { id: string; approvedExcerpt: string; version: number };
+export type AnalysisFinding = { title: string; detail: string; evidenceIds: string[] };
+export type AnalysisReport = { id: string; scenarioKey: string; inputFingerprint: string; generatedAt: string; factsJson: string; aiFindings: AnalysisFinding[]; provider: string; model: string; version: number };
+export type SemesterScheduleAiResponse = { findings: AnalysisFinding[]; provider: string; model: string };
 export type AcademicCalendarEventRecord = {
   id: string;
   termId?: string;
@@ -836,6 +958,7 @@ export type WorkspaceSnapshot = {
   academicEvents: AcademicCalendarEventRecord[];
   preferences: PlanningPreferenceRecord | null;
   availability: AvailabilityInput[];
+  rhythmRules: RhythmRuleRecord[];
 };
 export type AcademicTermInput = Omit<AcademicTermRecord, "id" | "version"> & {
   expectedVersion?: number;
@@ -849,7 +972,7 @@ export type CourseInput = {
 };
 export type TaskInput = Omit<
   TaskRecord,
-  "id" | "completed" | "version" | "recordOrigin"
+  "id" | "completed" | "completedAt" | "version" | "recordOrigin" | "prioritySource" | "priorityReasonCodes" | "effortSource"
 > & { expectedVersion?: number };
 export type CommitmentEditorInput = Omit<
   CommitmentRecord,
@@ -996,6 +1119,10 @@ let browserOnboardingState: OnboardingState = {
       endsAtLocal: "21:00",
     })),
     commitments: [],
+    rhythmMode: "manual",
+    protectedTimeNotes: "",
+    daysOff: [],
+    rhythmRules: [],
   },
 };
 
@@ -1021,6 +1148,9 @@ const browserSeed: Dashboard = {
       confidence: 1,
       warnings: [],
       status: "pending",
+      taskKind: "paper",
+      suggestedPriority: 4,
+      priorityReasonCodes: ["paper_work"],
     },
     {
       id: "ics-weekly-demo",
@@ -1173,7 +1303,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 26,
+      schemaVersion: 30,
       onboarding: onboardingMode
         ? structuredClone(browserOnboardingState)
         : null,
@@ -1531,6 +1661,9 @@ export async function completeOnboarding(draft: OnboardingDraft) {
       termId: "term",
       version: 1,
       recordOrigin: "user",
+      prioritySource: "student",
+      priorityReasonCodes: ["student_selected"],
+      effortSource: "student",
       color: course.color || "#3155B7",
     }));
     browserWorkspace.tasks = [];
@@ -1544,7 +1677,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 26,
+      schemaVersion: 30,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -1607,6 +1740,9 @@ const browserWorkspace: WorkspaceSnapshot = {
       dependencies: [],
       recordOrigin: "demo",
       kind: "assignment",
+      prioritySource: "legacy",
+      priorityReasonCodes: ["reading_work"],
+      effortSource: "legacy",
     },
   ],
   commitments: [],
@@ -1627,11 +1763,70 @@ const browserWorkspace: WorkspaceSnapshot = {
     startsAtLocal: "08:00",
     endsAtLocal: "21:00",
   })),
+  rhythmRules: [],
 };
 export async function getLocalWorkspace() {
   return isDesktop()
     ? call<WorkspaceSnapshot>("get_local_workspace")
     : structuredClone(browserWorkspace);
+}
+export async function getProfessorCatalog(): Promise<ProfessorRecord[]> {
+  if (isDesktop()) return call<ProfessorRecord[]>("get_professor_catalog");
+  return browserWorkspace.instructors.map((instructor) => ({
+    id: `local:${instructor.id}`, name: instructor.name, institutionId: browserWorkspace.institution?.id ?? "",
+    courseId: instructor.courseId, courseCode: browserWorkspace.courses.find((course) => course.id === instructor.courseId)?.code ?? "",
+    email: instructor.email, officeLocation: instructor.officeLocation, officeHours: instructor.officeHours,
+    source: { kind: "local_course", label: "Your saved course details", url: "", termLabel: "", campusId: "", sectionNumbers: [], capturedAt: null },
+  }));
+}
+export async function lookupProfessorRating(professorId: string): Promise<ProfessorRatingSummary | null> {
+  return isDesktop() ? call<ProfessorRatingSummary | null>("lookup_professor_rating", { professorId }) : null;
+}
+export async function getSemesterCatalogSections(termId: string): Promise<SemesterCatalogSection[]> {
+  return isDesktop() ? call<SemesterCatalogSection[]>("get_semester_catalog_sections", { termId }) : [];
+}
+let browserSemesterScenarios: SemesterScenario[] = [];
+export async function getSemesterScenarios() {
+  return isDesktop() ? call<SemesterScenario[]>("get_semester_scenarios") : structuredClone(browserSemesterScenarios);
+}
+export async function upsertSemesterScenario(scenario: SemesterScenario) {
+  if (isDesktop()) return call<SemesterScenario[]>("upsert_semester_scenario", { scenario });
+  const index = browserSemesterScenarios.findIndex((item) => item.id === scenario.id);
+  const saved = { ...structuredClone(scenario), version: scenario.version + 1 };
+  if (index < 0) browserSemesterScenarios.push(saved);
+  else browserSemesterScenarios[index] = saved;
+  return structuredClone(browserSemesterScenarios);
+}
+export async function deleteSemesterScenario(id: string, expectedVersion: number) {
+  if (isDesktop()) return call<SemesterScenario[]>("delete_semester_scenario", { id, expectedVersion });
+  browserSemesterScenarios = browserSemesterScenarios.filter((item) => item.id !== id);
+  return structuredClone(browserSemesterScenarios);
+}
+let browserPlannerProfile: PlannerProfile = { program: "", catalogYear: "", studyGoals: "", careerInterests: "", constraints: "", version: 0 };
+let browserRoadmaps: RoadmapEvidence[] = [];
+let browserAnalysisReports: AnalysisReport[] = [];
+export async function getPlannerProfile(): Promise<PlannerProfile> { return isDesktop() ? call<PlannerProfile>("get_planner_profile") : structuredClone(browserPlannerProfile); }
+export async function savePlannerProfile(profile: PlannerProfile): Promise<PlannerProfile> {
+  if (isDesktop()) return call<PlannerProfile>("save_planner_profile", { profile });
+  browserPlannerProfile = { ...profile, version: profile.version + 1 }; return structuredClone(browserPlannerProfile);
+}
+export async function getSemesterRoadmaps(): Promise<RoadmapEvidence[]> { return isDesktop() ? call<RoadmapEvidence[]>("get_semester_roadmaps") : structuredClone(browserRoadmaps); }
+export async function discoverAsuRoadmaps(program: string, catalogYear: string): Promise<RoadmapDiscoveryMatch[]> { return call<RoadmapDiscoveryMatch[]>("discover_asu_roadmaps", { program, catalogYear }); }
+export async function previewAsuRoadmap(url: string, program: string, catalogYear: string): Promise<RoadmapPreview> { return call<RoadmapPreview>("preview_asu_roadmap", { url, program, catalogYear }); }
+export async function previewRoadmapFile(file: File, program: string, catalogYear: string, institutionId: string): Promise<RoadmapPreview> {
+  return invoke<RoadmapPreview>("preview_roadmap_file", { fileName: file.name, bytes: new Uint8Array(await file.arrayBuffer()), program, catalogYear, institutionId });
+}
+export async function saveSemesterRoadmap(preview: RoadmapPreview): Promise<RoadmapEvidence[]> {
+  if (isDesktop()) return call<RoadmapEvidence[]>("save_semester_roadmap", { preview });
+  browserRoadmaps.push({ ...preview, id: crypto.randomUUID(), approvedExcerpt: preview.excerpt, version: 1 }); return structuredClone(browserRoadmaps);
+}
+export async function getSemesterAnalysisReports(): Promise<AnalysisReport[]> { return isDesktop() ? call<AnalysisReport[]>("get_semester_analysis_reports") : structuredClone(browserAnalysisReports); }
+export async function saveSemesterAnalysisReport(report: AnalysisReport): Promise<AnalysisReport[]> {
+  if (isDesktop()) return call<AnalysisReport[]>("save_semester_analysis_report", { report });
+  browserAnalysisReports = [{ ...report, id: report.id || crypto.randomUUID(), version: report.version + 1 }, ...browserAnalysisReports.filter((item) => item.id !== report.id)]; return structuredClone(browserAnalysisReports);
+}
+export async function requestSemesterScheduleAnalysis(input: { factsJson: string; roadmapId?: string; includeRatings: boolean; ratingEvidence: string; consent: boolean; expectedProvider: AiProviderId }): Promise<SemesterScheduleAiResponse> {
+  return call<SemesterScheduleAiResponse>("request_semester_schedule_analysis", { input });
 }
 export async function updateStudentProfile(input: StudentProfileInput) {
   if (!isDesktop()) {
@@ -1661,6 +1856,7 @@ export async function getCalendarAgenda(
     startsAt,
     endsAt,
     blocks: structuredClone(browserSeed.blocks.filter(block => block.endsAt > startsAt && block.startsAt < endsAt)),
+    deadlines: browserWorkspace.tasks.filter((task) => task.dueAt && task.dueAt >= startsAt && task.dueAt < endsAt).map((task) => ({ taskId:task.id,title:task.title,dueAt:task.dueAt!,courseId:task.courseId,priority:task.priority,taskKind:task.kind,priorityReasonCodes:task.priorityReasonCodes,completed:task.completed })),
     overloadConflicts: structuredClone(
       browserSeed.conflicts.filter((conflict) => conflict.kind === "overload"),
     ),
@@ -1694,6 +1890,13 @@ export async function undoCalendarChange() {
   return isDesktop()
     ? call<Dashboard>("undo_calendar_change")
     : structuredClone(browserSeed);
+}
+export async function undoGeneratedPlan(token: string) {
+  if (!isDesktop()) {
+    browserSeed.planGenerationSummary = undefined;
+    return structuredClone(browserSeed);
+  }
+  return call<Dashboard>("undo_generated_plan", { token });
 }
 export async function createAcademicTerm(input: AcademicTermInput) {
   return call<WorkspaceSnapshot>("create_academic_term", { input });
@@ -1760,6 +1963,9 @@ export async function createLocalTask(input: TaskInput) {
       completed: false,
       version: 1,
       recordOrigin: "user",
+      prioritySource: "student",
+      priorityReasonCodes: ["student_selected"],
+      effortSource: "student",
     });
     return structuredClone(browserWorkspace);
   }
@@ -2267,7 +2473,7 @@ export async function toggleTask(id: string) {
   if (!isDesktop()) {
     const task = browserWorkspace.tasks.find(item => item.id === id);
     const completed = task ? !task.completed : !browserSeed.blocks.find(block => block.taskId === id)?.completed;
-    browserWorkspace.tasks = browserWorkspace.tasks.map(item => item.id === id ? { ...item, completed, version: item.version + 1 } : item);
+    browserWorkspace.tasks = browserWorkspace.tasks.map(item => item.id === id ? { ...item, completed, completedAt:completed ? new Date().toISOString() : undefined, version: item.version + 1 } : item);
     browserSeed.blocks = browserSeed.blocks.map((block) =>
       block.taskId === id ? { ...block, completed } : block,
     );
@@ -2504,6 +2710,13 @@ export async function setStudyMaterialCourses(
     courseIds,
   });
 }
+export async function updateStudyMaterial(input:StudyMaterialInput) {
+  if (!isDesktop()) {
+    browserStudyWorkspace.materials = browserStudyWorkspace.materials.map((item) => item.id === input.documentId ? {...item,...input,id:item.id} : item);
+    return structuredClone(browserStudyWorkspace);
+  }
+  return call<StudyWorkspace>("update_study_material", {input});
+}
 export async function generateGroundedStudyArtifact(input: GroundedStudyInput) {
   if (!isDesktop()) {
     const artifact: StudyArtifact = {
@@ -2532,6 +2745,10 @@ export async function generateGroundedStudyArtifact(input: GroundedStudyInput) {
     provider: string;
     model: string;
   }>("generate_grounded_study_artifact", { input });
+}
+export async function rerankStudyMaterials(input: { courseId:string;targetId:string;materialIds:string[];consent:boolean }) {
+  if (!isDesktop()) return { rankedIds:[...input.materialIds],provider:"browser-preview",model:"deterministic-preview" };
+  return call<{ rankedIds:string[];provider:string;model:string }>("rerank_study_materials",{input});
 }
 export async function updateStudyArtifact(
   artifactId: string,
@@ -2860,9 +3077,26 @@ export async function requestManagedAi(
     input: { capability, excerpt, locale, consent },
   });
 }
+export async function requestWeeklyRhythmProposal(interview:string,consent:boolean):Promise<RhythmProposal>{
+  if(!isDesktop())return {sleepStart:"23:00",sleepEnd:"07:00",maxSessionMinutes:50,breakMinutes:10,availability:Array.from({length:6},(_,index)=>({weekday:index+1,startsAtLocal:"09:00",endsAtLocal:"20:00"})),daysOff:[0],protectedTimeNotes:"Review protected commitments before applying.",rhythmRules:[{kind:"work",weekday:2,startsAtLocal:"17:00",endsAtLocal:"21:00",label:"Work shift"}],summary:"A balanced draft based only on your interview."};
+  return call<RhythmProposal>("request_weekly_rhythm_proposal",{interview,consent});
+}
 
 const browserScholarships: ScholarshipWorkspace = {
   sources: [
+    {
+      id: "coqui-public-catalog",
+      name: "Coqui public funding catalog",
+      kind: "catalog",
+      origin: "",
+      enabled: false,
+      weeklyRefresh: false,
+      requiresCredential: false,
+      status: "disabled",
+      lastError: "Signed catalog refresh is available in configured desktop builds; saved opportunities remain offline.",
+      attribution: "Coqui public catalog",
+      parserVersion: "catalog-batch-1",
+    },
     {
       id: "asu-onsa",
       name: "ASU ONSA scholarships",
@@ -2934,9 +3168,9 @@ const browserScholarships: ScholarshipWorkspace = {
   runs: [],
   diffs: [],
   profile: {
-    studyLevel: "",
-    fieldsOfStudy: [],
-    locations: [],
+    studyLevel: "undergraduate",
+    fieldsOfStudy: ["Computer science"],
+    locations: ["Arizona"],
     citizenship: [],
     residency: [],
     gpa: null,
@@ -3086,6 +3320,10 @@ export async function saveScholarshipProfile(profile: ScholarshipProfile) {
     return structuredClone(browserScholarships);
   }
   return call<ScholarshipWorkspace>("save_scholarship_profile", { profile });
+}
+export async function requestFundingProfileProposal(interview: string, consent: boolean, expectedProvider: string): Promise<FundingProfileProposal> {
+  if (!isDesktop()) throw new Error("AI-guided funding setup requires the installed app and a connected provider.");
+  return call<FundingProfileProposal>("request_funding_profile_proposal", { interview, consent, expectedProvider });
 }
 export async function planScholarshipDeadline(opportunityId: string) {
   if (!isDesktop()) {

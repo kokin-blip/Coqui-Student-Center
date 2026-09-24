@@ -2,6 +2,7 @@ import { CalendarDays, Clock3, Flag, MapPin, X } from "lucide-react";
 import type { PlanBlock, TaskRecord, WorkspaceSnapshot } from "../../native";
 import { dueLabel, priorityLabel, riskLabel } from "./todayModel";
 import { TaskDetailsEditor } from "../tasks/TaskDetailsEditor";
+import { priorityReasonLabel, taskKindName } from "../tasks/taskPresentation";
 
 export function TodayTaskInspector({
   task,
@@ -41,9 +42,7 @@ export function TodayTaskInspector({
         </header>
       )}
       <div className="inspector-content">
-        <p className="inspector-kind">
-          {task.kind === "exam" ? "Exam" : "Task"}
-        </p>
+        <p className="inspector-kind">{taskKindName(task.kind)}</p>
         <h2>{task.title}</h2>
         {course && (
           <p className="inspector-course">{course.code || course.title}</p>
@@ -80,6 +79,12 @@ export function TodayTaskInspector({
             </div>
           )}
         </dl>
+        {task.priorityReasonCodes.length > 0 && (
+          <div className="priority-explanation">
+            <h3>Why this priority</h3>
+            <p>{task.priorityReasonCodes.map(priorityReasonLabel).join(" · ")}</p>
+          </div>
+        )}
         <TaskDetailsEditor
           key={task.id}
           taskId={task.id}

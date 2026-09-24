@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, verify } from "node:crypto";
 import test from "node:test";
 import { encryptedMutationSigningMessage } from "@student-center/contracts";
 import { buildApp } from "../src/app.js";
@@ -40,6 +40,60 @@ function auth(token="token-a"){return {authorization:`Bearer ${token}`};}
 function pushAuth(deviceId=deviceA,token="token-a"){return {...auth(token),"x-student-center-device-id":deviceId};}
 function devicePayload(deviceId=deviceA){return {deviceId,publicKey:"P".repeat(43),signingPublicKey,displayName:"Alex's computer",platform:"windows-x64"};}
 function mutation(accountId=accountA,deviceId=deviceA){return signMutation({mutationId,accountId,deviceId,logicalTimestamp:`1723478400000-0000000000-${deviceId}`,entityId,entityType:"task",nonce:"N".repeat(32),ciphertext:"C".repeat(64),schemaVersion:3,tombstone:false});}
+
+test("public funding catalog signs exact bytes and accepts only coarse filters",async()=>{
+  const key=generateKeyPairSync("ed25519");
+  const previousKey=process.env.FUNDING_CATALOG_SIGNING_KEY;
+  const previousCatalog=process.env.FUNDING_CATALOG_JSON;
+  process.env.FUNDING_CATALOG_SIGNING_KEY=key.privateKey.export({format:"pem",type:"pkcs8"}).toString();
+  process.env.FUNDING_CATALOG_JSON=JSON.stringify([{canonicalUrl:"https://example.org/grant",sourceUrl:"https://example.org/grant",applicationUrl:"https://example.org/apply",provider:"Example Foundation",title:"Public Service Grant",opportunityType:"grant",summary:"Supports student service.",updatedAt:"2026-09-20T00:00:00.000Z",parserVersion:"example-1",regions:["Arizona"],studyLevels:["undergraduate"]}]);
+  const {app}=testApp();
+  try{
+    const response=await app.inject({method:"GET",url:"/v1/funding/catalog?region=Arizona"});
+    assert.equal(response.statusCode,200);
+    const body=response.json();
+    const payload=Buffer.from(body.payload,"base64url");
+    assert.equal(verify(null,payload,key.publicKey,Buffer.from(body.signature,"base64url")),true);
+    assert.equal(JSON.parse(payload.toString()).opportunities[0].title,"Public Service Grant");
+    assert.equal((await app.inject({method:"GET",url:"/v1/funding/catalog?profile=student"})).statusCode,400);
+    assert.equal((await app.inject({method:"GET",url:"/v1/funding/catalog?cursor=-1"})).statusCode,400);
+  }finally{
+    await app.close();
+    if(previousKey===undefined)delete process.env.FUNDING_CATALOG_SIGNING_KEY;else process.env.FUNDING_CATALOG_SIGNING_KEY=previousKey;
+    if(previousCatalog===undefined)delete process.env.FUNDING_CATALOG_JSON;else process.env.FUNDING_CATALOG_JSON=previousCatalog;
+  }
+});
+
+test("automatic individual grants are cached and signed as partial catalog data",async()=>{
+  const key=generateKeyPairSync("ed25519");
+  const previousKey=process.env.FUNDING_CATALOG_SIGNING_KEY;
+  const previousCatalog=process.env.FUNDING_CATALOG_JSON;
+  const previousGrants=process.env.FUNDING_CATALOG_GRANTS_GOV;
+  process.env.FUNDING_CATALOG_SIGNING_KEY=key.privateKey.export({format:"pem",type:"pkcs8"}).toString();
+  process.env.FUNDING_CATALOG_JSON="[]";
+  process.env.FUNDING_CATALOG_GRANTS_GOV="1";
+  let calls=0;
+  const app=buildApp({fundingGrantLoader:async()=>{calls++;return [{canonicalUrl:"https://www.grants.gov/search-results-detail/10",sourceUrl:"https://www.grants.gov/search-results-detail/10",applicationUrl:"https://www.grants.gov/search-results-detail/10",provider:"Example Federal Agency",title:"Student Research Grant",opportunityType:"grant",summary:"Open to individuals.",updatedAt:"2026-09-22T00:00:00Z",parserVersion:"grants-gov-individual-1"}];}});
+  try{
+    for(let attempt=0;attempt<2;attempt++){
+      const response=await app.inject({method:"GET",url:"/v1/funding/catalog"});
+      assert.equal(response.statusCode,200);
+      const envelope=response.json();
+      const payload=Buffer.from(envelope.payload,"base64url");
+      assert.equal(verify(null,payload,key.publicKey,Buffer.from(envelope.signature,"base64url")),true);
+      const batch=JSON.parse(payload.toString());
+      assert.equal(batch.partial,true);
+      assert.deepEqual(batch.sourceFailures,[]);
+      assert.equal(batch.opportunities[0].title,"Student Research Grant");
+    }
+    assert.equal(calls,1);
+  }finally{
+    await app.close();
+    if(previousKey===undefined)delete process.env.FUNDING_CATALOG_SIGNING_KEY;else process.env.FUNDING_CATALOG_SIGNING_KEY=previousKey;
+    if(previousCatalog===undefined)delete process.env.FUNDING_CATALOG_JSON;else process.env.FUNDING_CATALOG_JSON=previousCatalog;
+    if(previousGrants===undefined)delete process.env.FUNDING_CATALOG_GRANTS_GOV;else process.env.FUNDING_CATALOG_GRANTS_GOV=previousGrants;
+  }
+});
 
 test("account routes reject missing and invalid access tokens",async()=>{
   const {app}=testApp();

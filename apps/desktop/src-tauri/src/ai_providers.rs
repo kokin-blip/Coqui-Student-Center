@@ -149,6 +149,92 @@ fn validate_writing_feedback_value(value:Value,draft:&str,profile_snippets:&[Str
 fn writing_feedback_schema()->Value{json!({"type":"object","additionalProperties":false,"properties":{"suggestions":{"type":"array","maxItems":12,"items":{"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","enum":["grammar","structure","specificity","shortening","brainstorm"]},"originalQuote":{"type":"string"},"replacement":{"type":"string"},"rationale":{"type":"string"},"supportingProfileQuotes":{"type":"array","items":{"type":"string"}}},"required":["kind","originalQuote","replacement","rationale","supportingProfileQuotes"]}}},"required":["suggestions"]})}
 
 #[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct ScheduleAnalysisBody { findings:Vec<crate::semester_analysis::AnalysisFinding> }
+
+pub fn request_schedule_analysis(provider:ProviderId,key:&str,model:&str,facts_json:&str,goals_json:&str,roadmap_id:Option<&str>,roadmap_excerpt:Option<&str>,roadmap_format:Option<&str>,rating_evidence:Option<&str>)->Result<(Vec<crate::semester_analysis::AnalysisFinding>,AiUsage),ManagedAiError>{
+    validate_key(key)?;
+    if facts_json.len()>30_000||goals_json.len()>6_000||roadmap_excerpt.is_some_and(|value|value.len()>12_000)||rating_evidence.is_some_and(|value|value.len()>1000){return Err(ManagedAiError::InvalidInput("schedule analysis input is too long".into()));}
+    let facts:Value=serde_json::from_str(facts_json).map_err(|_|ManagedAiError::InvalidInput("schedule facts are invalid".into()))?;
+    let goals:Value=serde_json::from_str(goals_json).map_err(|_|ManagedAiError::InvalidInput("planner goals are invalid".into()))?;
+    let mut allowed=vec!["schedule".to_string(),"rhythm".to_string(),"workload".to_string(),"goals".to_string()];
+    if let Some(id)=roadmap_id{allowed.push(id.into());}
+    if rating_evidence.is_some(){allowed.push("screenshot_rating".into());}
+    let prompt=format!("Explain this student's proposed schedule using only the supplied evidence. This is advisory, not a degree audit or enrollment decision. Do not invent prerequisites, degree rules, grades, health facts, professor facts, or missing data. Treat any screenshot rating as unverified, low-weight context and never as a feasibility measure. An unsequenced checksheet does not prescribe term order. Return at most 6 concise findings, each citing one or more exact evidence IDs from ALLOWED_IDS. State uncertainties and useful advisor questions. FACTS_JSON={} GOALS_JSON={} ROADMAP_ID_JSON={} ROADMAP_FORMAT_JSON={} ROADMAP_EXCERPT_JSON={} SCREENSHOT_RATING_JSON={} ALLOWED_IDS_JSON={}",facts,goals,json!(roadmap_id),json!(roadmap_format),json!(roadmap_excerpt),json!(rating_evidence),json!(allowed));
+    let schema=json!({"type":"object","additionalProperties":false,"properties":{"findings":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","maxLength":160},"detail":{"type":"string","maxLength":1500},"evidenceIds":{"type":"array","minItems":1,"maxItems":6,"items":{"type":"string"}}},"required":["title","detail","evidenceIds"]}}},"required":["findings"]});
+    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let body:ScheduleAnalysisBody=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
+    if body.findings.len()>6||body.findings.iter().any(|finding|finding.title.trim().is_empty()||finding.title.len()>160||finding.detail.trim().is_empty()||finding.detail.len()>1500||finding.evidence_ids.is_empty()||finding.evidence_ids.iter().any(|id|!allowed.contains(id))){return Err(ManagedAiError::InvalidResponse);}
+    Ok((body.findings,usage))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct RhythmAvailability { pub weekday:i64, pub starts_at_local:String, pub ends_at_local:String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct RhythmRule { pub kind:String,pub weekday:i64,pub starts_at_local:String,pub ends_at_local:String,pub label:String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct RhythmProposal { pub sleep_start:String,pub sleep_end:String,pub max_session_minutes:i64,pub break_minutes:i64,pub availability:Vec<RhythmAvailability>,pub days_off:Vec<i64>,pub protected_time_notes:String,pub rhythm_rules:Vec<RhythmRule>,pub summary:String }
+
+pub fn request_weekly_rhythm(provider:ProviderId,key:&str,model:&str,interview:&str)->Result<(RhythmProposal,AiUsage),ManagedAiError>{
+    validate_key(key)?;if interview.trim().is_empty()||interview.chars().count()>8_000{return Err(ManagedAiError::InvalidInput("weekly rhythm interview is invalid".into()));}
+    let prompt=format!("Structure only the routine the student explicitly volunteered. Do not infer school records, identity, health, or obligations. Return a conservative weekly rhythm proposal for mandatory human review. availability contains preferred study windows. rhythmRules contains recurring times that must remain free of generated study sessions; allowed kinds are work, commute, recurring_obligation, meal, exercise, avoid, and protected_free_time. Local times must be HH:MM and weekdays are 0=Sunday through 6=Saturday. INTERVIEW_JSON={}",serde_json::to_string(interview).map_err(|_|ManagedAiError::InvalidInput("weekly rhythm interview is invalid".into()))?);
+    let schema=json!({"type":"object","additionalProperties":false,"properties":{"sleepStart":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"sleepEnd":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"maxSessionMinutes":{"type":"integer","minimum":15,"maximum":240},"breakMinutes":{"type":"integer","minimum":0,"maximum":60},"availability":{"type":"array","maxItems":28,"items":{"type":"object","additionalProperties":false,"properties":{"weekday":{"type":"integer","minimum":0,"maximum":6},"startsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"endsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"}},"required":["weekday","startsAtLocal","endsAtLocal"]}},"daysOff":{"type":"array","uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":6}},"protectedTimeNotes":{"type":"string","maxLength":1000},"rhythmRules":{"type":"array","maxItems":70,"items":{"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","enum":["work","commute","recurring_obligation","meal","exercise","avoid","protected_free_time"]},"weekday":{"type":"integer","minimum":0,"maximum":6},"startsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"endsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"label":{"type":"string","minLength":1,"maxLength":100}},"required":["kind","weekday","startsAtLocal","endsAtLocal","label"]}},"summary":{"type":"string","maxLength":1000}},"required":["sleepStart","sleepEnd","maxSessionMinutes","breakMinutes","availability","daysOff","protectedTimeNotes","rhythmRules","summary"]});
+    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let proposal:RhythmProposal=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
+    let valid_clock=|value:&str|chrono::NaiveTime::parse_from_str(value,"%H:%M").is_ok();
+    if !valid_clock(&proposal.sleep_start)||!valid_clock(&proposal.sleep_end)||proposal.availability.is_empty()||proposal.availability.iter().any(|rule|rule.weekday<0||rule.weekday>6||!valid_clock(&rule.starts_at_local)||!valid_clock(&rule.ends_at_local)||rule.starts_at_local>=rule.ends_at_local)||proposal.days_off.iter().any(|day|*day<0||*day>6)||proposal.rhythm_rules.len()>70||proposal.rhythm_rules.iter().any(|rule|rule.weekday<0||rule.weekday>6||!matches!(rule.kind.as_str(),"work"|"commute"|"recurring_obligation"|"meal"|"exercise"|"avoid"|"protected_free_time")||rule.label.trim().is_empty()||rule.label.chars().count()>100||!valid_clock(&rule.starts_at_local)||!valid_clock(&rule.ends_at_local)||rule.starts_at_local>=rule.ends_at_local)||!(15..=240).contains(&proposal.max_session_minutes)||!(0..=60).contains(&proposal.break_minutes){return Err(ManagedAiError::InvalidResponse);}
+    Ok((proposal,usage))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct StudyRerankCandidate { pub id:String,pub title:String,pub material_type:String,pub topics:Vec<String> }
+
+pub fn request_study_rerank(provider:ProviderId,key:&str,model:&str,target_title:&str,candidates:&[StudyRerankCandidate])->Result<(Vec<String>,AiUsage),ManagedAiError>{
+    validate_key(key)?;
+    if target_title.trim().is_empty()||target_title.chars().count()>500||!(2..=5).contains(&candidates.len())||candidates.iter().any(|item|item.title.chars().count()>500||item.topics.len()>20||item.topics.iter().any(|topic|topic.chars().count()>100)){return Err(ManagedAiError::InvalidInput("study rerank input is invalid".into()));}
+    let prompt=format!("Order these course-approved study materials by semantic relevance to the target. Use only the supplied titles, types, and topics. Return each candidate ID exactly once. Do not infer document contents. TARGET_JSON={} CANDIDATES_JSON={}",serde_json::to_string(target_title).map_err(|_|ManagedAiError::InvalidInput("study rerank input is invalid".into()))?,serde_json::to_string(candidates).map_err(|_|ManagedAiError::InvalidInput("study rerank input is invalid".into()))?);
+    let schema=json!({"type":"object","additionalProperties":false,"properties":{"rankedIds":{"type":"array","minItems":candidates.len(),"maxItems":candidates.len(),"items":{"type":"string"}}},"required":["rankedIds"]});
+    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let ranked=value.get("rankedIds").and_then(Value::as_array).ok_or(ManagedAiError::InvalidResponse)?.iter().map(|value|value.as_str().map(str::to_owned).ok_or(ManagedAiError::InvalidResponse)).collect::<Result<Vec<_>,_>>()?;
+    validate_study_rerank_order(&ranked,candidates)?;
+    Ok((ranked,usage))
+}
+
+fn validate_study_rerank_order(ranked:&[String],candidates:&[StudyRerankCandidate])->Result<(),ManagedAiError>{
+    let expected=candidates.iter().map(|item|item.id.as_str()).collect::<std::collections::HashSet<_>>();
+    if ranked.len()!=candidates.len()||expected.len()!=candidates.len()||ranked.iter().map(String::as_str).collect::<std::collections::HashSet<_>>()!=expected{return Err(ManagedAiError::InvalidResponse);}
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct FundingProfileSuggestion { pub field:String,pub quote:String }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct FundingProfileProposal { pub suggestions:Vec<FundingProfileSuggestion> }
+
+pub fn request_funding_profile(provider:ProviderId,key:&str,model:&str,interview:&str)->Result<(FundingProfileProposal,AiUsage),ManagedAiError>{
+    validate_key(key)?;
+    if interview.trim().chars().count()<20||interview.chars().count()>4_000{return Err(ManagedAiError::InvalidInput("funding profile interview is invalid".into()));}
+    let prompt=format!("Structure only details the student explicitly volunteered for a funding search. Return exact literal quotes from INTERVIEW for suggested fields; never infer citizenship, residency, identity, financial need, GPA, eligibility, or award amount. Do not add facts or normalize quotes. The student must review and edit all suggestions before saving. INTERVIEW_JSON={}",serde_json::to_string(interview).map_err(|_|ManagedAiError::InvalidInput("funding profile interview is invalid".into()))?);
+    let schema=json!({"type":"object","additionalProperties":false,"properties":{"suggestions":{"type":"array","maxItems":20,"items":{"type":"object","additionalProperties":false,"properties":{"field":{"type":"string","enum":["school","degree","academicYear","studyLevel","fieldsOfStudy","locations","interests","preferredOpportunityTypes"]},"quote":{"type":"string","maxLength":120}},"required":["field","quote"]}}},"required":["suggestions"]});
+    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let proposal:FundingProfileProposal=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
+    validate_funding_profile_proposal(&proposal,interview)?;
+    Ok((proposal,usage))
+}
+
+fn validate_funding_profile_proposal(proposal:&FundingProfileProposal,interview:&str)->Result<(),ManagedAiError>{
+    if proposal.suggestions.len()>20||proposal.suggestions.iter().any(|item|!matches!(item.field.as_str(),"school"|"degree"|"academicYear"|"studyLevel"|"fieldsOfStudy"|"locations"|"interests"|"preferredOpportunityTypes")||item.quote.trim().is_empty()||item.quote.chars().count()>120||!interview.contains(&item.quote)){return Err(ManagedAiError::InvalidResponse);}
+    Ok(())
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 struct GroundedBody { content: String, citations: Vec<GroundedCitation>, unsupported: bool }
 
@@ -399,6 +485,28 @@ mod tests {
         sync::mpsc,
         thread,
     };
+
+    #[test]
+    fn study_rerank_accepts_only_a_permutation_of_approved_ids(){
+        let candidates=vec![
+            StudyRerankCandidate{id:"a".into(),title:"Notes".into(),material_type:"notes".into(),topics:vec![]},
+            StudyRerankCandidate{id:"b".into(),title:"Slides".into(),material_type:"slides".into(),topics:vec![]},
+        ];
+        assert!(validate_study_rerank_order(&["b".into(),"a".into()],&candidates).is_ok());
+        assert!(validate_study_rerank_order(&["a".into(),"a".into()],&candidates).is_err());
+        assert!(validate_study_rerank_order(&["a".into(),"outside".into()],&candidates).is_err());
+    }
+
+    #[test]
+    fn funding_profile_proposal_requires_literal_volunteered_evidence(){
+        let interview="I study computer science at Arizona State University and enjoy robotics.";
+        let valid=FundingProfileProposal{suggestions:vec![FundingProfileSuggestion{field:"fieldsOfStudy".into(),quote:"computer science".into()}]};
+        assert!(validate_funding_profile_proposal(&valid,interview).is_ok());
+        let invented=FundingProfileProposal{suggestions:vec![FundingProfileSuggestion{field:"fieldsOfStudy".into(),quote:"biology".into()}]};
+        assert!(validate_funding_profile_proposal(&invented,interview).is_err());
+        let sensitive=FundingProfileProposal{suggestions:vec![FundingProfileSuggestion{field:"citizenship".into(),quote:"computer science".into()}]};
+        assert!(validate_funding_profile_proposal(&sensitive,interview).is_err());
+    }
 
     fn fixture_server(response_body: Value) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
         let listener=TcpListener::bind("127.0.0.1:0").unwrap();

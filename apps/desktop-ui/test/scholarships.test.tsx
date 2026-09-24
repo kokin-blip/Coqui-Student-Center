@@ -1,16 +1,110 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { StudentCenter } from "../src/StudentCenter";
+import { ScholarshipsView } from "../src/components/ScholarshipsView";
+import * as native from "../src/native";
 
 beforeEach(() => window.history.replaceState({}, "", "/?demo"));
+
+test("discovered funding can be narrowed by published type and major criteria", async () => {
+  const workspace = await native.getScholarshipWorkspace();
+  const opportunity = (id: string, type: "grant" | "scholarship", fieldsOfStudy: string[]): native.ScholarshipOpportunity => ({
+    id, sourceId: "coqui-public-catalog", canonicalUrl: `https://example.org/${id}`,
+    applicationUrl: `https://example.org/${id}`, provider: "Example Foundation", title: `${id} funding`,
+    opportunityType: type, studyLevels: [], fieldsOfStudy, locations: [], citizenship: [], residency: [],
+    essayPrompts: [], requiredDocuments: [], fetchedAt: "2026-09-22T12:00:00Z", freshness: "fresh",
+    verificationStatus: "unverified", aiPolicy: "unknown", notes: "", priority: "medium", state: "discovered", taskIds: [],
+  });
+  const getWorkspace = vi.spyOn(native, "getScholarshipWorkspace").mockResolvedValue({ ...workspace, opportunities: [{ ...opportunity("Biology", "grant", ["Biology"]), awardMinimum: 1500 }, opportunity("History", "scholarship", ["History"])], profile: { ...workspace.profile, studyLevel: "undergraduate", preferredOpportunityTypes: ["grant"], awardMinimum: 1000 } });
+  try {
+    const user = userEvent.setup();
+    render(<ScholarshipsView />);
+    expect(await screen.findByText("Biology funding")).toBeInTheDocument();
+    expect(screen.getByText(/Profile preferences: Preferred type: grant · Published minimum meets your \$1,000 target/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Type" }), "grant");
+    expect(screen.queryByText("History funding")).not.toBeInTheDocument();
+    await user.click(screen.getByText("More filters"));
+    await user.type(screen.getByLabelText("Published major criteria"), "chemistry");
+    expect(screen.getByText(/No discovered opportunities match these filters/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("History funding")).toBeInTheDocument();
+  } finally {
+    getWorkspace.mockRestore();
+  }
+});
+
+test("funding AI proposal stays review-only until the student saves the edited profile", async () => {
+  const workspace = await native.getScholarshipWorkspace();
+  const empty = { ...workspace, profile: { ...workspace.profile, studyLevel: "", fieldsOfStudy: [] } };
+  const getWorkspace = vi.spyOn(native, "getScholarshipWorkspace").mockResolvedValue(empty);
+  const propose = vi.spyOn(native, "requestFundingProfileProposal").mockResolvedValue({ suggestions: [
+    { field: "fieldsOfStudy", quote: "computer science" },
+    { field: "school", quote: "Arizona State University" },
+  ] });
+  const providers = vi.spyOn(native, "listAiProviders").mockResolvedValue([{ provider: "openai", connected: true, healthy: true, model: "test-model", capabilities: ["funding_profile"], disclosureUrl: "https://example.invalid/policy" }]);
+  const save = vi.spyOn(native, "saveScholarshipProfile").mockImplementation(async (profile) => ({ ...empty, profile }));
+  const user = userEvent.setup();
+  render(<ScholarshipsView />);
+  expect(await screen.findByRole("heading", { name: "Find funding that fits you" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Help me organize my details with AI" }));
+  await user.type(screen.getByLabelText("What should funding searches know about you?"), "I study computer science at Arizona State University.");
+  expect(screen.getByRole("button", { name: "Create review draft" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: /Send only this description/ }));
+  await user.click(screen.getByRole("button", { name: "Create review draft" }));
+  await waitFor(() => expect(propose).toHaveBeenCalledWith("I study computer science at Arizona State University.", true, "openai"));
+  expect(save).not.toHaveBeenCalled();
+  await user.click(await screen.findByRole("button", { name: "Apply suggestions to editable fields" }));
+  expect(screen.getByLabelText("School")).toHaveValue("Arizona State University");
+  expect(screen.getByLabelText("Major or fields of study")).toHaveValue("computer science");
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Start finding funding" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ school: "Arizona State University", fieldsOfStudy: ["computer science"] })));
+  expect(await screen.findByRole("heading", { name: "Funding" })).toBeVisible();
+  getWorkspace.mockRestore();
+  propose.mockRestore();
+  providers.mockRestore();
+  save.mockRestore();
+});
+
+test("saved funding profile can opt out without losing onboarding preferences", async () => {
+  const workspace = await native.getScholarshipWorkspace();
+  const profile = { ...workspace.profile, studyLevel: "undergraduate", school: "Arizona State University", degree: "BS", academicYear: "Junior", interests: ["Robotics"], preferredOpportunityTypes: ["grant"], awardMinimum: 1000, deadlineToleranceDays: 30, notificationsEnabled: true };
+  const getWorkspace = vi.spyOn(native, "getScholarshipWorkspace").mockResolvedValue({ ...workspace, profile });
+  const save = vi.spyOn(native, "saveScholarshipProfile").mockImplementation(async (next) => ({ ...workspace, profile: next }));
+  try {
+    const user = userEvent.setup();
+    render(<ScholarshipsView />);
+    await user.click(await screen.findByRole("button", { name: "Saved" }));
+    await user.click(screen.getByRole("button", { name: "Edit profile" }));
+    await user.clear(screen.getByLabelText("Interests, comma separated"));
+    await user.type(screen.getByLabelText("Interests, comma separated"), "Climate change, public service");
+    await user.clear(screen.getByLabelText("Minimum preparation time (days)"));
+    await user.type(screen.getByLabelText("Minimum preparation time (days)"), "45");
+    await user.click(screen.getByRole("checkbox", { name: /Notify me about funding/ }));
+    await user.click(screen.getByRole("button", { name: "Save matching profile" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      notificationsEnabled: false,
+      school: "Arizona State University",
+      degree: "BS",
+      academicYear: "Junior",
+      interests: ["Climate change", "public service"],
+      preferredOpportunityTypes: ["grant"],
+      awardMinimum: 1000,
+      deadlineToleranceDays: 45,
+    })));
+  } finally {
+    getWorkspace.mockRestore();
+    save.mockRestore();
+  }
+});
 
 test("a student can save an attributed scholarship and version a draft", async () => {
   const user = userEvent.setup();
   render(<StudentCenter />);
   const [nav] = await screen.findAllByRole(
     "button",
-    { name: "Scholarships" },
+    { name: "Funding" },
     { timeout: 8000 },
   );
   await user.click(nav);

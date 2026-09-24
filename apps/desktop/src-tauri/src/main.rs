@@ -1,11 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod auth;
+mod academic_intelligence;
 mod ai_providers;
 mod backup;
 mod canvas;
 mod canvas_calendar;
 mod device_key;
+mod delight_preferences;
+mod semester_scenarios;
+mod semester_analysis;
+mod funding_catalog;
+mod funding_alerts;
 mod imports;
 mod interface_preferences;
 mod managed_ai;
@@ -13,6 +19,8 @@ mod pdf_renderer;
 mod pin;
 mod planner;
 mod profile;
+mod professor_ratings;
+mod rmp_lookup;
 mod school_calendar;
 mod schedule_reader;
 mod scholarships;
@@ -53,7 +61,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 26;
+const CURRENT_SCHEMA_VERSION: i64 = 30;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -264,6 +272,8 @@ struct InstitutionCatalog {
     #[serde(default)]
     source_url: String,
     #[serde(default)]
+    captured_at: Option<String>,
+    #[serde(default)]
     courses: Vec<CatalogCourse>,
 }
 
@@ -288,6 +298,45 @@ struct CourseSuggestion {
     term_label: String,
     #[serde(default)]
     staleness_warning:String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfessorSourceSnapshot {
+    kind: String,
+    label: String,
+    url: String,
+    term_label: String,
+    campus_id: String,
+    section_numbers: Vec<String>,
+    captured_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfessorRecord {
+    id: String,
+    name: String,
+    institution_id: String,
+    course_id: String,
+    course_code: String,
+    email: String,
+    office_location: String,
+    office_hours: String,
+    rating: Option<professor_ratings::ProfessorRatingSummary>,
+    source: ProfessorSourceSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SemesterCatalogSection {
+    course_id: String,
+    course_code: String,
+    source_label: String,
+    source_url: String,
+    term_label: String,
+    section: CatalogSection,
+    professor_record_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -362,7 +411,7 @@ struct RestoreJournal {
     stage_id: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PlanBlock {
     id: String,
@@ -377,6 +426,27 @@ struct PlanBlock {
     session_index: i64,
     location: String,
     reason_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PlanGenerationSummary {
+    undo_token: String,
+    generated_at: String,
+    imported_assignments: i64,
+    assessments: i64,
+    available_study_minutes: i64,
+    generated_sessions: i64,
+    preserved_sessions: i64,
+    conflict_count: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanGenerationUndo {
+    token: String,
+    before_blocks: Vec<PlanBlock>,
+    after_blocks: Vec<PlanBlock>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -445,6 +515,9 @@ struct Candidate {
     student_edited_fields: Vec<String>,
     has_linked_task: bool,
     source_connection_id: Option<String>,
+    task_kind: Option<String>,
+    suggested_priority: Option<i64>,
+    priority_reason_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -586,6 +659,7 @@ struct Dashboard {
     ocr: OcrStatus,
     import_notice: Option<String>,
     unsettled_schedule_sources: Vec<String>,
+    plan_generation_summary: Option<PlanGenerationSummary>,
 }
 
 #[derive(Serialize)]
@@ -595,7 +669,21 @@ struct CalendarAgenda {
     starts_at: String,
     ends_at: String,
     blocks: Vec<PlanBlock>,
+    deadlines: Vec<CalendarDeadline>,
     overload_conflicts: Vec<SourceConflictSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CalendarDeadline {
+    task_id: String,
+    title: String,
+    due_at: String,
+    course_id: Option<String>,
+    priority: i64,
+    task_kind: String,
+    priority_reason_codes: Vec<String>,
+    completed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -653,13 +741,21 @@ struct GroundedStudyInput {
     consent: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all="camelCase")]
+struct StudyRerankInput { course_id:String,target_id:String,material_ids:Vec<String>,consent:bool }
+
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+struct StudyRerankResult { ranked_ids:Vec<String>,provider:String,model:String }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct GradeBand { label: String, minimum_percent: f64, grade_points: f64 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StudyMaterialSummary { id:String,file_name:String,mime:String,course_ids:Vec<String>,segment_count:i64 }
+struct StudyMaterialSummary { id:String,file_name:String,title:String,mime:String,material_type:String,course_ids:Vec<String>,topics:Vec<String>,related_target_id:Option<String>,segment_count:i64,date_added:String,extraction_status:String,source:String,favorite:bool,teacher_provided:bool,last_used_at:Option<String> }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudyArtifactSummary { id:String,course_id:String,kind:String,title:String,content:String,citations:Vec<ai_providers::GroundedCitation>,provider:String,model:String,updated_at:String }
@@ -687,6 +783,10 @@ struct StudyWorkspace { materials:Vec<StudyMaterialSummary>,artifacts:Vec<StudyA
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GroundedStudyResult { workspace:StudyWorkspace,artifact_id:String,provider:String,model:String }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StudyMaterialInput { document_id:String,title:String,material_type:String,course_ids:Vec<String>,topics:Vec<String>,related_target_id:Option<String>,source:String,favorite:bool,teacher_provided:bool }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -752,6 +852,7 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS source_conflicts(id TEXT PRIMARY KEY,description TEXT NOT NULL,resolved INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'overload',candidate_id TEXT,entity_type TEXT,entity_id TEXT,current_due_at TEXT,proposed_due_at TEXT,current_starts_at TEXT,proposed_starts_at TEXT,current_ends_at TEXT,proposed_ends_at TEXT,detected_at TEXT,resolved_at TEXT,resolution TEXT,FOREIGN KEY(candidate_id) REFERENCES import_candidates(id));
       CREATE TABLE IF NOT EXISTS reminder_deliveries(block_id TEXT PRIMARY KEY,plan_starts_at TEXT NOT NULL,delivered_at TEXT,snoozed_until TEXT,dismissed_at TEXT,FOREIGN KEY(block_id) REFERENCES plan_blocks(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS scholarship_opportunities(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS funding_alert_deliveries(opportunity_id TEXT NOT NULL,kind TEXT NOT NULL,anchor TEXT NOT NULL,delivered_at TEXT NOT NULL,PRIMARY KEY(opportunity_id,kind,anchor),FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS scholarship_applications(id TEXT PRIMARY KEY,opportunity_id TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS scholarship_drafts(id TEXT PRIMARY KEY,opportunity_id TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(opportunity_id) REFERENCES scholarship_opportunities(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS scholarship_draft_versions(id TEXT PRIMARY KEY,draft_id TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(draft_id) REFERENCES scholarship_drafts(id) ON DELETE CASCADE);
@@ -863,6 +964,10 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     ensure_column(&conn, "import_candidates", "canonical_entity_id", "TEXT")?;
     ensure_column(&conn, "tasks", "source_uid", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(&conn, "tasks", "source_candidate_id", "TEXT")?;
+    ensure_column(&conn, "tasks", "priority_source", "TEXT NOT NULL DEFAULT 'legacy'")?;
+    ensure_column(&conn, "tasks", "priority_reason_codes", "TEXT NOT NULL DEFAULT '[]'")?;
+    ensure_column(&conn, "tasks", "effort_source", "TEXT NOT NULL DEFAULT 'legacy'")?;
+    ensure_column(&conn, "tasks", "completed_at", "TEXT")?;
     ensure_column(
         &conn,
         "commitments",
@@ -946,6 +1051,14 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
            PRIMARY KEY(document_id,course_id),
            FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS study_material_metadata(
+           document_id TEXT PRIMARY KEY,title TEXT NOT NULL DEFAULT '',material_type TEXT NOT NULL DEFAULT '',
+           topics TEXT NOT NULL DEFAULT '[]',related_target_id TEXT,source TEXT NOT NULL DEFAULT 'import',
+           favorite INTEGER NOT NULL DEFAULT 0,teacher_provided INTEGER NOT NULL DEFAULT 0,last_used_at TEXT,
+           updated_at TEXT NOT NULL,
+           FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+           FOREIGN KEY(related_target_id) REFERENCES tasks(id) ON DELETE SET NULL
          );
          CREATE TABLE IF NOT EXISTS study_artifacts(
            id TEXT PRIMARY KEY,course_id TEXT NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,
@@ -1173,11 +1286,16 @@ fn scholarship_match(opportunity:&serde_json::Value,profile:&serde_json::Value)-
 
 fn scholarship_workspace_in(conn:&Connection)->Result<serde_json::Value>{
     let mut sources=Vec::new();
+    const CATALOG_SOURCE_ID:&str="coqui-public-catalog";
     for source in scholarships::SOURCES{
         conn.execute("INSERT OR IGNORE INTO scholarship_sources(id,parser_version) VALUES(?1,?2)",params![source.id,source.parser_version])?;
         let (enabled,weekly,last_fetched,last_error):(i64,i64,Option<String>,Option<String>)=conn.query_row("SELECT enabled,weekly_refresh,last_fetched_at,last_error FROM scholarship_sources WHERE id=?1",params![source.id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
         sources.push(serde_json::json!({"id":source.id,"name":source.name,"kind":source.id,"origin":format!("{}{}",source.origin,source.path),"enabled":enabled!=0,"weeklyRefresh":weekly!=0,"requiresCredential":false,"lastFetchedAt":last_fetched,"status":if last_error.is_some(){"error"}else{"ready"},"lastError":last_error,"attribution":source.attribution,"parserVersion":source.parser_version}));
     }
+    conn.execute("INSERT OR IGNORE INTO scholarship_sources(id,enabled,weekly_refresh,parser_version) VALUES(?1,1,1,'catalog-batch-1')",params![CATALOG_SOURCE_ID])?;
+    let (catalog_enabled,catalog_refresh,catalog_fetched,catalog_error):(i64,i64,Option<String>,Option<String>)=conn.query_row("SELECT enabled,weekly_refresh,last_fetched_at,last_error FROM scholarship_sources WHERE id=?1",params![CATALOG_SOURCE_ID],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
+    let catalog_configured=funding_catalog::configured();
+    sources.push(serde_json::json!({"id":CATALOG_SOURCE_ID,"name":"Coqui public funding catalog","kind":"catalog","origin":option_env!("STUDENT_CENTER_CLOUD_API_URL").map(|value|format!("{value}v1/funding/catalog")).unwrap_or_default(),"enabled":catalog_enabled!=0&&catalog_configured,"weeklyRefresh":catalog_refresh!=0,"requiresCredential":false,"lastFetchedAt":catalog_fetched,"status":if !catalog_configured{"disabled"}else if catalog_error.is_some(){"error"}else{"ready"},"lastError":if !catalog_configured{Some("This build has no trusted catalog signing key. Saved opportunities remain available offline.".to_string())}else{catalog_error},"attribution":"Coqui public catalog; each opportunity retains its original provider and URL","parserVersion":"catalog-batch-1"}));
     sources.push(serde_json::json!({"id":"asu-scholarship-universe","name":"ASU Scholarship Universe","kind":"scholarship-universe","origin":"https://asu.scholarshipuniverse.com/","enabled":false,"weeklyRefresh":false,"requiresCredential":true,"status":"disabled","lastError":"Requires an admitted or current student's ASURITE sign-in. Coqui never crawls or reuses that authenticated session.","attribution":"Arizona State University","parserVersion":"manual-launch-1"}));
     sources.push(serde_json::json!({"id":"careeronestop","name":"CareerOneStop Scholarship Finder API","kind":"careeronestop","origin":"https://api.careeronestop.org/api-explorer/","enabled":false,"weeklyRefresh":false,"requiresCredential":true,"status":"disabled","lastError":"Optional adapter is disabled until a CareerOneStop user ID and API bearer token are configured.","attribution":"CareerOneStop, U.S. Department of Labor","parserVersion":"credential-required-1"}));
     sources.push(serde_json::json!({"id":"manual","name":"Manual links and files","kind":"manual","origin":"https://coqui.local/scholarships/manual","enabled":true,"weeklyRefresh":false,"requiresCredential":false,"status":"ready","attribution":"Added by the student","parserVersion":"manual-1"}));
@@ -1201,45 +1319,68 @@ fn scholarship_workspace_in(conn:&Connection)->Result<serde_json::Value>{
 fn get_scholarship_workspace(state:tauri::State<AppState>)->Result<serde_json::Value>{state.require_unlocked()?;scholarship_workspace_in(&state.db.lock().unwrap())}
 
 fn preserve_scholarship_student_fields(next:&mut serde_json::Value,previous:&serde_json::Value){
-    for field in ["state","notes","priority","taskIds"]{if let Some(value)=previous.get(field){next[field]=value.clone();}}
+    for field in ["state","notes","priority","taskIds","firstSeenAt"]{if let Some(value)=previous.get(field){next[field]=value.clone();}}
 }
 
 fn persist_scholarship_refresh(conn:&Connection,refresh:scholarships::SourceRefresh,run_id:&str)->Result<serde_json::Value>{
+    let opportunities=refresh.opportunities.into_iter().map(|item|serde_json::to_value(item).map_err(|_|AppError::Invalid("Scholarship result could not be stored".into()))).collect::<Result<Vec<_>>>()?;
+    persist_scholarship_values(conn,refresh.source.id,refresh.source.parser_version,&refresh.fetched_at,opportunities,run_id,true)
+}
+
+fn persist_scholarship_values(conn:&Connection,source_id:&str,parser_version:&str,fetched_at:&str,opportunities:Vec<serde_json::Value>,run_id:&str,mark_missing:bool)->Result<serde_json::Value>{
     let tx=conn.unchecked_transaction()?; let mut discovered=0usize; let mut changed=0usize; let mut seen=std::collections::HashSet::new();
-    for opportunity in refresh.opportunities{
-        let mut next=serde_json::to_value(&opportunity).map_err(|_|AppError::Invalid("Scholarship result could not be stored".into()))?;
-        let id=opportunity.id.clone(); seen.insert(id.clone());
+    for mut next in opportunities{
+        let id=next.get("id").and_then(|value|value.as_str()).ok_or_else(||AppError::Invalid("Scholarship result has no identifier".into()))?.to_owned(); seen.insert(id.clone());
         let previous=tx.query_row("SELECT payload FROM scholarship_opportunities WHERE id=?1",params![id],|row|row.get::<_,String>(0)).optional()?.and_then(|payload|serde_json::from_str::<serde_json::Value>(&payload).ok());
         if let Some(previous)=previous{
             preserve_scholarship_student_fields(&mut next,&previous);
             let critical=["title","awardMinimum","awardMaximum","deadline","deadlineLabel","applicationUrl","summary"];
             if critical.iter().any(|field|previous.get(*field)!=next.get(*field)){
                 next["verificationStatus"]=serde_json::Value::String("changed".into()); changed+=1;
-                let diff_id=Uuid::new_v4().to_string(); let payload=serde_json::json!({"id":diff_id,"opportunityId":id,"sourceId":refresh.source.id,"kind":"source_changed","detectedAt":refresh.fetched_at,"before":previous,"after":next});
-                tx.execute("INSERT INTO scholarship_opportunity_diffs(id,opportunity_id,source_id,kind,payload,detected_at) VALUES(?1,?2,?3,'source_changed',?4,?5)",params![diff_id,id,refresh.source.id,payload.to_string(),refresh.fetched_at])?;
+                let diff_id=Uuid::new_v4().to_string(); let payload=serde_json::json!({"id":diff_id,"opportunityId":id,"sourceId":source_id,"kind":"source_changed","detectedAt":fetched_at,"before":previous,"after":next});
+                tx.execute("INSERT INTO scholarship_opportunity_diffs(id,opportunity_id,source_id,kind,payload,detected_at) VALUES(?1,?2,?3,'source_changed',?4,?5)",params![diff_id,id,source_id,payload.to_string(),fetched_at])?;
             }
-        }else{discovered+=1;}
-        tx.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![id,next.to_string(),refresh.fetched_at])?;
+        }else{next["firstSeenAt"]=serde_json::Value::String(fetched_at.to_string());discovered+=1;}
+        tx.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![id,next.to_string(),fetched_at])?;
     }
-    let existing=scholarship_payloads(&tx,&format!("SELECT payload FROM scholarship_opportunities WHERE json_extract(payload,'$.sourceId')='{}'",refresh.source.id.replace('\'',"''")))?;
+    let existing=if mark_missing{scholarship_payloads(&tx,&format!("SELECT payload FROM scholarship_opportunities WHERE json_extract(payload,'$.sourceId')='{}'",source_id.replace('\'',"''")))?}else{Vec::new()};
     for mut previous in existing{
         let Some(id)=previous.get("id").and_then(|value|value.as_str()).map(str::to_owned) else{continue}; if seen.contains(&id){continue;}
         if previous.get("freshness").and_then(|value|value.as_str())==Some("stale"){continue;}
         previous["freshness"]=serde_json::Value::String("stale".into()); previous["verificationStatus"]=serde_json::Value::String("changed".into()); changed+=1;
-        let diff_id=Uuid::new_v4().to_string();let payload=serde_json::json!({"id":diff_id,"opportunityId":id,"sourceId":refresh.source.id,"kind":"missing_from_source","detectedAt":refresh.fetched_at});
-        tx.execute("UPDATE scholarship_opportunities SET payload=?2,updated_at=?3 WHERE id=?1",params![id,previous.to_string(),refresh.fetched_at])?;
-        tx.execute("INSERT INTO scholarship_opportunity_diffs(id,opportunity_id,source_id,kind,payload,detected_at) VALUES(?1,?2,?3,'missing_from_source',?4,?5)",params![diff_id,id,refresh.source.id,payload.to_string(),refresh.fetched_at])?;
+        let diff_id=Uuid::new_v4().to_string();let payload=serde_json::json!({"id":diff_id,"opportunityId":id,"sourceId":source_id,"kind":"missing_from_source","detectedAt":fetched_at});
+        tx.execute("UPDATE scholarship_opportunities SET payload=?2,updated_at=?3 WHERE id=?1",params![id,previous.to_string(),fetched_at])?;
+        tx.execute("INSERT INTO scholarship_opportunity_diffs(id,opportunity_id,source_id,kind,payload,detected_at) VALUES(?1,?2,?3,'missing_from_source',?4,?5)",params![diff_id,id,source_id,payload.to_string(),fetched_at])?;
     }
-    let run=serde_json::json!({"id":run_id,"sourceId":refresh.source.id,"startedAt":refresh.fetched_at,"completedAt":refresh.fetched_at,"status":"complete","discovered":discovered,"changed":changed,"skipped":0,"reasonCategories":[]});
+    let run=serde_json::json!({"id":run_id,"sourceId":source_id,"startedAt":fetched_at,"completedAt":fetched_at,"status":"complete","discovered":discovered,"changed":changed,"skipped":0,"reasonCategories":[]});
     tx.execute("UPDATE scholarship_crawler_runs SET payload=?2 WHERE id=?1",params![run_id,run.to_string()])?;
-    tx.execute("UPDATE scholarship_sources SET last_fetched_at=?2,last_error=NULL,parser_version=?3 WHERE id=?1",params![refresh.source.id,refresh.fetched_at,refresh.source.parser_version])?;
+    tx.execute("UPDATE scholarship_sources SET last_fetched_at=?2,last_error=NULL,parser_version=?3 WHERE id=?1",params![source_id,fetched_at,parser_version])?;
     tx.commit()?; scholarship_workspace_in(conn)
 }
 
 fn refresh_scholarship_source_blocking(state:&AppState,source_id:String)->Result<serde_json::Value>{
+    if source_id=="coqui-public-catalog"{return refresh_public_catalog_blocking(state);}
     state.require_unlocked()?; let source=scholarships::descriptor(&source_id).map_err(|error|AppError::Invalid(error.to_string()))?; let run_id=Uuid::new_v4().to_string(); let started_at=Utc::now();
     {let db=state.db.lock().unwrap();let latest=db.query_row("SELECT started_at FROM scholarship_crawler_runs WHERE source_id=?1 ORDER BY started_at DESC LIMIT 1",params![source_id],|row|row.get::<_,String>(0)).optional()?;if latest.and_then(|value|DateTime::parse_from_rfc3339(&value).ok()).is_some_and(|last|started_at.signed_duration_since(last.with_timezone(&Utc))<Duration::minutes(1)){return Err(AppError::Invalid("Wait one minute before refreshing this source again".into()));}let running=serde_json::json!({"id":run_id,"sourceId":source_id,"startedAt":started_at.to_rfc3339(),"status":"running","discovered":0,"changed":0,"skipped":0,"reasonCategories":[]});db.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES(?1,?2,?3,?4)",params![run_id,source_id,running.to_string(),started_at.to_rfc3339()])?;}
     match scholarships::refresh(&source_id){Ok(refresh)=>{let db=state.db.lock().unwrap();persist_scholarship_refresh(&db,refresh,&run_id)}Err(error)=>{let safe=error.to_string();let completed=Utc::now().to_rfc3339();let failed=serde_json::json!({"id":run_id,"sourceId":source.id,"startedAt":started_at.to_rfc3339(),"completedAt":completed,"status":"failed","discovered":0,"changed":0,"skipped":0,"reasonCategories":["source_unavailable"]});let db=state.db.lock().unwrap();db.execute("UPDATE scholarship_crawler_runs SET payload=?2 WHERE id=?1",params![run_id,failed.to_string()])?;db.execute("UPDATE scholarship_sources SET last_error=?2 WHERE id=?1",params![source.id,safe])?;Err(AppError::Invalid("Scholarship source refresh failed; saved opportunities were unchanged".into()))}}
+}
+
+fn refresh_public_catalog_blocking(state:&AppState)->Result<serde_json::Value>{
+    state.require_unlocked()?;
+    if !funding_catalog::configured(){return Err(AppError::Invalid("This build has no trusted public funding catalog".into()));}
+    let source_id="coqui-public-catalog";let run_id=Uuid::new_v4().to_string();let started_at=Utc::now();
+    {
+        let db=state.db.lock().unwrap();
+        scholarship_workspace_in(&db)?;
+        let latest=db.query_row("SELECT started_at FROM scholarship_crawler_runs WHERE source_id=?1 ORDER BY started_at DESC LIMIT 1",params![source_id],|row|row.get::<_,String>(0)).optional()?;
+        if latest.and_then(|value|DateTime::parse_from_rfc3339(&value).ok()).is_some_and(|last|started_at.signed_duration_since(last.with_timezone(&Utc))<Duration::minutes(1)){return Err(AppError::Invalid("Wait one minute before refreshing this source again".into()));}
+        let running=serde_json::json!({"id":run_id,"sourceId":source_id,"startedAt":started_at.to_rfc3339(),"status":"running","discovered":0,"changed":0,"skipped":0,"reasonCategories":[]});
+        db.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES(?1,?2,?3,?4)",params![run_id,source_id,running.to_string(),started_at.to_rfc3339()])?;
+    }
+    match funding_catalog::fetch(){
+        Ok(refresh)=>{let db=state.db.lock().unwrap();let workspace=persist_scholarship_values(&db,source_id,"catalog-batch-1",&refresh.fetched_at,refresh.opportunities,&run_id,!refresh.partial)?;if refresh.source_failures.is_empty(){Ok(workspace)}else{db.execute("UPDATE scholarship_sources SET last_error=?2 WHERE id=?1",params![source_id,refresh.source_failures.join("; ")])?;scholarship_workspace_in(&db)}},
+        Err(error)=>{let db=state.db.lock().unwrap();let failed=serde_json::json!({"id":run_id,"sourceId":source_id,"startedAt":started_at.to_rfc3339(),"completedAt":Utc::now().to_rfc3339(),"status":"failed","discovered":0,"changed":0,"skipped":0,"reasonCategories":["catalog_unavailable"]});db.execute("UPDATE scholarship_crawler_runs SET payload=?2 WHERE id=?1",params![run_id,failed.to_string()])?;db.execute("UPDATE scholarship_sources SET last_error=?2 WHERE id=?1",params![source_id,error.to_string()])?;Err(AppError::Invalid("Public funding catalog refresh failed; cached opportunities were kept".into()))}
+    }
 }
 
 #[tauri::command]
@@ -1247,8 +1388,9 @@ async fn refresh_scholarship_source(state:tauri::State<'_,AppState>,source_id:St
 
 #[tauri::command]
 fn set_scholarship_source_refresh(state:tauri::State<AppState>,source_id:String,weekly_refresh:bool)->Result<serde_json::Value>{
-    state.require_unlocked()?;scholarships::descriptor(&source_id).map_err(|error|AppError::Invalid(error.to_string()))?;let db=state.db.lock().unwrap();
-    db.execute("INSERT INTO scholarship_sources(id,weekly_refresh,parser_version) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET weekly_refresh=excluded.weekly_refresh",params![source_id,i64::from(weekly_refresh),scholarships::descriptor(&source_id).unwrap().parser_version])?;
+    state.require_unlocked()?;if source_id!="coqui-public-catalog"{scholarships::descriptor(&source_id).map_err(|error|AppError::Invalid(error.to_string()))?;}let db=state.db.lock().unwrap();
+    let version=if source_id=="coqui-public-catalog"{"catalog-batch-1"}else{scholarships::descriptor(&source_id).unwrap().parser_version};
+    db.execute("INSERT INTO scholarship_sources(id,weekly_refresh,parser_version) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET weekly_refresh=excluded.weekly_refresh",params![source_id,i64::from(weekly_refresh),version])?;
     scholarship_workspace_in(&db)
 }
 
@@ -1259,11 +1401,18 @@ fn resolve_scholarship_diff(state:tauri::State<AppState>,diff_id:String)->Result
 }
 
 #[tauri::command]
-fn save_scholarship_profile(state:tauri::State<AppState>,profile:serde_json::Value)->Result<serde_json::Value>{
+fn save_scholarship_profile(app:tauri::AppHandle,state:tauri::State<AppState>,mut profile:serde_json::Value)->Result<serde_json::Value>{
     state.require_unlocked()?;let study_level=profile.get("studyLevel").and_then(|value|value.as_str()).unwrap_or_default();if study_level.len()>100{return Err(AppError::Invalid("Study level is too long".into()));}
     for field in ["fieldsOfStudy","locations","citizenship","residency"]{let Some(values)=profile.get(field).and_then(|value|value.as_array())else{return Err(AppError::Invalid("Scholarship profile fields must be lists".into()));};if values.len()>25||values.iter().any(|value|value.as_str().is_none_or(|value|value.trim().is_empty()||value.len()>120)){return Err(AppError::Invalid("Scholarship profile contains an invalid value".into()));}}
     if profile.get("gpa").is_some_and(|value|!value.is_null()&&value.as_f64().is_none_or(|value|!(0.0..=5.0).contains(&value))){return Err(AppError::Invalid("GPA must be between 0 and 5".into()));}
-    let db=state.db.lock().unwrap();db.execute("INSERT INTO scholarship_profiles(id,payload,updated_at) VALUES('local',?1,?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![profile.to_string(),Utc::now().to_rfc3339()])?;scholarship_workspace_in(&db)
+    if profile.get("notificationsEnabled").and_then(|value|value.as_bool())==Some(true) && !matches!(app.notification().request_permission().map_err(|error|AppError::Background(error.to_string()))?,PermissionState::Granted){return Err(AppError::Invalid("notification permission was not granted by the operating system".into()));}
+    let db=state.db.lock().unwrap();
+    let previous=scholarship_profile_in(&db)?;
+    if profile.get("notificationsEnabled").and_then(|value|value.as_bool())==Some(true){
+        let opted_in=previous.get("notificationsEnabled").and_then(|value|value.as_bool())==Some(true);
+        profile["notificationOptedInAt"]=if opted_in{previous.get("notificationOptedInAt").cloned().unwrap_or_else(||serde_json::json!(Utc::now().to_rfc3339()))}else{serde_json::json!(Utc::now().to_rfc3339())};
+    }else{profile.as_object_mut().map(|value|value.remove("notificationOptedInAt"));}
+    db.execute("INSERT INTO scholarship_profiles(id,payload,updated_at) VALUES('local',?1,?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![profile.to_string(),Utc::now().to_rfc3339()])?;scholarship_workspace_in(&db)
 }
 
 fn scholarship_deadline_rfc3339(conn:&Connection,value:&str)->Result<String>{
@@ -1967,14 +2116,23 @@ fn insert_task(
     // Quick capture could not name a course until now, so everything added from
     // the topbar landed unattached even when the student knew the course.
     let course_id = course_id.map(str::trim).filter(|value| !value.is_empty());
+    let classification = academic_intelligence::classify(
+        title,
+        due.and_then(parse_utc),
+        Utc::now(),
+    );
     conn.execute(
-        "INSERT INTO tasks(id,title,minutes,due_at,course_id,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+        "INSERT INTO tasks(id,title,minutes,due_at,course_id,priority,task_kind,priority_source,priority_reason_codes,effort_source,created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,'rules',?8,'student',?9)",
         params![
             id,
             title.trim(),
             minutes,
             due,
             course_id,
+            classification.priority,
+            classification.task_kind,
+            serde_json::to_string(&classification.reason_codes).unwrap_or_else(|_| "[]".into()),
             Utc::now().to_rfc3339()
         ],
     )?;
@@ -2114,18 +2272,23 @@ fn run_reminder_tick<R: tauri::Runtime>(
 ) -> Result<usize> {
     let (settings, reminders) = take_due_reminders(&state.db.lock().unwrap(), Utc::now())?;
     let count = reminders.len();
+    let sound = if count > 0 {
+        let db = state.db.lock().unwrap();
+        delight_preferences::reminder_sound_name(delight_preferences::load(&db)?.reminder_sounds)
+    } else { None };
     for reminder in reminders {
         let body = reminder_body(
             settings.show_titles,
             state.locked.load(Ordering::Acquire),
             &reminder.title,
         );
-        app.notification()
+        let mut notification = app.notification()
             .builder()
             .title("Student Center reminder")
             .body(body)
-            .extra("blockId", &reminder.block_id)
-            .show()
+            .extra("blockId", &reminder.block_id);
+        if let Some(name) = sound { notification = notification.sound(name); }
+        notification.show()
             .map_err(|error| AppError::Background(error.to_string()))?;
     }
     Ok(count)
@@ -2142,6 +2305,7 @@ fn reminder_body(show_titles: bool, locked: bool, title: &str) -> String {
 fn start_reminder_worker<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: AppState) {
     std::thread::spawn(move || loop {
         let _ = run_reminder_tick(&app, &state);
+        let _ = funding_alerts::run_tick(&app, &state);
         std::thread::sleep(StdDuration::from_secs(30));
     });
 }
@@ -2431,6 +2595,43 @@ fn planner_snapshot(
             });
         }
     }
+    for rule in &workspace.rhythm_rules {
+        let start_time = chrono::NaiveTime::parse_from_str(&rule.starts_at_local, "%H:%M")
+            .map_err(|_| AppError::Invalid("weekly rhythm start is invalid".into()))?;
+        let end_time = chrono::NaiveTime::parse_from_str(&rule.ends_at_local, "%H:%M")
+            .map_err(|_| AppError::Invalid("weekly rhythm end is invalid".into()))?;
+        let mut date = effective.with_timezone(&planner_tz).date_naive();
+        let last = horizon_end.with_timezone(&planner_tz).date_naive();
+        while date <= last {
+            if date.weekday().num_days_from_sunday() as i64 == rule.weekday {
+                let starts_at = planner_tz
+                    .from_local_datetime(&date.and_time(start_time))
+                    .earliest()
+                    .ok_or_else(|| AppError::Invalid("weekly rhythm start falls in a daylight-saving gap".into()))?
+                    .with_timezone(&Utc);
+                let ends_at = planner_tz
+                    .from_local_datetime(&date.and_time(end_time))
+                    .latest()
+                    .ok_or_else(|| AppError::Invalid("weekly rhythm end falls in a daylight-saving gap".into()))?
+                    .with_timezone(&Utc);
+                if ends_at > effective && starts_at < horizon_end {
+                    fixed_constraints.push(planner::FixedConstraint {
+                        id: format!("rhythm:{}:{}", rule.id, date),
+                        title: rule.label.clone(),
+                        starts_at,
+                        ends_at,
+                        location: String::new(),
+                        travel_before_minutes: 0,
+                        travel_after_minutes: 0,
+                        transition_before_minutes: 0,
+                        transition_after_minutes: 0,
+                        kind: rule.kind.clone(),
+                    });
+                }
+            }
+            date += Duration::days(1);
+        }
+    }
     fixed_constraints.sort_by_key(|item| (item.starts_at, item.ends_at, item.id.clone()));
     let tasks = workspace
         .tasks
@@ -2454,7 +2655,9 @@ fn planner_snapshot(
                 title: task.title.clone(),
                 course_id: task.course_id.clone(),
                 duration_minutes: task.minutes,
-                due_at: parse_optional(&task.due_at, "deadline")?,
+                due_at: parse_optional(&task.due_at, "deadline")?.map(|due| {
+                    if due < effective { effective + Duration::days(7) } else { due }
+                }),
                 earliest_start: parse_optional(&task.earliest_start, "earliest start")?,
                 priority: task.priority,
                 academic_risk: task.academic_risk,
@@ -2465,6 +2668,7 @@ fn planner_snapshot(
                 max_session_minutes: task.max_session_minutes,
                 dependencies: task.dependencies.clone(),
                 completed: task.completed,
+                overdue: task.due_at.as_deref().and_then(parse_utc).is_some_and(|due| due < effective),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -2540,6 +2744,70 @@ fn planner_snapshot(
     })
 }
 
+fn all_plan_blocks(conn: &Connection) -> Result<Vec<PlanBlock>> {
+    let mut query = conn.prepare(
+        "SELECT id,task_id,starts_at,ends_at,title,kind,completed,locked,started_at,
+                session_index,location,reason_codes
+         FROM plan_blocks ORDER BY id",
+    )?;
+    let blocks = query
+        .query_map([], |row| {
+            let raw: String = row.get(11)?;
+            Ok(PlanBlock {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                starts_at: row.get(2)?,
+                ends_at: row.get(3)?,
+                title: row.get(4)?,
+                kind: row.get(5)?,
+                completed: row.get::<_, i64>(6)? != 0,
+                locked: row.get::<_, i64>(7)? != 0,
+                started_at: row.get(8)?,
+                session_index: row.get(9)?,
+                location: row.get(10)?,
+                reason_codes: serde_json::from_str(&raw).unwrap_or_default(),
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(blocks)
+}
+
+fn restore_plan_blocks(conn: &Connection, blocks: &[PlanBlock]) -> Result<()> {
+    conn.execute("DELETE FROM plan_blocks", [])?;
+    for block in blocks {
+        conn.execute(
+            "INSERT INTO plan_blocks(
+               id,task_id,starts_at,ends_at,title,kind,completed,locked,started_at,
+               session_index,location,reason_codes
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![
+                block.id,
+                block.task_id,
+                block.starts_at,
+                block.ends_at,
+                block.title,
+                block.kind,
+                i64::from(block.completed),
+                i64::from(block.locked),
+                block.started_at,
+                block.session_index,
+                block.location,
+                serde_json::to_string(&block.reason_codes)
+                    .map_err(|error| AppError::Background(error.to_string()))?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn invalidate_generated_plan_undo(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "DELETE FROM settings WHERE key IN ('plan_generation_undo','plan_generation_summary')",
+        [],
+    )?;
+    Ok(())
+}
+
 fn regenerate_plan_for_trigger(
     conn: &Connection,
     effective: Option<DateTime<Local>>,
@@ -2548,8 +2816,13 @@ fn regenerate_plan_for_trigger(
     let effective = effective
         .map(|value| value.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
-    let snapshot = planner_snapshot(conn, effective, trigger)?;
+    let snapshot = planner_snapshot(conn, effective, trigger.clone())?;
     let outcome = planner::generate(&snapshot).map_err(AppError::Invalid)?;
+    let before_blocks = if trigger == planner::PlannerTrigger::ImportApproved {
+        Some(all_plan_blocks(conn)?)
+    } else {
+        None
+    };
     let tx = conn.unchecked_transaction()?;
     let now = Utc::now().to_rfc3339();
     tx.execute(
@@ -2641,6 +2914,64 @@ fn regenerate_plan_for_trigger(
         params![serde_json::to_string(&outcome.capacity)
             .map_err(|error| AppError::Background(error.to_string()))?],
     )?;
+    if let Some(before_blocks) = before_blocks {
+        let after_blocks = all_plan_blocks(&tx)?;
+        let token = Uuid::new_v4().to_string();
+        let imported_assignments = tx.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE completed=0 AND source_candidate_id IS NOT NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let assessments = tx.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE completed=0 AND source_candidate_id IS NOT NULL
+             AND task_kind IN ('exam','midterm','final','test','quiz')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let preserved_sessions = after_blocks
+            .iter()
+            .filter(|block| {
+                block.task_id.is_some()
+                    && before_blocks.iter().any(|before| before.id == block.id)
+                    && (block.locked || block.completed)
+            })
+            .count() as i64;
+        let summary = PlanGenerationSummary {
+            undo_token: token.clone(),
+            generated_at: now.clone(),
+            imported_assignments,
+            assessments,
+            available_study_minutes: outcome.capacity.available_minutes,
+            generated_sessions: outcome.blocks.len() as i64,
+            preserved_sessions,
+            conflict_count: outcome.overload_conflicts.len() as i64,
+        };
+        let undo = PlanGenerationUndo {
+            token,
+            before_blocks,
+            after_blocks,
+        };
+        for (key, value) in [
+            (
+                "plan_generation_summary",
+                serde_json::to_string(&summary)
+                    .map_err(|error| AppError::Background(error.to_string()))?,
+            ),
+            (
+                "plan_generation_undo",
+                serde_json::to_string(&undo)
+                    .map_err(|error| AppError::Background(error.to_string()))?,
+            ),
+        ] {
+            tx.execute(
+                "INSERT INTO settings(key,value) VALUES(?1,?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value],
+            )?;
+        }
+    } else {
+        invalidate_generated_plan_undo(&tx)?;
+    }
     tx.commit()?;
     Ok(outcome)
 }
@@ -2725,14 +3056,26 @@ fn dashboard_with_notice(
     let candidates = candidate_query
         .query_map([], |row| {
             let warnings: String = row.get(14)?;
-            Ok(Candidate {
+            let mut candidate = Candidate {
                 id: row.get(0)?,
                 document_id: row.get(1)?,
                 kind: row.get(2)?, title: row.get(3)?, course: row.get(4)?, due_at: row.get(5)?, starts_at: row.get(6)?, ends_at: row.get(7)?, duration_minutes: row.get(8)?, evidence: row.get(9)?, source_locator: row.get(10)?, source_type: row.get(11)?, source_url: row.get(12)?, confidence: row.get(13)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
                 status: row.get(15)?, weekdays: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(), starts_at_local: row.get(17)?, ends_at_local: row.get(18)?, timezone: row.get(19)?,
                 section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?, has_linked_task:row.get::<_,i64>(26)? != 0, source_connection_id:row.get(27)?,
-            })
+                task_kind: None, suggested_priority: None, priority_reason_codes: Vec::new(),
+            };
+            if candidate.kind == "task" {
+                let classification = academic_intelligence::classify(
+                    &candidate.title,
+                    candidate.due_at.as_deref().and_then(parse_utc),
+                    Utc::now(),
+                );
+                candidate.task_kind = Some(classification.task_kind);
+                candidate.suggested_priority = Some(classification.priority);
+                candidate.priority_reason_codes = classification.reason_codes;
+            }
+            Ok(candidate)
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let conflicts = {
@@ -2878,6 +3221,10 @@ fn dashboard_with_notice(
             .collect::<std::result::Result<Vec<_>, _>>()?;
         values
     };
+    let plan_generation_summary = serde_json::from_str::<PlanGenerationSummary>(
+        &setting("plan_generation_summary"),
+    )
+    .ok();
     Ok(Dashboard {
         student_name: setting("student_name"),
         timezone: setting("timezone"),
@@ -2893,6 +3240,7 @@ fn dashboard_with_notice(
         ocr: ocr.status(),
         import_notice,
         unsettled_schedule_sources,
+        plan_generation_summary,
     })
 }
 
@@ -3129,6 +3477,23 @@ fn calendar_agenda(conn: &Connection, start_date: Option<&str>) -> Result<Calend
             },
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut deadline_query = conn.prepare(
+        "SELECT id,title,due_at,course_id,priority,task_kind,priority_reason_codes,completed
+         FROM tasks WHERE due_at IS NOT NULL
+           AND datetime(due_at)>=datetime(?1) AND datetime(due_at)<datetime(?2)
+         ORDER BY datetime(due_at),priority DESC,id",
+    )?;
+    let deadlines = deadline_query
+        .query_map(params![starts_at.to_rfc3339(), ends_at.to_rfc3339()], |row| {
+            let raw: String = row.get(6)?;
+            Ok(CalendarDeadline {
+                task_id: row.get(0)?, title: row.get(1)?, due_at: row.get(2)?,
+                course_id: row.get(3)?, priority: row.get(4)?, task_kind: row.get(5)?,
+                priority_reason_codes: serde_json::from_str(&raw).unwrap_or_default(),
+                completed: row.get::<_, i64>(7)? != 0,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut conflict_query = conn.prepare(
         "SELECT id,kind,description,candidate_id,entity_type,entity_id,
                 current_due_at,proposed_due_at,current_starts_at,proposed_starts_at,
@@ -3160,6 +3525,7 @@ fn calendar_agenda(conn: &Connection, start_date: Option<&str>) -> Result<Calend
         starts_at: starts_at.to_rfc3339(),
         ends_at: ends_at.to_rfc3339(),
         blocks,
+        deadlines,
         overload_conflicts,
     })
 }
@@ -3213,11 +3579,51 @@ fn move_plan_block(state:tauri::State<AppState>,block_id:String,starts_at:String
     state.require_unlocked()?;let starts=parse_utc(&starts_at).ok_or_else(||AppError::Invalid("calendar start is invalid".into()))?;let ends=parse_utc(&ends_at).ok_or_else(||AppError::Invalid("calendar end is invalid".into()))?;let minutes=(ends-starts).num_minutes();if starts<Utc::now()-chrono::Duration::minutes(1)||!(5..=480).contains(&minutes){return Err(AppError::Invalid("calendar block must be 5–480 minutes in the future".into()));}
     let conn=state.db.lock().unwrap();require_onboarded(&conn)?;let previous=conn.query_row("SELECT starts_at,ends_at,locked FROM plan_blocks WHERE id=?1 AND task_id IS NOT NULL AND completed=0",params![block_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?!=0))).optional()?.ok_or_else(||AppError::Invalid("only unfinished study blocks can be moved".into()))?;
     let overlaps=conn.query_row("SELECT EXISTS(SELECT 1 FROM plan_blocks WHERE id!=?1 AND completed=0 AND datetime(starts_at)<datetime(?3) AND datetime(ends_at)>datetime(?2))",params![block_id,starts_at,ends_at],|row|row.get::<_,i64>(0))?!=0;if overlaps{return Err(AppError::Invalid("that time overlaps another class, commitment, or study block".into()));}
-    let undo=CalendarUndo{block_id:block_id.clone(),starts_at:previous.0,ends_at:previous.1,locked:previous.2};conn.execute("INSERT INTO settings(key,value) VALUES('calendar_undo',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serde_json::to_string(&undo).map_err(|error|AppError::Background(error.to_string()))?])?;conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=1,reason_codes='[\"manual_calendar_move\"]' WHERE id=?1",params![block_id,starts.to_rfc3339(),ends.to_rfc3339()])?;mutation(&conn,"plan_block",&block_id,"moved","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Study block moved and locked. Undo is available from Calendar.".into()))
+    let undo=CalendarUndo{block_id:block_id.clone(),starts_at:previous.0,ends_at:previous.1,locked:previous.2};conn.execute("INSERT INTO settings(key,value) VALUES('calendar_undo',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serde_json::to_string(&undo).map_err(|error|AppError::Background(error.to_string()))?])?;conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=1,reason_codes='[\"manual_calendar_move\"]' WHERE id=?1",params![block_id,starts.to_rfc3339(),ends.to_rfc3339()])?;invalidate_generated_plan_undo(&conn)?;mutation(&conn,"plan_block",&block_id,"moved","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Study block moved and locked. Undo is available from Calendar.".into()))
 }
 
 #[tauri::command]
-fn undo_calendar_change(state:tauri::State<AppState>)->Result<Dashboard>{state.require_unlocked()?;let conn=state.db.lock().unwrap();let raw=conn.query_row("SELECT value FROM settings WHERE key='calendar_undo'",[],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("there is no calendar change to undo".into()))?;let undo:CalendarUndo=serde_json::from_str(&raw).map_err(|_|AppError::Invalid("saved calendar undo is invalid".into()))?;let changed=conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=?4 WHERE id=?1 AND completed=0",params![undo.block_id,undo.starts_at,undo.ends_at,i64::from(undo.locked)])?;if changed!=1{return Err(AppError::Invalid("the moved block is no longer available".into()));}conn.execute("DELETE FROM settings WHERE key='calendar_undo'",[])?;mutation(&conn,"plan_block",&undo.block_id,"move_undone","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Calendar change undone.".into()))}
+fn undo_calendar_change(state:tauri::State<AppState>)->Result<Dashboard>{state.require_unlocked()?;let conn=state.db.lock().unwrap();let raw=conn.query_row("SELECT value FROM settings WHERE key='calendar_undo'",[],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("there is no calendar change to undo".into()))?;let undo:CalendarUndo=serde_json::from_str(&raw).map_err(|_|AppError::Invalid("saved calendar undo is invalid".into()))?;let changed=conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=?4 WHERE id=?1 AND completed=0",params![undo.block_id,undo.starts_at,undo.ends_at,i64::from(undo.locked)])?;if changed!=1{return Err(AppError::Invalid("the moved block is no longer available".into()));}conn.execute("DELETE FROM settings WHERE key='calendar_undo'",[])?;invalidate_generated_plan_undo(&conn)?;mutation(&conn,"plan_block",&undo.block_id,"move_undone","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Calendar change undone.".into()))}
+
+fn undo_generated_plan_in(conn: &Connection, token: &str) -> Result<()> {
+    let raw = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key='plan_generation_undo'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Invalid("there is no generated plan to undo".into()))?;
+    let undo: PlanGenerationUndo = serde_json::from_str(&raw)
+        .map_err(|_| AppError::Invalid("saved plan undo is invalid".into()))?;
+    if undo.token != token {
+        return Err(AppError::Invalid("this plan undo is no longer current".into()));
+    }
+    if all_plan_blocks(conn)? != undo.after_blocks {
+        return Err(AppError::Invalid(
+            "Your plan changed after generation, so undo would overwrite newer work. Move or remove sessions manually instead."
+                .into(),
+        ));
+    }
+    let tx = conn.unchecked_transaction()?;
+    restore_plan_blocks(&tx, &undo.before_blocks)?;
+    invalidate_generated_plan_undo(&tx)?;
+    mutation(&tx, "plan", token, "generation_undone", "{}")?;
+    tx.commit()?;
+    Ok(())
+}
+
+#[tauri::command]
+fn undo_generated_plan(state: tauri::State<AppState>, token: String) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let conn = state.db.lock().unwrap();
+    undo_generated_plan_in(&conn, &token)?;
+    dashboard_with_notice(
+        &conn,
+        &state.ocr,
+        Some("The previous study-session plan has been restored.".into()),
+    )
+}
 
 #[tauri::command]
 fn get_onboarding_state(state: tauri::State<AppState>) -> Result<profile::OnboardingState> {
@@ -3613,6 +4019,131 @@ fn search_course_suggestions(
     Ok(results)
 }
 
+fn professor_name_key(name: &str) -> String {
+    name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+fn professor_records_for(
+    institution_id: &str,
+    courses: &[profile::CourseRecord],
+    instructors: &[profile::InstructorRecord],
+    catalog: Option<&InstitutionCatalog>,
+    term_label: &str,
+) -> Vec<ProfessorRecord> {
+    let mut records = Vec::<ProfessorRecord>::new();
+    for course in courses {
+        for instructor in instructors.iter().filter(|item| item.course_id == course.id && !item.name.trim().is_empty()) {
+            records.push(ProfessorRecord {
+                id: format!("local:{}", instructor.id),
+                name: instructor.name.trim().into(), institution_id: institution_id.into(),
+                course_id: course.id.clone(), course_code: course.code.clone(),
+                email: instructor.email.clone(), office_location: instructor.office_location.clone(), office_hours: instructor.office_hours.clone(),
+                rating: None,
+                source: ProfessorSourceSnapshot { kind: "local_course".into(), label: "Your saved course details".into(), url: String::new(), term_label: String::new(), campus_id: String::new(), section_numbers: Vec::new(), captured_at: None },
+            });
+        }
+        let Some(catalog) = catalog.filter(|item| item.institution_id == institution_id) else { continue };
+        let Some(catalog_course) = catalog.courses.iter().find(|item| !course.code.trim().is_empty() && item.code.trim().eq_ignore_ascii_case(course.code.trim())) else { continue };
+        for section in &catalog_course.sections {
+            let name = section.instructor.trim();
+            if name.is_empty() || name.eq_ignore_ascii_case("staff") || name.eq_ignore_ascii_case("to be announced") { continue; }
+            let key = professor_name_key(name);
+            let campus = section.campus_id.trim().to_ascii_lowercase();
+            let digest = hex::encode(Sha256::digest(format!("{}|{}|{}|{}|{}", institution_id, catalog.term_id, course.id, key, campus).as_bytes()));
+            let matching_campuses = catalog_course.sections.iter().filter(|item| professor_name_key(&item.instructor) == key).map(|item| item.campus_id.trim().to_ascii_lowercase()).collect::<std::collections::HashSet<_>>();
+            let existing = records.iter().position(|item| item.course_id == course.id && professor_name_key(&item.name) == key && (item.source.kind == "local_course" && matching_campuses.len() == 1 || item.source.kind == "official_course_catalog" && item.source.campus_id == campus));
+            if let Some(index) = existing {
+                let record = &mut records[index];
+                record.id = format!("catalog:{digest}");
+                record.source.kind = "official_course_catalog".into();
+                record.source.label = catalog.source_label.clone();
+                record.source.url = catalog.source_url.clone();
+                record.source.term_label = term_label.into();
+                record.source.campus_id = campus;
+                record.source.captured_at = catalog.captured_at.clone();
+                if !section.line_number.is_empty() && !record.source.section_numbers.contains(&section.line_number) { record.source.section_numbers.push(section.line_number.clone()); }
+            } else {
+                records.push(ProfessorRecord {
+                    id: format!("catalog:{digest}"), name: name.into(), institution_id: institution_id.into(),
+                    course_id: course.id.clone(), course_code: course.code.clone(),
+                    email: String::new(), office_location: String::new(), office_hours: String::new(),
+                    rating: None,
+                    source: ProfessorSourceSnapshot { kind: "official_course_catalog".into(), label: catalog.source_label.clone(), url: catalog.source_url.clone(), term_label: term_label.into(), campus_id: campus, section_numbers: if section.line_number.is_empty() { Vec::new() } else { vec![section.line_number.clone()] }, captured_at: catalog.captured_at.clone() },
+                });
+            }
+        }
+    }
+    use professor_ratings::ProfessorRatingProvider;
+    let rating_provider = professor_ratings::DisabledProfessorRatingProvider;
+    for record in &mut records { record.rating = rating_provider.rating_for(record); }
+    records.sort_by(|left, right| left.course_code.cmp(&right.course_code).then(left.name.cmp(&right.name)));
+    records
+}
+
+fn professor_catalog_in(conn: &Connection) -> Result<Vec<ProfessorRecord>> {
+    let workspace = profile::workspace(conn)?;
+    let institution_id = workspace.institution.as_ref().map(|institution| institution.id.as_str()).unwrap_or("");
+    let catalog = if institution_id.is_empty() { None } else { institution_catalog_for(institution_id)? };
+    let term_label = catalog.and_then(|catalog| institution_setup_providers().ok()?.iter().find(|provider| provider.institution_id == catalog.institution_id)?.terms.iter().find(|term| term.id == catalog.term_id).map(|term| term.name.as_str())).unwrap_or_else(|| catalog.map(|catalog| catalog.term_id.as_str()).unwrap_or(""));
+    Ok(professor_records_for(institution_id, &workspace.courses, &workspace.instructors, catalog, term_label))
+}
+
+#[tauri::command]
+fn get_professor_catalog(state: tauri::State<AppState>) -> Result<Vec<ProfessorRecord>> {
+    state.require_unlocked()?;
+    professor_catalog_in(&state.db.lock().unwrap())
+}
+
+#[tauri::command]
+async fn lookup_professor_rating(state: tauri::State<'_, AppState>, professor_id: String) -> Result<Option<professor_ratings::ProfessorRatingSummary>> {
+    state.require_unlocked()?;
+    let app = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let professor = {
+            let db = app.db.lock().unwrap();
+            professor_catalog_in(&db)?.into_iter().find(|item| item.id == professor_id)
+                .ok_or_else(|| AppError::Invalid("This instructor is no longer listed for your courses".into()))?
+        };
+        if professor.institution_id != "104151" { return Ok(None); }
+        if let Some(rating) = rmp_lookup::cached(&app.db.lock().unwrap(), &professor)? { return Ok(rating); }
+        let found = rmp_lookup::lookup(&professor)?;
+        rmp_lookup::cache(&app.db.lock().unwrap(), &professor, found.clone())?;
+        Ok(found)
+    }).await.map_err(|_| AppError::Background("Professor rating lookup stopped unexpectedly".into()))?
+}
+
+fn semester_catalog_sections_in(conn: &Connection, term_id: &str) -> Result<Vec<SemesterCatalogSection>> {
+    let workspace = profile::workspace(conn)?;
+    if !workspace.terms.iter().any(|term| term.id == term_id) { return Ok(Vec::new()); }
+    let institution_id = workspace.institution.as_ref().map(|institution| institution.id.as_str()).unwrap_or("");
+    let Some(catalog) = institution_catalog_for(institution_id)?.filter(|catalog| catalog.term_id == term_id) else { return Ok(Vec::new()); };
+    let term_label = workspace.terms.iter().find(|term| term.id == term_id).map(|term| term.name.as_str()).unwrap_or(term_id);
+    let professors = professor_records_for(institution_id, &workspace.courses, &workspace.instructors, Some(catalog), term_label);
+    let mut results = Vec::new();
+    for course in workspace.courses.iter().filter(|course| course.term_id.as_deref().is_none_or(|id| id == term_id)) {
+        let Some(listed) = catalog.courses.iter().find(|listed| !course.code.trim().is_empty() && listed.code.trim().eq_ignore_ascii_case(course.code.trim())) else { continue; };
+        for section in &listed.sections {
+            if section.line_number.trim().is_empty() || section.weekdays.is_empty() || section.weekdays.iter().any(|day| !(0..=6).contains(day))
+                || chrono::NaiveTime::parse_from_str(&section.starts_at_local, "%H:%M").ok()
+                    .zip(chrono::NaiveTime::parse_from_str(&section.ends_at_local, "%H:%M").ok())
+                    .is_none_or(|(start, end)| start >= end) { continue; }
+            let professor_record_id = professors.iter().find(|professor| professor.course_id == course.id
+                && professor.source.kind == "official_course_catalog"
+                && professor.source.section_numbers.contains(&section.line_number)
+                && professor.name.trim().eq_ignore_ascii_case(section.instructor.trim())
+                && professor.source.campus_id == section.campus_id.trim().to_ascii_lowercase()).map(|professor| professor.id.clone());
+            results.push(SemesterCatalogSection { course_id: course.id.clone(), course_code: course.code.clone(), source_label: catalog.source_label.clone(), source_url: catalog.source_url.clone(), term_label: term_label.into(), section: section.clone(), professor_record_id });
+        }
+    }
+    Ok(results)
+}
+
+#[tauri::command]
+fn get_semester_catalog_sections(state: tauri::State<AppState>, term_id: String) -> Result<Vec<SemesterCatalogSection>> {
+    state.require_unlocked()?;
+    semester_catalog_sections_in(&state.db.lock().unwrap(), &term_id)
+}
+
 /// Project a bundled descriptor down to what the setup screen reads.
 ///
 /// The descriptor is the richer of the two on purpose: it carries the calendar
@@ -3984,6 +4515,16 @@ fn require_onboarded(conn: &Connection) -> Result<()> {
     }
 }
 
+fn require_onboarding_in_progress(conn: &Connection) -> Result<()> {
+    if profile::onboarding_state(conn)?.required {
+        Ok(())
+    } else {
+        Err(AppError::Invalid(
+            "Weekly Rhythm AI setup is only available during onboarding".into(),
+        ))
+    }
+}
+
 #[tauri::command]
 fn get_local_workspace(state: tauri::State<AppState>) -> Result<profile::WorkspaceSnapshot> {
     state.require_unlocked()?;
@@ -4344,6 +4885,66 @@ fn set_interface_preferences(state: tauri::State<AppState>, preferences: interfa
 }
 
 #[tauri::command]
+fn get_delight_preferences(state:tauri::State<AppState>)->Result<delight_preferences::DelightPreferences>{state.require_unlocked()?;delight_preferences::load(&state.db.lock().unwrap())}
+
+#[tauri::command]
+fn set_delight_preferences(state:tauri::State<AppState>,preferences:delight_preferences::DelightPreferences)->Result<delight_preferences::DelightPreferences>{state.require_unlocked()?;delight_preferences::save(&state.db.lock().unwrap(),&preferences)?;Ok(preferences)}
+
+#[tauri::command]
+fn get_semester_scenarios(state:tauri::State<AppState>)->Result<Vec<semester_scenarios::SemesterScenario>>{state.require_unlocked()?;semester_scenarios::load(&state.db.lock().unwrap())}
+
+#[tauri::command]
+fn upsert_semester_scenario(state:tauri::State<AppState>,scenario:semester_scenarios::SemesterScenario)->Result<Vec<semester_scenarios::SemesterScenario>>{
+    state.require_unlocked()?;
+    let conn = state.db.lock().unwrap();
+    let catalog_professors = if scenario.sections.iter().any(|section| section.professor_record_id.is_some()) {
+        professor_catalog_in(&conn)?.into_iter().filter(|record| record.source.kind == "official_course_catalog").map(|record| (record.id, record.course_id)).collect::<std::collections::HashMap<_, _>>()
+    } else { std::collections::HashMap::new() };
+    let catalog_sections = if scenario.sections.iter().any(|section| section.catalog_section_line_number.is_some()) {
+        semester_catalog_sections_in(&conn, &scenario.term_id)?.into_iter().filter(|item| !item.section.line_number.is_empty())
+            .map(|item| (format!("{}|{}", item.course_id, item.section.line_number), item.course_id))
+            .collect::<std::collections::HashMap<_, _>>()
+    } else { std::collections::HashMap::new() };
+    semester_scenarios::upsert(&conn, scenario, &catalog_professors, &catalog_sections)
+}
+
+#[tauri::command]
+fn delete_semester_scenario(state:tauri::State<AppState>,id:String,expected_version:u32)->Result<Vec<semester_scenarios::SemesterScenario>>{state.require_unlocked()?;semester_scenarios::delete(&state.db.lock().unwrap(),&id,expected_version)}
+
+#[tauri::command]
+fn get_planner_profile(state:tauri::State<AppState>)->Result<semester_analysis::PlannerProfile>{state.require_unlocked()?;semester_analysis::profile(&state.db.lock().unwrap())}
+
+#[tauri::command]
+fn save_planner_profile(state:tauri::State<AppState>,profile:semester_analysis::PlannerProfile)->Result<semester_analysis::PlannerProfile>{state.require_unlocked()?;semester_analysis::save_profile(&state.db.lock().unwrap(),profile)}
+
+#[tauri::command]
+fn get_semester_roadmaps(state:tauri::State<AppState>)->Result<Vec<semester_analysis::RoadmapEvidence>>{state.require_unlocked()?;semester_analysis::roadmaps(&state.db.lock().unwrap())}
+
+#[tauri::command]
+async fn discover_asu_roadmaps(state:tauri::State<'_,AppState>,program:String,catalog_year:String)->Result<Vec<semester_analysis::RoadmapDiscoveryMatch>>{
+    state.require_unlocked()?;
+    tauri::async_runtime::spawn_blocking(move||semester_analysis::discover_asu_roadmaps(&program,&catalog_year)).await.map_err(|_|AppError::Background("ASU Degree Search stopped unexpectedly".into()))?
+}
+
+#[tauri::command]
+async fn preview_asu_roadmap(state:tauri::State<'_,AppState>,url:String,program:String,catalog_year:String)->Result<semester_analysis::RoadmapPreview>{
+    state.require_unlocked()?;
+    tauri::async_runtime::spawn_blocking(move||semester_analysis::preview_asu_url(&url,&program,&catalog_year)).await.map_err(|_|AppError::Background("ASU roadmap preview stopped unexpectedly".into()))?
+}
+
+#[tauri::command]
+fn preview_roadmap_file(state:tauri::State<AppState>,file_name:String,bytes:Vec<u8>,program:String,catalog_year:String,institution_id:String)->Result<semester_analysis::RoadmapPreview>{state.require_unlocked()?;semester_analysis::preview_file(&bytes,&file_name,&program,&catalog_year,&institution_id,&state.ocr)}
+
+#[tauri::command]
+fn save_semester_roadmap(state:tauri::State<AppState>,preview:semester_analysis::RoadmapPreview)->Result<Vec<semester_analysis::RoadmapEvidence>>{state.require_unlocked()?;semester_analysis::save_roadmap(&state.db.lock().unwrap(),preview)}
+
+#[tauri::command]
+fn get_semester_analysis_reports(state:tauri::State<AppState>)->Result<Vec<semester_analysis::AnalysisReport>>{state.require_unlocked()?;semester_analysis::reports(&state.db.lock().unwrap())}
+
+#[tauri::command]
+fn save_semester_analysis_report(state:tauri::State<AppState>,report:semester_analysis::AnalysisReport)->Result<Vec<semester_analysis::AnalysisReport>>{state.require_unlocked()?;semester_analysis::save_report(&state.db.lock().unwrap(),report)}
+
+#[tauri::command]
 fn get_task_details(state: tauri::State<AppState>, task_id: String) -> Result<task_details::TaskDetails> {
     state.require_unlocked()?;
     task_details::load(&state.db.lock().unwrap(), &task_id)
@@ -4612,12 +5213,14 @@ fn reset_local_database(state: &AppState) -> Result<()> {
     for table in [
         "study_reviews",
         "study_artifacts",
+        "study_material_metadata",
         "study_materials",
         "document_segments",
         "grade_items",
         "grade_categories",
         "course_grading_scales",
         "reminder_deliveries",
+        "funding_alert_deliveries",
         "provenance_links",
         "source_conflicts",
         "import_candidates",
@@ -6587,13 +7190,14 @@ fn toggle_task(state: tauri::State<AppState>, id: String) -> Result<Dashboard> {
         .optional()?
         .ok_or_else(|| AppError::Invalid("task not found".into()))?;
     db.execute(
-        "UPDATE tasks SET completed=?2,version=version+1 WHERE id=?1",
-        params![id, 1 - completed],
+        "UPDATE tasks SET completed=?2,completed_at=?3,version=version+1 WHERE id=?1",
+        params![id, 1 - completed, if completed == 0 { Some(Utc::now().to_rfc3339()) } else { None }],
     )?;
     db.execute(
         "UPDATE plan_blocks SET completed=?2 WHERE task_id=?1",
         params![id, 1 - completed],
     )?;
+    invalidate_generated_plan_undo(&db)?;
     mutation(&db, "task", &id, "completion_changed", "{}")?;
     dashboard(&db, &state.ocr)
 }
@@ -6719,6 +7323,7 @@ fn start_plan_block(state: tauri::State<AppState>, block_id: String) -> Result<D
             "only an unfinished flexible block can be started".into(),
         ));
     }
+    invalidate_generated_plan_undo(&db)?;
     mutation(&db, "plan_block", &block_id, "started", "{}")?;
     dashboard(&db, &state.ocr)
 }
@@ -7254,8 +7859,10 @@ fn due_canvas_calendar_reconciliations(conn:&Connection,now:DateTime<Utc>)->Resu
 }
 
 fn due_scholarship_refreshes(conn:&Connection,now:DateTime<Utc>)->Result<Vec<String>>{
-    let cutoff=(now-Duration::days(7)).to_rfc3339();let mut statement=conn.prepare("SELECT id FROM scholarship_sources WHERE enabled=1 AND weekly_refresh=1 AND (last_fetched_at IS NULL OR datetime(last_fetched_at)<=datetime(?1)) ORDER BY COALESCE(datetime(last_fetched_at),datetime('1970-01-01')),id LIMIT 2")?;
-    let rows=statement.query_map(params![cutoff],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;Ok(rows)
+    if funding_catalog::configured(){conn.execute("INSERT OR IGNORE INTO scholarship_sources(id,enabled,weekly_refresh,parser_version) VALUES('coqui-public-catalog',1,1,'catalog-batch-1')",[])?;}
+    let weekly_cutoff=(now-Duration::days(7)).to_rfc3339();let daily_cutoff=(now-Duration::hours(24)).to_rfc3339();
+    let mut statement=conn.prepare("SELECT id FROM scholarship_sources WHERE enabled=1 AND weekly_refresh=1 AND ((id='coqui-public-catalog' AND (last_fetched_at IS NULL OR datetime(last_fetched_at)<=datetime(?2)) AND NOT EXISTS(SELECT 1 FROM scholarship_crawler_runs r WHERE r.source_id=scholarship_sources.id AND datetime(r.started_at)>datetime(?2))) OR (id!='coqui-public-catalog' AND (last_fetched_at IS NULL OR datetime(last_fetched_at)<=datetime(?1)))) ORDER BY COALESCE(datetime(last_fetched_at),datetime('1970-01-01')),id LIMIT 2")?;
+    let rows=statement.query_map(params![weekly_cutoff,daily_cutoff],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;Ok(rows)
 }
 
 fn start_canvas_reconciliation_worker(state: AppState) {
@@ -7487,7 +8094,7 @@ fn resolve_ai_provider(conn: &Connection, capability: managed_ai::AiCapability) 
 }
 
 fn all_ai_capabilities() -> Vec<String> {
-    ["brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","source_qa","study_guide","flashcards","practice_questions","practice_test","scholarship_writing"]
+    ["weekly_rhythm","brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","schedule_analysis","source_qa","study_guide","flashcards","practice_questions","practice_test","study_rerank","funding_profile","scholarship_writing"]
         .into_iter().map(str::to_owned).collect()
 }
 
@@ -7594,12 +8201,16 @@ fn ai_usage_summaries(db: &Connection) -> Result<Vec<AiUsageSummary>> {
 
 fn study_workspace_in(conn: &Connection) -> Result<StudyWorkspace> {
     let materials = {
-        let mut query = conn.prepare("SELECT d.id,d.file_name,d.mime,(SELECT COUNT(*) FROM document_segments s WHERE s.document_id=d.id) FROM documents d WHERE d.vault_path!='' OR d.content_shredded=1 ORDER BY datetime(d.imported_at) DESC,d.id")?;
+        let mut query = conn.prepare("SELECT d.id,d.file_name,d.mime,(SELECT COUNT(*) FROM document_segments s WHERE s.document_id=d.id),d.imported_at,d.extraction_status,COALESCE(m.title,''),COALESCE(m.material_type,''),COALESCE(m.topics,'[]'),m.related_target_id,COALESCE(m.source,'import'),COALESCE(m.favorite,0),COALESCE(m.teacher_provided,0),m.last_used_at FROM documents d LEFT JOIN study_material_metadata m ON m.document_id=d.id WHERE d.vault_path!='' OR d.content_shredded=1 ORDER BY datetime(d.imported_at) DESC,d.id")?;
         let values = query.query_map([], |row| {
             let id: String = row.get(0)?;
             let mut courses = conn.prepare("SELECT course_id FROM study_materials WHERE document_id=?1 ORDER BY course_id")?;
             let course_ids = courses.query_map(params![id], |course| course.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(StudyMaterialSummary { id, file_name: row.get(1)?, mime: row.get(2)?, course_ids, segment_count: row.get(3)? })
+            let file_name:String=row.get(1)?; let mime:String=row.get(2)?; let lower=file_name.to_ascii_lowercase();
+            let stored_title:String=row.get(6)?;let stored_type:String=row.get(7)?;
+            let material_type=if !stored_type.is_empty(){stored_type}else if lower.contains("syllabus"){"syllabus".into()}else if lower.contains("slide")||mime.contains("presentation"){"slides".into()}else if lower.contains("quiz"){"previous_quiz".into()}else if lower.contains("exam")||lower.contains("test"){"previous_exam".into()}else if lower.contains("textbook")||lower.contains("chapter"){"textbook".into()}else if lower.contains("note"){"notes".into()}else if lower.contains("worksheet"){"worksheet".into()}else{"other".into()};
+            let topics_raw:String=row.get(8)?;
+            Ok(StudyMaterialSummary { id, title:if stored_title.is_empty(){file_name.clone()}else{stored_title}, file_name, mime, material_type, course_ids, topics:serde_json::from_str(&topics_raw).unwrap_or_default(),related_target_id:row.get(9)?,segment_count: row.get(3)?,date_added:row.get(4)?,extraction_status:row.get(5)?,source:row.get(10)?,favorite:row.get::<_,i64>(11)?!=0,teacher_provided:row.get::<_,i64>(12)?!=0,last_used_at:row.get(13)? })
         })?.collect::<std::result::Result<Vec<_>, _>>()?;
         values
     };
@@ -7669,6 +8280,23 @@ fn set_study_material_courses(state:tauri::State<AppState>,document_id:String,co
     tx.commit()?;study_workspace_in(&db)
 }
 
+fn valid_material_type(value:&str)->bool{matches!(value,"textbook"|"slides"|"notes"|"syllabus"|"assignment_instructions"|"lab_instructions"|"study_guide"|"practice_exam"|"previous_quiz"|"previous_exam"|"worksheet"|"reference_sheet"|"article"|"video"|"website"|"dataset"|"other")}
+
+#[tauri::command]
+fn update_study_material(state:tauri::State<AppState>,input:StudyMaterialInput)->Result<StudyWorkspace>{
+    state.require_unlocked()?;Uuid::parse_str(&input.document_id).map_err(|_|AppError::Invalid("document identifier is invalid".into()))?;
+    if input.title.trim().is_empty()||input.title.chars().count()>200||!valid_material_type(&input.material_type)||input.course_ids.len()>20||input.topics.len()>30||input.source.trim().is_empty()||input.source.chars().count()>120||input.topics.iter().any(|topic|topic.trim().is_empty()||topic.chars().count()>80){return Err(AppError::Invalid("study material metadata is invalid".into()));}
+    let mut course_ids=input.course_ids;course_ids.sort();course_ids.dedup();let mut topics=input.topics.into_iter().map(|topic|topic.trim().to_string()).collect::<Vec<_>>();topics.sort();topics.dedup();
+    let mut db=state.db.lock().unwrap();let tx=db.transaction()?;
+    if tx.query_row("SELECT COUNT(*) FROM documents WHERE id=?1",params![input.document_id],|row|row.get::<_,i64>(0))?!=1{return Err(AppError::Invalid("document not found".into()));}
+    for course_id in &course_ids{if tx.query_row("SELECT COUNT(*) FROM courses WHERE id=?1",params![course_id],|row|row.get::<_,i64>(0))?!=1{return Err(AppError::Invalid("selected course was not found".into()));}}
+    if let Some(target_id)=input.related_target_id.as_deref(){Uuid::parse_str(target_id).map_err(|_|AppError::Invalid("related work identifier is invalid".into()))?;if tx.query_row("SELECT COUNT(*) FROM tasks WHERE id=?1",params![target_id],|row|row.get::<_,i64>(0))?!=1{return Err(AppError::Invalid("related work was not found".into()));}}
+    tx.execute("DELETE FROM study_materials WHERE document_id=?1",params![input.document_id])?;
+    let now=Utc::now().to_rfc3339();for course_id in course_ids{tx.execute("INSERT INTO study_materials(document_id,course_id,added_at) VALUES(?1,?2,?3)",params![input.document_id,course_id,now])?;}
+    tx.execute("INSERT INTO study_material_metadata(document_id,title,material_type,topics,related_target_id,source,favorite,teacher_provided,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(document_id) DO UPDATE SET title=excluded.title,material_type=excluded.material_type,topics=excluded.topics,related_target_id=excluded.related_target_id,source=excluded.source,favorite=excluded.favorite,teacher_provided=excluded.teacher_provided,updated_at=excluded.updated_at",params![input.document_id,input.title.trim(),input.material_type,serde_json::to_string(&topics).map_err(|error|AppError::Background(error.to_string()))?,input.related_target_id,input.source.trim(),input.favorite,input.teacher_provided,now])?;
+    tx.commit()?;study_workspace_in(&db)
+}
+
 #[tauri::command]
 fn save_grade_category(state:tauri::State<AppState>,input:GradeCategoryInput)->Result<StudyWorkspace>{state.require_unlocked()?;if input.name.trim().is_empty()||input.name.len()>120||!(0.0..=100.0).contains(&input.weight){return Err(AppError::Invalid("grade category is invalid".into()));}let id=input.id.unwrap_or_else(||Uuid::new_v4().to_string());let db=state.db.lock().unwrap();db.execute("INSERT INTO grade_categories(id,course_id,name,weight) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET name=excluded.name,weight=excluded.weight",params![id,input.course_id,input.name.trim(),input.weight])?;study_workspace_in(&db)}
 
@@ -7735,6 +8363,9 @@ async fn request_managed_ai(
     input: ManagedAiInput,
 ) -> Result<ManagedAiResult> {
     state.require_unlocked()?;
+    if matches!(input.capability, managed_ai::AiCapability::StudyRerank | managed_ai::AiCapability::FundingProfile) {
+        return Err(AppError::Invalid("this AI capability requires its dedicated review flow".into()));
+    }
     if !input.consent {
         return Err(AppError::Invalid(
             "explicit consent is required before sending an excerpt".into(),
@@ -7908,6 +8539,71 @@ async fn request_ai_capability(
 }
 
 #[tauri::command]
+async fn request_weekly_rhythm_proposal(state:tauri::State<'_,AppState>,interview:String,consent:bool)->Result<ai_providers::RhythmProposal>{
+    state.require_unlocked()?;
+    let state=state.inner().clone();tauri::async_runtime::spawn_blocking(move||{
+        state.require_unlocked()?;
+        let (provider,key,model)={let db=state.db.lock().unwrap();require_onboarding_in_progress(&db)?;if !consent{return Err(AppError::Invalid("explicit consent is required before sending the weekly rhythm interview".into()));}resolve_ai_provider(&db,managed_ai::AiCapability::WeeklyRhythm)?};
+        let started=Instant::now();let result=ai_providers::request_weekly_rhythm(provider,&key,&model,&interview);
+        let db=state.db.lock().unwrap();match result{Ok((proposal,usage))=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::WeeklyRhythm,Some(&model),started.elapsed().as_millis() as i64,usage.input_tokens,usage.output_tokens,"success",None)?;Ok(proposal)},Err(error)=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::WeeklyRhythm,Some(&model),started.elapsed().as_millis() as i64,0,0,"failed",Some(ai_error_category(&error)))?;Err(AppError::ManagedAi(error))}}
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct SemesterScheduleAiInput { facts_json:String, roadmap_id:Option<String>, include_ratings:bool, rating_evidence:String, consent:bool, expected_provider:String }
+
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+struct SemesterScheduleAiResponse { findings:Vec<semester_analysis::AnalysisFinding>, provider:String, model:String }
+
+#[tauri::command]
+async fn request_semester_schedule_analysis(state:tauri::State<'_,AppState>,input:SemesterScheduleAiInput)->Result<SemesterScheduleAiResponse>{
+    state.require_unlocked()?;
+    if !input.consent{return Err(AppError::Invalid("Review the AI data scope and consent before analyzing".into()));}
+    if input.facts_json.len()>30_000 || serde_json::from_str::<serde_json::Value>(&input.facts_json).is_err() || input.rating_evidence.len()>1000 || input.include_ratings && input.rating_evidence.trim().is_empty(){return Err(AppError::Invalid("Schedule analysis input is invalid".into()));}
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        state.require_unlocked()?;
+        let (provider,key,model,goals_json,roadmap)={
+            let db=state.db.lock().unwrap();require_onboarded(&db)?;
+            let resolved=resolve_ai_provider(&db,managed_ai::AiCapability::ScheduleAnalysis)?;
+            if resolved.0.as_str()!=input.expected_provider{return Err(AppError::Invalid("The active AI provider changed; review its disclosure and consent again".into()));}
+            let profile=semester_analysis::profile(&db)?;
+            let goals_json=serde_json::to_string(&profile).map_err(|_|AppError::Invalid("Planner goals could not be read".into()))?;
+            let roadmap=if let Some(id)=&input.roadmap_id{Some(semester_analysis::roadmaps(&db)?.into_iter().find(|item|&item.id==id).ok_or_else(||AppError::Invalid("Selected roadmap is no longer available".into()))?)}else{None};
+            if roadmap.as_ref().is_some_and(|item| item.program.trim().to_ascii_lowercase()!=profile.program.trim().to_ascii_lowercase() || item.catalog_year!=profile.catalog_year){return Err(AppError::Invalid("Selected roadmap does not match your saved program and catalog year".into()));}
+            (resolved.0,resolved.1,resolved.2,goals_json,roadmap)
+        };
+        let started=Instant::now();
+        let result=ai_providers::request_schedule_analysis(provider,&key,&model,&input.facts_json,&goals_json,roadmap.as_ref().map(|item|item.id.as_str()),roadmap.as_ref().map(|item|item.approved_excerpt.as_str()),roadmap.as_ref().map(|item|item.format.as_str()),input.include_ratings.then_some(input.rating_evidence.as_str()));
+        let db=state.db.lock().unwrap();
+        match result{
+            Ok((findings,usage))=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::ScheduleAnalysis,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,usage.input_tokens,usage.output_tokens,"success",None)?;Ok(SemesterScheduleAiResponse{findings,provider:provider.as_str().into(),model})},
+            Err(error)=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::ScheduleAnalysis,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,0,0,"failed",Some(ai_error_category(&error)))?;Err(AppError::ManagedAi(error))}
+        }
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+async fn request_funding_profile_proposal(state:tauri::State<'_,AppState>,interview:String,consent:bool,expected_provider:String)->Result<ai_providers::FundingProfileProposal>{
+    state.require_unlocked()?;
+    if !consent{return Err(AppError::Invalid("explicit consent is required before sending the funding interview".into()));}
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        state.require_unlocked()?;
+        let (provider,key,model)={let db=state.db.lock().unwrap();if profile::onboarding_state(&db)?.required{return Err(AppError::Invalid("finish local onboarding before refining a funding profile".into()));}let resolved=resolve_ai_provider(&db,managed_ai::AiCapability::FundingProfile)?;if resolved.0.as_str()!=expected_provider{return Err(AppError::Invalid("the active AI provider changed; review its disclosure and consent again".into()));}resolved};
+        let started=Instant::now();
+        let response=ai_providers::request_funding_profile(provider,&key,&model,&interview);
+        let db=state.db.lock().unwrap();
+        match response{
+            Ok((proposal,usage))=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::FundingProfile,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,usage.input_tokens,usage.output_tokens,"proposal_created",None)?;Ok(proposal)},
+            Err(error)=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::FundingProfile,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,0,0,"failed",Some(ai_error_category(&error)))?;Err(AppError::ManagedAi(error))}
+        }
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
 async fn generate_grounded_study_artifact(
     state: tauri::State<'_, AppState>,
     input: GroundedStudyInput,
@@ -7921,7 +8617,7 @@ async fn generate_grounded_study_artifact(
     let state=state.inner().clone();
     tauri::async_runtime::spawn_blocking(move||{
         state.require_unlocked()?;
-        let (provider,api_key,model,sources,course_id)={
+        let (provider,api_key,model,sources,course_id,document_ids)={
             let db=state.db.lock().unwrap();let mut course_ids=input.course_ids.clone();course_ids.sort();course_ids.dedup();let mut document_ids=input.document_ids.clone();document_ids.sort();document_ids.dedup();
             for id in course_ids.iter().chain(document_ids.iter()){Uuid::parse_str(id).map_err(|_|AppError::Invalid("selected study identifier is invalid".into()))?;}
             let mut sources=Vec::new();
@@ -7934,7 +8630,7 @@ async fn generate_grounded_study_artifact(
                 sources.extend(segments);
             }
             if sources.is_empty(){return Err(AppError::Invalid("the selected materials contain no locally extracted text to ground an answer".into()));}
-            let (provider,key,model)=resolve_ai_provider(&db,input.capability)?;(provider,key,model,sources,course_ids[0].clone())
+            let (provider,key,model)=resolve_ai_provider(&db,input.capability)?;(provider,key,model,sources,course_ids[0].clone(),document_ids)
         };
         let started=Instant::now();
         let response=match ai_providers::request_grounded(provider,&api_key,&model,input.capability,input.prompt.trim(),&sources){Ok(value)=>value,Err(error)=>{let db=state.db.lock().unwrap();record_ai_invocation(&db,provider.as_str(),input.capability,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,0,0,"failed",Some(ai_error_category(&error)))?;persist_ai_health(&db,provider,false)?;return Err(AppError::ManagedAi(error));}};
@@ -7942,8 +8638,41 @@ async fn generate_grounded_study_artifact(
         let mut db=state.db.lock().unwrap();let tx=db.transaction()?;
         tx.execute("INSERT INTO study_artifacts(id,course_id,kind,title,content,citations,provider,model,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",params![artifact_id,course_id,input.capability.as_str(),title,response.content,serde_json::to_string(&response.citations).map_err(|error|AppError::Background(error.to_string()))?,provider.as_str(),response.model,now.to_rfc3339()])?;
         tx.execute("INSERT INTO study_reviews(id,artifact_id,next_review_at) VALUES(?1,?2,?3)",params![Uuid::new_v4().to_string(),artifact_id,(now+chrono::Duration::days(1)).to_rfc3339()])?;
+        for document_id in document_ids {tx.execute("INSERT INTO study_material_metadata(document_id,updated_at,last_used_at) VALUES(?1,?2,?2) ON CONFLICT(document_id) DO UPDATE SET last_used_at=excluded.last_used_at,updated_at=excluded.updated_at",params![document_id,now.to_rfc3339()])?;}
         record_ai_invocation(&tx,provider.as_str(),input.capability,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,response.usage.input_tokens,response.usage.output_tokens,"artifact_created",None)?;
         tx.commit()?;let workspace=study_workspace_in(&db)?;Ok(GroundedStudyResult{workspace,artifact_id,provider:provider.as_str().into(),model})
+    }).await.map_err(|error|AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+async fn rerank_study_materials(state:tauri::State<'_,AppState>,input:StudyRerankInput)->Result<StudyRerankResult>{
+    state.require_unlocked()?;
+    if !input.consent{return Err(AppError::Invalid("explicit consent is required before study metadata leaves this device".into()));}
+    if !(2..=5).contains(&input.material_ids.len()){return Err(AppError::Invalid("select two to five study materials for AI refinement".into()));}
+    for id in std::iter::once(&input.course_id).chain(std::iter::once(&input.target_id)).chain(input.material_ids.iter()){Uuid::parse_str(id).map_err(|_|AppError::Invalid("study identifier is invalid".into()))?;}
+    if input.material_ids.iter().collect::<std::collections::HashSet<_>>().len()!=input.material_ids.len(){return Err(AppError::Invalid("study materials must be unique".into()));}
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        state.require_unlocked()?;
+        let (provider,key,model,target_title,candidates)={
+            let db=state.db.lock().unwrap();
+            let target_title:String=db.query_row("SELECT title FROM tasks WHERE id=?1 AND course_id=?2",params![input.target_id,input.course_id],|row|row.get(0)).optional()?.ok_or_else(||AppError::Invalid("study target is not in the selected course".into()))?;
+            let mut candidates=Vec::new();
+            for id in &input.material_ids{
+                let metadata:Option<(String,String,String)>=db.query_row("SELECT COALESCE(NULLIF(m.title,''),d.file_name),COALESCE(NULLIF(m.material_type,''),'other'),COALESCE(m.topics,'[]') FROM documents d JOIN study_materials s ON s.document_id=d.id LEFT JOIN study_material_metadata m ON m.document_id=d.id WHERE d.id=?1 AND s.course_id=?2",params![id,input.course_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
+                let (title,material_type,topics)=metadata.ok_or_else(||AppError::Invalid("every study material must belong to the selected course".into()))?;
+                candidates.push(ai_providers::StudyRerankCandidate{id:id.clone(),title,material_type,topics:serde_json::from_str(&topics).unwrap_or_default()});
+            }
+            let (provider,key,model)=resolve_ai_provider(&db,managed_ai::AiCapability::StudyRerank)?;
+            (provider,key,model,target_title,candidates)
+        };
+        let started=Instant::now();
+        let result=ai_providers::request_study_rerank(provider,&key,&model,&target_title,&candidates);
+        let db=state.db.lock().unwrap();
+        match result{
+            Ok((ranked_ids,usage))=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::StudyRerank,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,usage.input_tokens,usage.output_tokens,"success",None)?;Ok(StudyRerankResult{ranked_ids,provider:provider.as_str().into(),model})},
+            Err(error)=>{record_ai_invocation(&db,provider.as_str(),managed_ai::AiCapability::StudyRerank,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,0,0,"failed",Some(ai_error_category(&error)))?;Err(AppError::ManagedAi(error))}
+        }
     }).await.map_err(|error|AppError::Background(error.to_string()))?
 }
 
@@ -8735,13 +9464,25 @@ fn document_evidence_in(db: &Connection, document_id: &str) -> Result<Vec<Candid
     let candidates = statement
         .query_map(params![document_id], |row| {
             let warnings: String = row.get(14)?;
-            Ok(Candidate {
+            let mut candidate = Candidate {
                 id: row.get(0)?,
                 document_id: row.get(1)?, kind: row.get(2)?, title: row.get(3)?, course: row.get(4)?, due_at: row.get(5)?, starts_at: row.get(6)?, ends_at: row.get(7)?, duration_minutes: row.get(8)?, evidence: row.get(9)?, source_locator: row.get(10)?, source_type: row.get(11)?, source_url: row.get(12)?, confidence: row.get(13)?,
                 warnings: serde_json::from_str(&warnings).unwrap_or_default(),
                 status: row.get(15)?, weekdays: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(), starts_at_local: row.get(17)?, ends_at_local: row.get(18)?, timezone: row.get(19)?,
                 section_number: row.get(20)?, location: row.get(21)?, modality: row.get(22)?, student_edited_fields: serde_json::from_str(&row.get::<_, String>(23)?).unwrap_or_default(), term_id:row.get(24)?, suggested_action:row.get(25)?, has_linked_task:row.get::<_,i64>(26)? != 0, source_connection_id:row.get(27)?,
-            })
+                task_kind: None, suggested_priority: None, priority_reason_codes: Vec::new(),
+            };
+            if candidate.kind == "task" {
+                let classification = academic_intelligence::classify(
+                    &candidate.title,
+                    candidate.due_at.as_deref().and_then(parse_utc),
+                    Utc::now(),
+                );
+                candidate.task_kind = Some(classification.task_kind);
+                candidate.suggested_priority = Some(classification.priority);
+                candidate.priority_reason_codes = classification.reason_codes;
+            }
+            Ok(candidate)
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(candidates)
@@ -8985,7 +9726,21 @@ fn apply_candidate(
     };
     let (entity_id, operation) = match candidate.kind.as_str() {
         "task" => {
-            let minutes = candidate.duration_minutes.unwrap_or(45);
+            let parsed_due = candidate.due_at.as_deref().and_then(parse_utc).map(|value| value.with_timezone(&Utc));
+            let classification = academic_intelligence::classify(&candidate.title, parsed_due, Utc::now());
+            let minutes = candidate.duration_minutes.unwrap_or(classification.suggested_minutes);
+            let reason_codes = serde_json::to_string(&classification.reason_codes)
+                .unwrap_or_else(|_| "[]".into());
+            let imported_course = (!candidate.course.trim().is_empty()).then_some(candidate.course.trim());
+            let course_id = imported_course.and_then(|value| {
+                let needle = value.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+                let mut query = conn.prepare("SELECT id,code,title FROM courses ORDER BY id").ok()?;
+                let matches = query.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).ok()?
+                    .filter_map(std::result::Result::ok)
+                    .filter(|(_,code,title)| [code,title].iter().any(|candidate| candidate.chars().filter(|c|c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()==needle))
+                    .map(|(id,_,_)|id).collect::<Vec<_>>();
+                (matches.len()==1).then(||matches[0].clone())
+            });
             if candidate.title.trim().is_empty() || !(5..=480).contains(&minutes) {
                 return Err(AppError::Invalid(
                     "candidate contains an invalid task".into(),
@@ -8998,14 +9753,19 @@ fn apply_candidate(
             if let Some(id) = existing {
                 let changed = conn.execute(
                     "UPDATE tasks SET title=?2,minutes=?3,due_at=?4,source_uid=?5,
-                     source_candidate_id=?6,version=version+1 WHERE id=?1",
+                     source_candidate_id=?6,priority=?7,task_kind=?8,priority_source='rules',
+                     priority_reason_codes=?9,effort_source='import',course_id=?10,version=version+1 WHERE id=?1",
                     params![
                         id,
                         candidate.title.trim(),
                         minutes,
                         candidate.due_at,
                         source_uid,
-                        candidate.id
+                        candidate.id,
+                        classification.priority,
+                        classification.task_kind,
+                        reason_codes,
+                        course_id,
                     ],
                 )?;
                 if changed == 0 {
@@ -9015,9 +9775,9 @@ fn apply_candidate(
             } else {
                 let id = Uuid::new_v4().to_string();
                 conn.execute(
-                    "INSERT INTO tasks(id,title,minutes,due_at,created_at,source_uid,source_candidate_id)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                    params![id, candidate.title.trim(), minutes, candidate.due_at, Utc::now().to_rfc3339(), source_uid, candidate.id],
+                    "INSERT INTO tasks(id,title,minutes,due_at,priority,task_kind,priority_source,priority_reason_codes,effort_source,course_id,created_at,source_uid,source_candidate_id)
+                     VALUES(?1,?2,?3,?4,?5,?6,'rules',?7,'import',?8,?9,?10,?11)",
+                    params![id, candidate.title.trim(), minutes, candidate.due_at, classification.priority, classification.task_kind, reason_codes, course_id, Utc::now().to_rfc3339(), source_uid, candidate.id],
                 )?;
                 (id, "source_created")
             }
@@ -9290,19 +10050,29 @@ fn apply_linked_canvas_task(conn: &Connection, candidate: &PendingCandidate) -> 
         (Some(start), Some(end)) if end > start => (end - start).num_minutes().clamp(5, 480),
         _ => 45,
     };
+    let classification = academic_intelligence::classify(
+        &candidate.title,
+        parse_utc(&due_at),
+        Utc::now(),
+    );
+    let reason_codes = serde_json::to_string(&classification.reason_codes)
+        .unwrap_or_else(|_| "[]".into());
     let existing = existing_entity_for_source(conn, "tasks", &source_uid)?;
     let (task_id, operation) = if let Some(id) = existing {
         conn.execute(
-            "UPDATE tasks SET title=?2,minutes=?3,due_at=?4,source_candidate_id=?5,version=version+1 WHERE id=?1",
-            params![id, candidate.title.trim(), minutes, due_at, candidate.id],
+            "UPDATE tasks SET title=?2,minutes=?3,due_at=?4,source_candidate_id=?5,
+             priority=?6,task_kind=?7,priority_source='rules',priority_reason_codes=?8,
+             effort_source='import',version=version+1 WHERE id=?1",
+            params![id, candidate.title.trim(), minutes, due_at, candidate.id, classification.priority, classification.task_kind, reason_codes],
         )?;
         (id, "source_updated")
     } else {
         let id = Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO tasks(id,title,minutes,due_at,created_at,source_uid,source_candidate_id)
-             VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![id, candidate.title.trim(), minutes, due_at, Utc::now().to_rfc3339(), source_uid, candidate.id],
+            "INSERT INTO tasks(id,title,minutes,due_at,priority,task_kind,priority_source,
+             priority_reason_codes,effort_source,created_at,source_uid,source_candidate_id)
+             VALUES(?1,?2,?3,?4,?5,?6,'rules',?7,'import',?8,?9,?10)",
+            params![id, candidate.title.trim(), minutes, due_at, classification.priority, classification.task_kind, reason_codes, Utc::now().to_rfc3339(), source_uid, candidate.id],
         )?;
         (id, "source_created")
     };
@@ -10104,10 +10874,14 @@ fn main() {
             set_plan_block_lock,
             move_plan_block,
             undo_calendar_change,
+            undo_generated_plan,
             get_onboarding_state,
             get_timezone_suggestion,
             search_institutions,
             search_course_suggestions,
+            get_professor_catalog,
+            lookup_professor_rating,
+            get_semester_catalog_sections,
             get_institution_setup_options,
             refresh_school_calendar,
             apply_calendar_diff,
@@ -10139,6 +10913,20 @@ fn main() {
             update_appearance,
             get_interface_preferences,
             set_interface_preferences,
+            get_delight_preferences,
+            set_delight_preferences,
+            get_semester_scenarios,
+            upsert_semester_scenario,
+            delete_semester_scenario,
+            get_planner_profile,
+            save_planner_profile,
+            get_semester_roadmaps,
+            discover_asu_roadmaps,
+            preview_asu_roadmap,
+            preview_roadmap_file,
+            save_semester_roadmap,
+            get_semester_analysis_reports,
+            save_semester_analysis_report,
             get_task_details,
             update_task_details,
             get_task_activity,
@@ -10197,9 +10985,14 @@ fn main() {
             get_ai_usage,
             request_managed_ai,
             request_ai_capability,
+            request_weekly_rhythm_proposal,
+            request_semester_schedule_analysis,
+            request_funding_profile_proposal,
             get_study_workspace,
             set_study_material_courses,
+            update_study_material,
             generate_grounded_study_artifact,
+            rerank_study_materials,
             update_study_artifact,
             review_study_artifact,
             save_grade_category,
@@ -10262,6 +11055,52 @@ mod tests {
     /// verification happens at the transport boundary, before apply_canonical_mutation is reached,
     /// and is covered by the sync_transport tests.
     const TEST_SIGNATURE: &str = "G0000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn professor_catalog_requires_exact_institution_course_and_name_evidence() {
+        let courses = vec![profile::CourseRecord { id: "course-1".into(), title: "Biology".into(), code: "BIO 101".into(), term_id: None, version: 1, record_origin: "student".into(), color: String::new() }];
+        let instructors = vec![profile::InstructorRecord { id: "instructor-1".into(), course_id: "course-1".into(), name: "Jane   Doe".into(), email: "jane@example.edu".into(), office_location: "Room 2".into(), office_hours: String::new(), version: 1 }];
+        let catalog = InstitutionCatalog { institution_id: "school-1".into(), term_id: "term-1".into(), source_label: "Official class search".into(), source_url: "https://example.edu/classes".into(), captured_at: Some("2026-08-19".into()), courses: vec![CatalogCourse { code: "BIO 101".into(), title: "Biology".into(), credits: None, sections: vec![CatalogSection { line_number: "111".into(), instructor: "Jane Doe".into(), ..Default::default() }, CatalogSection { line_number: "222".into(), instructor: "Jane Doe".into(), ..Default::default() }, CatalogSection { instructor: "Staff".into(), ..Default::default() }, CatalogSection { line_number: "333".into(), instructor: "Janet Doe".into(), ..Default::default() }, CatalogSection { line_number: "444".into(), instructor: "Alex Kim".into(), campus_id: "north".into(), ..Default::default() }, CatalogSection { line_number: "555".into(), instructor: "Alex Kim".into(), campus_id: "south".into(), ..Default::default() }] }] };
+        let records = professor_records_for("school-1", &courses, &instructors, Some(&catalog), "Fall term");
+        assert_eq!(records.len(), 4);
+        let jane = records.iter().find(|record| record.name == "Jane   Doe").unwrap();
+        assert!(jane.id.starts_with("catalog:"));
+        assert_eq!(jane.source.kind, "official_course_catalog");
+        assert!(jane.rating.is_none());
+        assert_eq!(jane.source.captured_at.as_deref(), Some("2026-08-19"));
+        assert_eq!(jane.source.section_numbers, ["111", "222"]);
+        assert_eq!(jane.office_location, "Room 2");
+        assert_eq!(records.iter().find(|record| record.name == "Janet Doe").unwrap().source.section_numbers, ["333"]);
+        let mut later_catalog = catalog.clone();
+        later_catalog.term_id = "term-2".into();
+        assert_ne!(jane.id, professor_records_for("school-1", &courses, &instructors, Some(&later_catalog), "Next term").iter().find(|record| record.name == "Jane   Doe").unwrap().id);
+        assert_eq!(records.iter().filter(|record| record.name == "Alex Kim").map(|record| record.source.campus_id.as_str()).collect::<std::collections::HashSet<_>>(), ["north", "south"].into());
+        assert_eq!(professor_records_for("school-2", &courses, &instructors, Some(&catalog), "")[0].source.kind, "local_course");
+        let other_course = vec![profile::CourseRecord { code: "CHE 101".into(), ..courses[0].clone() }];
+        assert_eq!(professor_records_for("school-1", &other_course, &instructors, Some(&catalog), "")[0].source.kind, "local_course");
+    }
+
+    #[test]
+    fn bundled_catalog_professor_can_be_attached_to_a_local_scenario() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("professor-scenario.db"), &random_key()).unwrap();
+        let institution = serde_json::json!({"id":"104151","name":"Arizona State University","country":"US","source":"directory","officialDomain":"asu.edu","catalogProviderStatus":"supported","custom":false});
+        conn.execute("INSERT INTO settings(key,value) VALUES('institution_selection',?1)", [institution.to_string()]).unwrap();
+        conn.execute("INSERT INTO academic_terms(id,name,starts_on,ends_on,created_at) VALUES('asu-fall-2026-c','Fall 2026','2026-08-01','2026-12-20','2026-01-01')", []).unwrap();
+        conn.execute("INSERT INTO courses(id,title,code,term_id,record_origin) VALUES('cse240','Introduction to Programming Languages','CSE 240','asu-fall-2026-c','user')", []).unwrap();
+        let records = professor_catalog_in(&conn).unwrap();
+        let professor = records.iter().find(|record| record.name == "Justin Selgrad" && record.course_id == "cse240").unwrap();
+        assert_eq!(professor.source.kind, "official_course_catalog");
+        let allowed = records.iter().filter(|record| record.source.kind == "official_course_catalog").map(|record| (record.id.clone(), record.course_id.clone())).collect::<std::collections::HashMap<_, _>>();
+        let offered = semester_catalog_sections_in(&conn, "asu-fall-2026-c").unwrap();
+        let listing = offered.iter().find(|item| item.course_id == "cse240" && item.section.line_number == "66923").unwrap();
+        assert_eq!(listing.professor_record_id.as_deref(), Some(professor.id.as_str()));
+        assert!(semester_catalog_sections_in(&conn, "other-term").unwrap().is_empty());
+        let scenario = semester_scenarios::SemesterScenario { id: Uuid::new_v4().to_string(), term_id: "asu-fall-2026-c".into(), name: "Candidate".into(), version: 0, sections: vec![semester_scenarios::SemesterScenarioSection { id: Uuid::new_v4().to_string(), course_id: "cse240".into(), imported_course_label: None, instructor_id: None, professor_record_id: Some(professor.id.clone()), catalog_section_line_number: Some("66923".into()), weekdays: vec![1,3], starts_at_local: "13:30".into(), ends_at_local: "14:45".into(), location: "Tempe".into(), modality: "in_person".into(), rotation_interval_weeks: 1, rotation_offset_weeks: 0, source_meeting_id: None }] };
+        let sections = std::collections::HashMap::from([("cse240|66923".into(), "cse240".into())]);
+        assert_eq!(semester_scenarios::upsert(&conn, scenario.clone(), &allowed, &sections).unwrap()[0].sections[0].professor_record_id.as_deref(), Some(professor.id.as_str()));
+        assert_eq!(semester_scenarios::load(&conn).unwrap()[0].sections[0].professor_record_id.as_deref(), Some(professor.id.as_str()));
+    }
 
     #[test]
     fn scholarship_matching_is_explicit_explainable_and_does_not_infer_traits() {
@@ -10492,6 +11331,7 @@ mod tests {
             "set_plan_block_lock",
             "move_plan_block",
             "undo_calendar_change",
+            "undo_generated_plan",
             "get_onboarding_state",
             "save_onboarding_draft",
             "complete_onboarding",
@@ -10499,6 +11339,21 @@ mod tests {
             "update_accent",
             "get_interface_preferences",
             "set_interface_preferences",
+            "get_delight_preferences",
+            "set_delight_preferences",
+            "get_semester_scenarios",
+            "upsert_semester_scenario",
+            "delete_semester_scenario",
+            "get_planner_profile",
+            "save_planner_profile",
+            "get_semester_roadmaps",
+            "discover_asu_roadmaps",
+            "preview_asu_roadmap",
+            "preview_roadmap_file",
+            "save_semester_roadmap",
+            "get_semester_analysis_reports",
+            "save_semester_analysis_report",
+            "request_semester_schedule_analysis",
             "get_task_details",
             "update_task_details",
             "get_task_activity",
@@ -10507,6 +11362,9 @@ mod tests {
             "preview_task_file",
             "export_task_file",
             "get_local_workspace",
+            "get_professor_catalog",
+            "lookup_professor_rating",
+            "get_semester_catalog_sections",
             "update_student_profile",
             "create_academic_term",
             "update_academic_term",
@@ -10565,9 +11423,13 @@ mod tests {
             "get_ai_usage",
             "request_managed_ai",
             "request_ai_capability",
+            "request_weekly_rhythm_proposal",
+            "request_funding_profile_proposal",
             "get_study_workspace",
             "set_study_material_courses",
+            "update_study_material",
             "generate_grounded_study_artifact",
+            "rerank_study_materials",
             "update_study_artifact",
             "review_study_artifact",
             "save_grade_category",
@@ -10964,9 +11826,60 @@ mod tests {
                     travel_before_minutes: 15,
                     travel_after_minutes: 15,
                 }],
+                rhythm_mode: "manual".into(),
+                protected_time_notes: String::new(),
+                days_off: Vec::new(),
+                rhythm_rules: Vec::new(),
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn weekly_rhythm_ai_is_available_only_during_onboarding() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("weekly-rhythm-ai-boundary.db");
+        let key = random_key();
+        let mut conn = open_database(&path, &key).unwrap();
+
+        require_onboarding_in_progress(&conn)
+            .expect("weekly rhythm proposals must be available while onboarding is active");
+
+        complete_test_onboarding(&mut conn);
+
+        let error = require_onboarding_in_progress(&conn)
+            .expect_err("weekly rhythm proposals must be blocked after onboarding");
+        assert_eq!(
+            error.to_string(),
+            "invalid input: Weekly Rhythm AI setup is only available during onboarding"
+        );
+    }
+
+    #[test]
+    fn weekly_rhythm_rules_become_recurring_planner_constraints() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("weekly-rhythm.db");
+        let key = random_key();
+        let mut conn = open_database(&path, &key).unwrap();
+        complete_test_onboarding(&mut conn);
+        conn.execute(
+            "INSERT INTO weekly_rhythm_rules(id,profile_id,kind,weekday,starts_at_local,ends_at_local,label) VALUES('work-tuesday',?1,'work',2,'17:00','21:00','Work shift')",
+            params![profile::PROFILE_ID],
+        )
+        .unwrap();
+
+        let effective = Utc.with_ymd_and_hms(2026, 8, 17, 8, 0, 0).unwrap();
+        let snapshot =
+            planner_snapshot(&conn, effective, planner::PlannerTrigger::Initial).unwrap();
+        let work = snapshot
+            .fixed_constraints
+            .iter()
+            .find(|constraint| constraint.id.starts_with("rhythm:work-tuesday:"))
+            .expect("the recurring work rule must reach the planner");
+        assert_eq!(work.title, "Work shift");
+        assert_eq!(work.kind, "work");
+        assert_eq!(work.starts_at, Utc.with_ymd_and_hms(2026, 8, 18, 17, 0, 0).unwrap());
+        assert_eq!(work.ends_at, Utc.with_ymd_and_hms(2026, 8, 18, 21, 0, 0).unwrap());
     }
 
     // The whole reason the class_meeting kind exists: a weekly calendar rule
@@ -11439,6 +12352,10 @@ mod tests {
                     })
                     .collect(),
                 commitments: Vec::new(),
+                rhythm_mode: "manual".into(),
+                protected_time_notes: String::new(),
+                days_off: Vec::new(),
+                rhythm_rules: Vec::new(),
             },
         )
         .unwrap();
@@ -11564,6 +12481,139 @@ mod tests {
     }
 
     #[test]
+    fn generated_plan_undo_restores_the_exact_previous_blocks() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("plan-undo.db"), &random_key()).unwrap();
+        let block = |id: &str, starts_at: &str, locked: bool| PlanBlock {
+            id: id.into(),
+            task_id: None,
+            starts_at: starts_at.into(),
+            ends_at: "2026-09-22T10:00:00Z".into(),
+            title: format!("Block {id}"),
+            kind: "protected".into(),
+            completed: false,
+            locked,
+            started_at: None,
+            session_index: 0,
+            location: String::new(),
+            reason_codes: vec!["test".into()],
+        };
+        let before = vec![block("before", "2026-09-22T09:00:00Z", true)];
+        restore_plan_blocks(&conn, &before).unwrap();
+        let after = vec![block("after", "2026-09-22T08:00:00Z", false)];
+        restore_plan_blocks(&conn, &after).unwrap();
+        let undo = PlanGenerationUndo {
+            token: "undo-token".into(),
+            before_blocks: before.clone(),
+            after_blocks: after,
+        };
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('plan_generation_undo',?1),
+             ('plan_generation_summary','{}')",
+            params![serde_json::to_string(&undo).unwrap()],
+        )
+        .unwrap();
+
+        undo_generated_plan_in(&conn, "undo-token").unwrap();
+
+        assert_eq!(all_plan_blocks(&conn).unwrap(), before);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM settings WHERE key LIKE 'plan_generation_%'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn generated_plan_undo_refuses_to_overwrite_newer_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("plan-undo-stale.db"), &random_key()).unwrap();
+        let generated = PlanBlock {
+            id: "generated".into(),
+            task_id: None,
+            starts_at: "2026-09-22T09:00:00Z".into(),
+            ends_at: "2026-09-22T10:00:00Z".into(),
+            title: "Generated".into(),
+            kind: "protected".into(),
+            completed: false,
+            locked: false,
+            started_at: None,
+            session_index: 0,
+            location: String::new(),
+            reason_codes: vec!["test".into()],
+        };
+        restore_plan_blocks(&conn, std::slice::from_ref(&generated)).unwrap();
+        let undo = PlanGenerationUndo {
+            token: "stale-token".into(),
+            before_blocks: Vec::new(),
+            after_blocks: vec![generated],
+        };
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('plan_generation_undo',?1)",
+            params![serde_json::to_string(&undo).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE plan_blocks SET starts_at='2026-09-22T11:00:00Z' WHERE id='generated'",
+            [],
+        )
+        .unwrap();
+
+        let error = undo_generated_plan_in(&conn, "stale-token").unwrap_err();
+
+        assert!(error.to_string().contains("changed after generation"));
+        assert_eq!(all_plan_blocks(&conn).unwrap()[0].starts_at, "2026-09-22T11:00:00Z");
+    }
+
+    #[test]
+    fn import_replanning_persists_a_summary_and_working_undo_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn = open_database(&directory.path().join("plan-summary.db"), &random_key()).unwrap();
+        complete_test_onboarding(&mut conn);
+        conn.execute(
+            "INSERT INTO tasks(id,title,minutes,due_at,priority,task_kind,priority_source,
+             priority_reason_codes,effort_source,created_at,source_candidate_id)
+             VALUES('quiz','Quiz 1',60,'2026-09-24T17:00:00Z',4,'quiz','rules',
+             '[\"assessment_quiz\"]','import','2026-09-22T08:00:00Z','candidate-quiz')",
+            [],
+        )
+        .unwrap();
+        let before = all_plan_blocks(&conn).unwrap();
+        let effective = Local
+            .with_ymd_and_hms(2026, 9, 22, 8, 0, 0)
+            .unwrap();
+
+        let outcome = regenerate_plan_for_trigger(
+            &conn,
+            Some(effective),
+            planner::PlannerTrigger::ImportApproved,
+        )
+        .unwrap();
+        let summary: PlanGenerationSummary = serde_json::from_str(
+            &conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key='plan_generation_summary'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.imported_assignments, 1);
+        assert_eq!(summary.assessments, 1);
+        assert_eq!(summary.generated_sessions, outcome.blocks.len() as i64);
+        assert!(summary.available_study_minutes > 0);
+        assert!(!summary.undo_token.is_empty());
+        undo_generated_plan_in(&conn, &summary.undo_token).unwrap();
+        assert_eq!(all_plan_blocks(&conn).unwrap(), before);
+    }
+
+    #[test]
     fn planner_ai_and_sync_schema_migrations_are_additive_and_versioned() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("planner-schema.db");
@@ -11577,7 +12627,9 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 26);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 30);
+        assert!(table_columns(&conn,"weekly_rhythm_rules").is_ok());
+        assert!(table_columns(&conn,"study_material_metadata").is_ok());
         assert!(table_columns(&conn,"scholarship_story_examples").is_ok());
         // 12 adds the weekly pattern a class_meeting candidate carries, which
         // the single-instant datetime columns cannot express.
@@ -11624,7 +12676,7 @@ mod tests {
             .unwrap(),
             1
         );
-        for table in ["document_segments","study_materials","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales","scholarship_opportunities","scholarship_applications","scholarship_drafts","scholarship_draft_versions","scholarship_story_examples","scholarship_crawler_runs","scholarship_sources","scholarship_opportunity_diffs","scholarship_profiles","scholarship_writing_suggestions","scholarship_requirement_documents"] {
+        for table in ["document_segments","study_materials","study_material_metadata","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales","scholarship_opportunities","funding_alert_deliveries","scholarship_applications","scholarship_drafts","scholarship_draft_versions","scholarship_story_examples","scholarship_crawler_runs","scholarship_sources","scholarship_opportunity_diffs","scholarship_profiles","scholarship_writing_suggestions","scholarship_requirement_documents"] {
             assert_eq!(conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",params![table],|row|row.get::<_,i64>(0)).unwrap(),1,"missing {table}");
         }
         drop(conn);
@@ -11636,6 +12688,58 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn study_material_metadata_is_loaded_from_local_storage() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("study-materials.db");
+        let key = random_key();
+        let conn = open_database(&path, &key).unwrap();
+        let document_id = "00000000-0000-4000-8000-000000000301";
+        conn.execute("INSERT INTO documents(id,file_name,mime,vault_path,wrapped_key,key_nonce,content_nonce,sha256,imported_at,extraction_status) VALUES(?1,'lecture-four.pdf','application/pdf','vault/doc','key','nonce','content','hash','2026-09-20T12:00:00Z','complete')",params![document_id]).unwrap();
+        conn.execute("INSERT INTO study_material_metadata(document_id,title,material_type,topics,source,favorite,teacher_provided,last_used_at,updated_at) VALUES(?1,'Cell chemistry slides','study_guide','[\"biomolecules\",\"water\"]','Professor Rivera',1,1,'2026-09-21T12:00:00Z','2026-09-21T12:00:00Z')",params![document_id]).unwrap();
+
+        let workspace = study_workspace_in(&conn).unwrap();
+        let material = workspace.materials.iter().find(|item| item.id == document_id).unwrap();
+        assert_eq!(material.title, "Cell chemistry slides");
+        assert_eq!(material.material_type, "study_guide");
+        assert_eq!(material.topics, vec!["biomolecules", "water"]);
+        assert_eq!(material.source, "Professor Rivera");
+        assert!(material.favorite && material.teacher_provided);
+        assert_eq!(material.last_used_at.as_deref(), Some("2026-09-21T12:00:00Z"));
+    }
+
+    #[test]
+    fn public_catalog_refresh_preserves_student_edits_and_marks_missing_items_stale() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open_database(&directory.path().join("funding-catalog.db"), &random_key()).unwrap();
+        scholarship_workspace_in(&conn).unwrap();
+        let source_id = "coqui-public-catalog";
+        let fetched_at = "2026-09-22T12:00:00Z";
+        let first = serde_json::json!({"id":"catalog-grant-1","sourceId":source_id,"title":"First grant","state":"discovered","notes":"","priority":"medium","taskIds":[],"freshness":"fresh","verificationStatus":"unverified"});
+        conn.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES('run-1',?1,'{}',?2)", params![source_id,fetched_at]).unwrap();
+        persist_scholarship_values(&conn,source_id,"catalog-batch-1",fetched_at,vec![first.clone()],"run-1",true).unwrap();
+        let mut edited=first.clone();edited["notes"]=serde_json::json!("My application notes");edited["state"]=serde_json::json!("saved");
+        conn.execute("UPDATE scholarship_opportunities SET payload=?2 WHERE id=?1",params!["catalog-grant-1",edited.to_string()]).unwrap();
+        conn.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES('run-2',?1,'{}',?2)",params![source_id,"2026-09-23T12:00:00Z"]).unwrap();
+        let mut updated=first.clone();updated["title"]=serde_json::json!("Updated grant");
+        persist_scholarship_values(&conn,source_id,"catalog-batch-1","2026-09-23T12:00:00Z",vec![updated],"run-2",true).unwrap();
+        let saved:serde_json::Value=serde_json::from_str(&conn.query_row("SELECT payload FROM scholarship_opportunities WHERE id='catalog-grant-1'",[],|row|row.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(saved["title"],"Updated grant");
+        assert_eq!(saved["notes"],"My application notes");
+        assert_eq!(saved["state"],"saved");
+        assert_eq!(saved["verificationStatus"],"changed");
+        conn.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES('run-3',?1,'{}',?2)",params![source_id,"2026-09-24T12:00:00Z"]).unwrap();
+        persist_scholarship_values(&conn,source_id,"catalog-batch-1","2026-09-24T12:00:00Z",Vec::new(),"run-3",false).unwrap();
+        let still_current:serde_json::Value=serde_json::from_str(&conn.query_row("SELECT payload FROM scholarship_opportunities WHERE id='catalog-grant-1'",[],|row|row.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(still_current["freshness"],"fresh");
+        conn.execute("INSERT INTO scholarship_crawler_runs(id,source_id,payload,started_at) VALUES('run-4',?1,'{}',?2)",params![source_id,"2026-09-25T12:00:00Z"]).unwrap();
+        persist_scholarship_values(&conn,source_id,"catalog-batch-1","2026-09-25T12:00:00Z",Vec::new(),"run-4",true).unwrap();
+        let stale:serde_json::Value=serde_json::from_str(&conn.query_row("SELECT payload FROM scholarship_opportunities WHERE id='catalog-grant-1'",[],|row|row.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(stale["freshness"],"stale");
+        assert_eq!(stale["notes"],"My application notes");
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM scholarship_opportunity_diffs WHERE source_id=?1",params![source_id],|row|row.get::<_,i64>(0)).unwrap(),2);
     }
 
     #[test]
@@ -12308,7 +13412,7 @@ mod tests {
         conn.execute_batch("DROP TRIGGER task_local_cleanup; DROP TABLE task_subtasks_local; DROP TABLE task_attachments_local; DROP TABLE task_private_documents; DROP TABLE task_activity_local; DROP TABLE task_details_local; PRAGMA user_version=25;").unwrap();
         drop(conn);
         let conn=open_database(&path,&key).unwrap();
-        assert_eq!(conn.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),26);
+        assert_eq!(conn.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),CURRENT_SCHEMA_VERSION);
         assert_eq!(task_details::load(&conn,"test-task").unwrap().revision,0);
         assert!(task_details::activity(&conn,"test-task",None,20).unwrap().entries.is_empty(),"migration must not invent history");
         let input=task_details::TaskDetailsInput {expected_revision:0,description:"Never upload private details".into(),tags:vec!["private".into()],progress:task_details::TaskProgress::InProgress,subtasks:vec![]};

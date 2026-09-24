@@ -954,6 +954,11 @@ body {
 .editable-candidates .candidate { grid-template-columns: minmax(0,1fr) auto; align-items: start; min-width: 0; max-width: 100%; }
 .candidate-select { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: var(--text-meta); font-weight: 700; }
 .candidate-summary { display: grid; gap: 5px; min-width: 0; }
+.candidate-priority { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 4px 0; }
+.candidate-priority strong { font-size: var(--text-meta); }
+.candidate-priority span { color: var(--text-primary); font-weight: 700; }
+.candidate-priority small { color: var(--text-secondary); }
+.candidate-priority small::before { content: "• "; }
 .candidate-summary q { display: block; overflow-wrap: anywhere; }
 .candidate-summary small,
 .candidate-summary em,

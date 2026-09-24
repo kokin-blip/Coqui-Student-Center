@@ -18,6 +18,7 @@ import {
   Plus,
   Search,
   WifiOff,
+  X,
 } from "lucide-react";
 import {
   DesktopNavigation,
@@ -32,6 +33,8 @@ import {
   saveInterfacePreferences,
   type InterfacePreferences,
 } from "./features/shell/interfacePreferences";
+import { defaultDelightPreferences, loadDelightPreferences, playCompletionSound, playInterfaceSound, saveDelightPreferences, type DelightPreferences } from "./features/shell/delightPreferences";
+import { completedStudyPlan, initialCompletionMomentum, recordTaskCompletion, weeklyGoalReached, type CelebrationReason } from "./features/shell/completionMomentum";
 import { OnboardingExperience } from "./components/OnboardingExperience";
 import {
   isSetupChecklistDismissed,
@@ -102,6 +105,8 @@ import {
   settleScheduleSource,
   takePendingNavigation,
   toggleTask,
+  type TaskRecord,
+  undoGeneratedPlan,
   unlockWithPin,
   updateAccent,
   WorkspaceSnapshot,
@@ -168,6 +173,9 @@ const ScholarshipsView = lazy(() =>
     default: module.ScholarshipsView,
   })),
 );
+const SemesterPlannerView = lazy(() =>
+  import("./components/SemesterPlannerView").then((module) => ({ default: module.SemesterPlannerView })),
+);
 const AccountSettings = lazy(() =>
   import("./features/settings/AccountSettings").then((module) => ({
     default: module.AccountSettings,
@@ -223,6 +231,35 @@ export function StudentCenter() {
     initialInterfacePreferences,
   );
   const [interfaceBusy, setInterfaceBusy] = useState(false);
+  const [delight,setDelight]=useState(defaultDelightPreferences);
+  const [celebration,setCelebration]=useState<CelebrationReason | null>(null);
+  const completionMomentum=useRef(initialCompletionMomentum);
+  useEffect(()=>{void loadDelightPreferences().then(setDelight).catch(()=>undefined);},[]);
+  const updateDelight=(next:DelightPreferences)=>{
+    const previous=delight;
+    setDelight(next);
+    void saveDelightPreferences(next).catch((error)=>{
+      setDelight((current)=>current===next?previous:current);
+      setError(`Sound and celebration settings were not saved: ${String(error)}`);
+    });
+  };
+  const soundNavigation=()=>{if(delight.interfaceSounds)playInterfaceSound(delight.volume);};
+  const celebrateCompletion=async(task: Pick<TaskRecord,"id"|"kind"|"dueAt">, saved?: Dashboard)=>{
+    const now=Date.now();
+    let weeklyGoalWeek:string|null=null;
+    if(delight.weeklyGoalTasks>0){
+      try{
+        const workspace=await getLocalWorkspace();
+        weeklyGoalWeek=weeklyGoalReached(workspace.tasks,delight.weeklyGoalTasks,now,saved?.timezone??workspace.profile?.timezone??Intl.DateTimeFormat().resolvedOptions().timeZone,delight.lastWeeklyGoalWeek);
+      }catch{ /* Feedback must not prevent a saved task completion. */ }
+    }
+    const planDate=data&&saved?completedStudyPlan(data,saved,task.id):null;
+    const result=recordTaskCompletion(completionMomentum.current,task,now,delight.celebrations,delight.momentumDisplay,planDate,weeklyGoalWeek);
+    completionMomentum.current=result.state;
+    if(weeklyGoalWeek&&result.newCompletion)updateDelight({...delight,lastWeeklyGoalWeek:weeklyGoalWeek});
+    if(result.newCompletion&&delight.completionSounds)playCompletionSound(delight.volume);
+    if(result.reason){setCelebration(result.reason);window.setTimeout(()=>setCelebration(null),3200);}
+  };
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() =>
     import.meta.env.DEV &&
     !isDesktop() &&
@@ -275,17 +312,19 @@ export function StudentCenter() {
         "work",
         "courses",
         "study",
+        "semester",
         "scholarships",
       ];
       const destination = destinations[Number(event.key) - 1];
       if (destination) {
         event.preventDefault();
+        if (destination !== view) soundNavigation();
         setView(destination);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [modal, security?.locked, Boolean(data)]);
+  }, [modal, security?.locked, Boolean(data), view, delight.interfaceSounds, delight.volume]);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection | null>(null);
   const settingsOpener = useRef<{
@@ -971,6 +1010,7 @@ export function StudentCenter() {
           // is guaranteed to return one.
           if (result.dashboard) {
             setData(result.dashboard);
+            if (result.dashboard.importNotice) setToast(result.dashboard.importNotice);
             if (
               result.dashboard.candidates.some(
                 (candidate) => candidate.status === "pending",
@@ -1020,11 +1060,13 @@ export function StudentCenter() {
           }}
           active={view}
           onNavigate={(next) => {
+            if(next!==view)soundNavigation();
             setSettingsSection(null);
             setView(next);
           }}
           onQuickAdd={() => setModal("task")}
           onSettings={() => {
+            if(view!=="settings")soundNavigation();
             setSettingsSection(null);
             setView("settings");
           }}
@@ -1058,8 +1100,10 @@ export function StudentCenter() {
                       ? "Work"
                       : view === "courses"
                         ? "Courses"
-                        : view === "scholarships"
-                          ? "Scholarships"
+                        : view === "semester"
+                          ? "Semester planner"
+                          : view === "scholarships"
+                          ? "Funding"
                           : view === "settings" || view === "academic-settings"
                             ? "Settings"
                             : "Study"}
@@ -1250,9 +1294,16 @@ export function StudentCenter() {
                   )
                 }
                 onReplan={() => setModal("replan")}
-                onToggleTask={(taskId) =>
-                  void run(() => toggleTask(taskId), "Progress saved locally.")
+                onUndoGeneratedPlan={(token) =>
+                  void run(
+                    () => undoGeneratedPlan(token),
+                    "The previous study-session plan has been restored.",
+                  )
                 }
+                onToggleTask={(taskId) => {
+                  const task = todayWorkspace?.tasks.find((item) => item.id === taskId);
+                  void run(() => toggleTask(taskId), "Progress saved locally.").then((saved) => { if (saved && task && !task.completed) celebrateCompletion(task,saved); });
+                }}
                 onAssistant={() => {
                   setAssistantExplanation("");
                   setModal("assistant");
@@ -1282,6 +1333,7 @@ export function StudentCenter() {
                   setView("work");
                 }}
                 onDashboard={setData}
+                onTaskCompleted={celebrateCompletion}
                 onImport={() => setModal("import")}
                 onStudy={() => setView("study")}
                 onConnections={() => showSettingsSection("canvas")}
@@ -1295,13 +1347,18 @@ export function StudentCenter() {
                 initialFilter={workFilter}
                 onFilterChange={setWorkFilter}
                 onDashboard={setData}
+                onTaskCompleted={celebrateCompletion}
                 onImport={() => setModal("import")}
                 onStudy={() => setView("study")}
               />
+            ) : view === "semester" ? (
+              <SemesterPlannerView />
             ) : view === "scholarships" ? (
               <ScholarshipsView />
             ) : view === "settings" ? (
               <SettingsView
+                delight={delight}
+                onDelightChange={updateDelight}
                 appearance={appearance}
                 accent={accent}
                 busy={busy}
@@ -1399,11 +1456,12 @@ export function StudentCenter() {
         <MobileNavigation
           active={view}
           onNavigate={(next) => {
+            if(next!==view)soundNavigation();
             setSettingsSection(null);
             setView(next);
           }}
           onQuickAdd={() => setModal("task")}
-          onSettings={() => setView("settings")}
+          onSettings={() => {if(view!=="settings")soundNavigation();setView("settings");}}
           onSecurity={openSecurity}
           onDeleteProfile={() => setModal("delete-profile")}
         />
@@ -1647,6 +1705,7 @@ export function StudentCenter() {
             ✦ {toast}
           </div>
         )}
+        {celebration && <div className="completion-celebration" role="status" aria-live="polite"><button aria-label="Dismiss celebration" onClick={()=>setCelebration(null)}><X aria-hidden="true" /></button><AppLogo /><strong>{celebration === "weekly" ? "Your weekly goal is done!" : celebration === "plan" ? "Today's study plan is done!" : celebration === "early" ? "Ahead of schedule!" : celebration === "streak" ? "Nice momentum!" : "Big step finished!"}</strong><span>{celebration === "weekly" ? `You completed ${delight.weeklyGoalTasks} tasks this week.` : celebration === "plan" ? "You finished every planned study session today." : celebration === "early" ? "You finished this well before its deadline." : celebration === "streak" ? "Three tasks finished in this work session." : "A major piece of work is complete."}</span></div>}
       </div>
     </TaskDetailsSession>
   );

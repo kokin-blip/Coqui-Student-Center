@@ -108,6 +108,9 @@ export function fillReferenceFixture(
       dependencies: [],
       recordOrigin: "demo",
       kind: "assignment",
+      prioritySource: "legacy",
+      priorityReasonCodes: [],
+      effortSource: "legacy",
     }),
   );
   const add = (

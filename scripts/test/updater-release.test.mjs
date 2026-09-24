@@ -78,6 +78,7 @@ test("updater manifest refuses an unsigned artifact", async () => {
 
 test("unsigned prereleases publish only after both packaged desktop lanes", async () => {
   const workflow = await readFile(".github/workflows/release.yml", "utf8");
+  assert.match(workflow, /tags: \["v\*", "!v0\.13\.0-rc\.1"\]/);
   assert.match(workflow, /release_mode:[\s\S]*default: unsigned/);
   assert.match(workflow, /name: Build unsigned installers[\s\S]*npm run desktop:build/);
   assert.match(workflow, /publish-unsigned:\n\s+needs: build-packages/);
@@ -102,7 +103,7 @@ test("unsigned prereleases publish only after both packaged desktop lanes", asyn
   );
 });
 
-test("0.12.1 is aligned across desktop release manifests", async () => {
+test("the prerelease version is aligned across desktop release manifests", async () => {
   const root = JSON.parse(await readFile("package.json", "utf8"));
   const desktop = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
   const ui = JSON.parse(await readFile("apps/desktop-ui/package.json", "utf8"));
@@ -110,8 +111,9 @@ test("0.12.1 is aligned across desktop release manifests", async () => {
     await readFile("apps/desktop/src-tauri/tauri.conf.json", "utf8"),
   );
   const cargo = await readFile("apps/desktop/src-tauri/Cargo.toml", "utf8");
+  assert.equal(root.version, "0.13.0-rc.1");
   for (const manifest of [root, desktop, ui, tauri]) {
-    assert.equal(manifest.version, "0.12.1");
+    assert.equal(manifest.version, root.version);
   }
-  assert.match(cargo, /^version = "0\.12\.1"$/m);
+  assert.match(cargo, new RegExp(`^version = "${root.version.replaceAll(".", "\\.")}"$`, "m"));
 });

@@ -186,3 +186,24 @@
     padding: 16px 12px 92px;
   }
 }
+.funding-results-controls { display: grid; gap: var(--space-3); margin: var(--space-4) 0; }
+.funding-results-primary { display: grid; grid-template-columns: minmax(12rem, 1fr) repeat(2, minmax(9rem, 0.65fr)); align-items: end; gap: var(--space-3); }
+.funding-results-primary > label:not(.scholarship-search), .funding-advanced-grid label { display: grid; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-secondary-size); }
+.funding-results-primary .scholarship-search { align-self: end; }
+.funding-more-filters { border-top: 1px solid var(--border-subtle); padding-top: var(--space-2); }
+.funding-more-filters summary { width: fit-content; cursor: pointer; color: var(--text-primary); font-weight: 600; }
+.funding-more-filters summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.funding-advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+.funding-filter-flags { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-top: var(--space-3); }
+.funding-filter-flags label { display: inline-flex; align-items: center; gap: var(--space-2); }
+.funding-filter-note { margin: var(--space-3) 0 0; color: var(--text-secondary); font-size: var(--text-secondary-size); }
+.funding-results-footer { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-secondary-size); }
+.funding-no-results { margin: var(--space-2) 0; color: var(--text-secondary); }
+.funding-onboarding { display: grid; gap: var(--space-4); }
+.funding-mode-choice { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.funding-mode-choice .active { border-color: var(--accent); color: var(--accent-strong); }
+.funding-ai-panel { display: grid; gap: var(--space-3); max-width: 70ch; padding: var(--space-4); border-radius: var(--radius-md); background: var(--bg-surface-raised); }
+.funding-ai-panel > p, .funding-ai-review p { margin: 0; }
+.funding-ai-review { display: grid; justify-items: start; gap: var(--space-2); }
+.funding-ai-review ul { margin: 0; padding-left: 1.3rem; }
+@media (max-width: 640px) { .funding-results-primary, .funding-advanced-grid { grid-template-columns: minmax(0, 1fr); } }

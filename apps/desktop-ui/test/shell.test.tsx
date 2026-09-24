@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { StudentCenter } from "../src/StudentCenter";
 import { THEMES } from "../src/components/ThemeControls";
+import * as native from "../src/native";
 
 beforeEach(() => {
   window.history.replaceState({}, "", "/?demo");
@@ -21,7 +22,47 @@ const stylesheets = [
 ];
 
 describe("application shell", () => {
-  test("navigation exposes the six student destinations and keeps administration in Settings", async () => {
+  test("finishing setup opens pending schedule imports for review", async () => {
+    window.history.replaceState({}, "", "/");
+    const initial = await native.initialize();
+    const dashboard = await native.getDashboard();
+    dashboard.candidates = [{
+      id: "setup-quiz",
+      documentId: "setup-schedule",
+      kind: "task",
+      title: "Biology quiz",
+      course: "BIO 101",
+      dueAt: "2026-10-15T23:59:00Z",
+      evidence: "Biology quiz due October 15",
+      sourceLocator: "page 1",
+      sourceType: "document",
+      confidence: 0.95,
+      warnings: [],
+      status: "pending",
+    }];
+    const complete = vi.spyOn(native, "completeOnboarding").mockResolvedValue({
+      ...initial,
+      onboarding: { ...initial.onboarding!, required: false },
+      dashboard,
+    });
+    try {
+      const user = userEvent.setup();
+      render(<StudentCenter />);
+      await user.type(await screen.findByLabelText("What should we call you?"), "Taylor");
+      await user.click(screen.getByRole("button", { name: "Continue" }));
+      await user.click(screen.getByRole("button", { name: "Skip for now" }));
+      await user.click(screen.getByRole("button", { name: "Skip for now" }));
+      await user.click(screen.getByRole("button", { name: "Build my first plan" }));
+
+      const review = await screen.findByRole("dialog", { name: "Review extracted facts" });
+      expect(within(review).getByText("Biology quiz")).toBeInTheDocument();
+      expect(complete).toHaveBeenCalledOnce();
+    } finally {
+      complete.mockRestore();
+    }
+  });
+
+  test("navigation exposes the student destinations and keeps administration in Settings", async () => {
     render(<StudentCenter />);
 
     const plan = await screen.findByRole(
@@ -35,7 +76,8 @@ describe("application shell", () => {
       "Work",
       "Courses",
       "Study",
-      "Scholarships",
+      "Semester",
+      "Funding",
     ]) {
       expect(
         within(plan).getByRole("button", { name: item }),

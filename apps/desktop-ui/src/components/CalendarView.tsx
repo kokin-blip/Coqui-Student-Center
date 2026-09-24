@@ -27,6 +27,8 @@ import type {
   CommitmentEditorInput,
   CommitmentRecord,
   WorkspaceSnapshot,
+  TaskRecord,
+  Dashboard,
 } from "../native";
 import type { WorkspaceRouteProps } from "./workspaceTypes";
 import { useTaskDetailsSession } from "../features/tasks/TaskDetailsSession";
@@ -81,6 +83,7 @@ export function CalendarView({
   onSelectTask,
   onEditTask,
   onDashboard,
+  onTaskCompleted,
   onImport,
   onConnections,
   canvasConnections = [],
@@ -88,6 +91,7 @@ export function CalendarView({
   selectedTaskId?: string | null;
   onSelectTask?: (id: string | null) => void;
   onEditTask?: (id: string) => void;
+  onTaskCompleted?: (task: TaskRecord, dashboard: Dashboard) => void;
 }) {
   const session = useTaskDetailsSession();
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
@@ -189,6 +193,14 @@ export function CalendarView({
       setBusy(false);
     }
   };
+  const completeTask = (id: string) => {
+    const task = workspace?.tasks.find((item) => item.id === id);
+    let savedDashboard: Dashboard | null = null;
+    void act(async () => {
+      savedDashboard = await toggleTask(id);
+      return getLocalWorkspace();
+    }).then((saved) => { if (saved && savedDashboard && task && !task.completed) onTaskCompleted?.(task, savedDashboard); });
+  };
   const agendaAct = async (operation: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
@@ -217,6 +229,7 @@ export function CalendarView({
         blocks: positionBlocks(agenda.blocks, key, agenda.timezone).map(
           (item) => item.block,
         ),
+        deadlines: agenda.deadlines.filter((deadline) => dateKey(deadline.dueAt, agenda.timezone) === key),
       };
     });
   }, [agenda]);
@@ -430,6 +443,9 @@ export function CalendarView({
             to resize it. Keyboard: focus a block and use ↑/↓ to move 15
             minutes, or Shift+↑/↓ to resize.
           </p>
+          <section className="deadline-rail" aria-label="Assignment deadlines">
+            {visibleDays.map((day) => <div key={day.key} className="deadline-day"><span>{day.label}</span><div>{day.deadlines.length ? day.deadlines.map((deadline) => <button key={deadline.taskId} className={`deadline-chip priority-${deadline.priority}`} onClick={() => selectTask(deadline.taskId)} title={deadline.priorityReasonCodes.join(", ")}><strong>{deadline.title}</strong><small>{deadline.taskKind} · due {formatTime(deadline.dueAt, agenda.timezone)}</small></button>) : <small>No deadlines</small>}</div></div>)}
+          </section>
           <TimeGrid
             agenda={agenda}
             days={visibleDays}
@@ -605,12 +621,7 @@ export function CalendarView({
             busy={busy}
             onClose={() => setInspectorOpen(false)}
             onEdit={(id) => onEditTask?.(id)}
-            onComplete={(id) =>
-              void act(async () => {
-                await toggleTask(id);
-                return getLocalWorkspace();
-              })
-            }
+            onComplete={completeTask}
             onStart={(id) => void agendaAct(() => startPlanBlock(id))}
           />
         )}
@@ -632,12 +643,7 @@ export function CalendarView({
             busy={busy}
             onClose={() => setInspectorOpen(false)}
             onEdit={(id) => onEditTask?.(id)}
-            onComplete={(id) =>
-              void act(async () => {
-                await toggleTask(id);
-                return getLocalWorkspace();
-              })
-            }
+            onComplete={completeTask}
             onStart={(id) => void agendaAct(() => startPlanBlock(id))}
           />
         </Modal>

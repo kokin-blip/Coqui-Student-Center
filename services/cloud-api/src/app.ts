@@ -1,5 +1,7 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, sign } from "node:crypto";
+import { z } from "zod";
+import { fetchStudentGrants } from "./funding-sources.js";
 import {
   DeviceEnvelope,
   EncryptedObjectChunk,
@@ -22,7 +24,36 @@ import { AuthorizingSyncRepository } from "./authorizing-repository.js";
 type AppOptions={
   repository?:SyncRepository;
   verifyAccessToken?:AccessTokenVerifier;
+  fundingGrantLoader?:()=>Promise<unknown[]>;
 };
+
+const CatalogOpportunity=z.object({
+  canonicalUrl:z.string().url().startsWith("https://"),
+  sourceUrl:z.string().url().startsWith("https://"),
+  applicationUrl:z.string().url().startsWith("https://"),
+  provider:z.string().min(2).max(160),
+  title:z.string().min(3).max(240),
+  opportunityType:z.enum(["scholarship","grant","fellowship","stipend","award","emergency_fund","tuition_assistance","research_funding","internship_stipend","competition"]),
+  summary:z.string().max(2000),
+  updatedAt:z.string().datetime(),
+  parserVersion:z.string().min(1).max(80),
+  regions:z.array(z.string().min(1).max(80)).max(20).default([]),
+  institutionIds:z.array(z.string().min(1).max(80)).max(20).default([]),
+  studyLevels:z.array(z.string().min(1).max(100)).max(20).default([]),
+  fieldsOfStudy:z.array(z.string().min(1).max(120)).max(25).default([]),
+  locations:z.array(z.string().min(1).max(120)).max(25).default([]),
+  citizenship:z.array(z.string().min(1).max(120)).max(25).default([]),
+  residency:z.array(z.string().min(1).max(120)).max(25).default([]),
+  awardMinimum:z.number().finite().nonnegative().optional(),
+  awardMaximum:z.number().finite().nonnegative().optional(),
+  currency:z.string().regex(/^[A-Z]{3}$/).optional(),
+  deadline:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  deadlineLabel:z.string().max(120).optional(),
+  minimumGpa:z.number().finite().min(0).max(5).optional(),
+  requiredDocuments:z.array(z.string().min(1).max(120)).max(25).default([]),
+  recommendationsRequired:z.number().int().min(0).max(20).optional()
+}).strict();
+const FundingCatalog=z.array(CatalogOpportunity).max(10_000);
 
 function errorStatus(error:unknown){
   if(error instanceof RepositoryConflict)return 409;
@@ -41,7 +72,21 @@ export function buildApp(options:AppOptions={}){
   // Every repository is wrapped, so device authorization cannot depend on which adapter is injected.
   const repository=new AuthorizingSyncRepository(options.repository??new MemorySyncRepository());
   const verifyAccessToken=options.verifyAccessToken;
-  const app=Fastify({bodyLimit:12*1024*1024,logger:{redact:["req.headers.authorization","req.body.ciphertext","req.body.mutations[*].ciphertext","req.body.encryptedAccountKey","req.body.signature"],serializers:{req(req){return {method:req.method,url:req.url};}}}});
+  const app=Fastify({bodyLimit:12*1024*1024,logger:{redact:["req.headers.authorization","req.body.ciphertext","req.body.mutations[*].ciphertext","req.body.encryptedAccountKey","req.body.signature"],serializers:{req(req){return {method:req.method,url:req.url.split("?")[0]};}}}});
+  let grantsCache:{fetchedAt:number;opportunities:z.infer<typeof FundingCatalog>}|null=null;
+  let grantsRefresh:Promise<z.infer<typeof FundingCatalog>>|null=null;
+
+  async function publicGrants(){
+    if(process.env.FUNDING_CATALOG_GRANTS_GOV!=="1")return [];
+    if(grantsCache&&Date.now()-grantsCache.fetchedAt<24*60*60*1000)return grantsCache.opportunities;
+    if(!grantsRefresh)grantsRefresh=(options.fundingGrantLoader??fetchStudentGrants)().then(items=>{
+      const opportunities=FundingCatalog.parse(items);
+      if(opportunities.length===0)throw new Error("No verified individual grants were found");
+      grantsCache={fetchedAt:Date.now(),opportunities};
+      return opportunities;
+    }).finally(()=>{grantsRefresh=null;});
+    return grantsRefresh;
+  }
 
   async function requireAuth(req:FastifyRequest,reply:FastifyReply):Promise<AuthIdentity|null>{
     if(!verifyAccessToken){reply.code(503).send({error:"account services are not configured"});return null;}
@@ -58,6 +103,31 @@ export function buildApp(options:AppOptions={}){
   }
 
   app.get("/health",async()=>({ok:true,service:"student-center-cloud-api",accountsConfigured:Boolean(verifyAccessToken)}));
+
+  // Public catalog requests contain coarse catalog filters only. They never
+  // accept or log a student profile; matching happens in the encrypted client.
+  app.get("/v1/funding/catalog",async(req,reply)=>{
+    const query=req.query as {cursor?:string;since?:string;region?:string;institutionId?:string};
+    if(Object.keys(query).some(key=>!["cursor","since","region","institutionId"].includes(key)))return reply.code(400).send({error:"catalog requests accept only public filters"});
+    const cursor=Number(query.cursor??0);
+    if(!Number.isInteger(cursor)||cursor<0||cursor>1_000_000)return reply.code(400).send({error:"invalid catalog cursor"});
+    if(query.since&&!Number.isFinite(Date.parse(query.since)))return reply.code(400).send({error:"invalid catalog timestamp"});
+    if([query.region,query.institutionId].some(value=>value&&(!/^[a-zA-Z0-9 ._-]{1,80}$/.test(value))))return reply.code(400).send({error:"invalid catalog filter"});
+    const privateKey=process.env.FUNDING_CATALOG_SIGNING_KEY;
+    if(!privateKey)return reply.code(503).send({error:"the public funding catalog is not configured"});
+    let catalog:z.infer<typeof FundingCatalog>;
+    let sourceFailures:string[]=[];
+    try{
+      const curated=FundingCatalog.parse(JSON.parse(process.env.FUNDING_CATALOG_JSON??"[]"));
+      let discovered:z.infer<typeof FundingCatalog>=[];
+      try{discovered=await publicGrants();}catch{sourceFailures=["Grants.gov individual grants could not be checked"];
+        if(curated.length===0)throw new Error("No verified opportunities are available");}
+      catalog=FundingCatalog.parse([...new Map([...discovered,...curated].map(item=>[item.canonicalUrl,item])).values()]);
+    }catch{return reply.code(503).send({error:"the public funding catalog is unavailable"});}
+    const filtered=catalog.filter(row=>(!query.region||row.regions.includes(query.region))&&(!query.institutionId||row.institutionIds.includes(query.institutionId))&&(!query.since||Date.parse(row.updatedAt)>Date.parse(query.since)));
+    const opportunities=filtered.slice(cursor,cursor+100);const batch={version:1,fetchedAt:new Date().toISOString(),cursor:cursor+opportunities.length,nextCursor:cursor+opportunities.length<filtered.length?String(cursor+opportunities.length):null,partial:process.env.FUNDING_CATALOG_GRANTS_GOV==="1",sourceFailures,opportunities};
+    try{const payload=Buffer.from(JSON.stringify(batch));const signature=sign(null,payload,createPrivateKey(privateKey)).toString("base64url");return {payload:payload.toString("base64url"),signature,algorithm:"Ed25519"};}catch{return reply.code(503).send({error:"the public funding catalog signature is unavailable"});}
+  });
 
   app.post("/v1/devices/register",async(req,reply)=>{
     const auth=await requireAuth(req,reply);if(!auth)return;

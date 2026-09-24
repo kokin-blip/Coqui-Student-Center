@@ -42,6 +42,10 @@ import {
   InstitutionSetupOptions,
   InstitutionCampusOption,
   AcademicTermPreset,
+  AiProviderId,
+  saveAiProviderKey,
+  requestWeeklyRhythmProposal,
+  RhythmRuleKind,
 } from "../native";
 import { AppLogo } from "./AppLogo";
 import {
@@ -66,6 +70,15 @@ const timezones = [
   ["Sydney", "Australia/Sydney"],
 ] as const;
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const rhythmKinds: Array<{value:RhythmRuleKind;label:string}> = [
+  {value:"work",label:"Work"},
+  {value:"commute",label:"Commute"},
+  {value:"recurring_obligation",label:"Recurring obligation"},
+  {value:"meal",label:"Meal"},
+  {value:"exercise",label:"Exercise"},
+  {value:"avoid",label:"Avoid this time"},
+  {value:"protected_free_time",label:"Protected free time"},
+];
 // Catalog sections store 24-hour local times; students read their schedule in
 // the 12-hour form the registrar prints.
 const formatClock = (value: string) => {
@@ -119,6 +132,10 @@ export function OnboardingExperience({
         ? [{ code: state.draft.courseCode, title: state.draft.courseTitle, color: courseColors[0], meetings: [] }]
         : [emptyCourse(0)],
     appearance: state.draft.appearance ?? "light",
+    rhythmMode: state.draft.rhythmMode ?? "manual",
+    protectedTimeNotes: state.draft.protectedTimeNotes ?? "",
+    daysOff: state.draft.daysOff ?? [],
+    rhythmRules: state.draft.rhythmRules ?? [],
   }), [state.draft]);
   const [draft, setDraft] = useState(normalized);
   const [step, setStep] = useState(0);
@@ -135,6 +152,14 @@ export function OnboardingExperience({
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotNotice, setScreenshotNotice] = useState("");
   const [canvasFeedUrl, setCanvasFeedUrl] = useState("");
+  const [draggingSchedule, setDraggingSchedule] = useState(false);
+  const [aiProvider, setAiProvider] = useState<AiProviderId>("openai");
+  const [aiKey, setAiKey] = useState("");
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [rhythmInterview, setRhythmInterview] = useState("");
+  const [rhythmConsent,setRhythmConsent]=useState(false);
+  const [rhythmProposalSummary,setRhythmProposalSummary]=useState("");
+  const [aiConnected, setAiConnected] = useState(false);
   // Onboarding reports its own results. The workspace's paste handler writes to
   // a toast and a review modal that are not rendered here, so a paste during
   // setup used to import successfully and then say nothing at all.
@@ -320,6 +345,16 @@ export function OnboardingExperience({
       ? [...draft.availability, { weekday, startsAtLocal: "08:00", endsAtLocal: "21:00" }].sort((a, b) => a.weekday - b.weekday)
       : draft.availability.filter((item) => item.weekday !== weekday));
   };
+  const toggleDayOff = (weekday:number) => {
+    setSaved(false);
+    setDraft((current) => {
+      const removing=current.daysOff.includes(weekday);
+      if(!removing&&current.availability.length<=1)return current;
+      return {...current,daysOff:removing?current.daysOff.filter((value)=>value!==weekday):[...current.daysOff,weekday].sort(),availability:removing?current.availability:current.availability.filter((rule)=>rule.weekday!==weekday)};
+    });
+  };
+  const addRhythmRule = () => update("rhythmRules", [...draft.rhythmRules, {kind:"recurring_obligation",weekday:1,startsAtLocal:"17:00",endsAtLocal:"18:00",label:"Recurring commitment"}]);
+  const updateRhythmRule = (index:number,patch:Partial<(typeof draft.rhythmRules)[number]>) => update("rhythmRules", draft.rhythmRules.map((rule,ruleIndex)=>ruleIndex===index?{...rule,...patch}:rule));
   const useLocation = () => {
     if (!navigator.geolocation) return setError("Location is unavailable. Search for a city instead.");
     setBusy(true);
@@ -351,9 +386,14 @@ export function OnboardingExperience({
     try {
       const primary = draft.courses.find((course) => course.title.trim());
       let result = await completeOnboarding({ ...draft, courseCode: primary?.code ?? "", courseTitle: primary?.title ?? "", courses: draft.courses.filter((course) => course.title.trim()) });
-      if (importAfter && result.dashboard) {
-        const dashboard = await selectAndImport();
-        if (dashboard) result = { ...result, dashboard };
+      const completedDashboard = result.dashboard;
+      if (importAfter && completedDashboard) {
+        try {
+          const dashboard = await selectAndImport();
+          if (dashboard) result = { ...result, dashboard };
+        } catch (next) {
+          result = { ...result, dashboard: { ...completedDashboard, importNotice: `Setup finished, but the syllabus could not be imported: ${String(next)}` } };
+        }
       }
       onComplete(result);
     } catch (next) {
@@ -386,6 +426,7 @@ export function OnboardingExperience({
           ))}
         </ol>
         <div className="local-promise"><ShieldCheck /><span><strong>Works without an account</strong><small>Your profile and plans stay encrypted on this computer.</small></span></div>
+        <small className="onboarding-copyright">© 2026 Erick X. Martinez</small>
       </aside>
       <section className="setup-panel">
         <header className="setup-panel-head"><span>Step {step + 1} of 4</span><small>{saved ? "Saved locally" : "Saving…"}</small></header>
@@ -484,16 +525,30 @@ export function OnboardingExperience({
                 classes land in the review queue and are confirmed after setup,
                 on the same terms as every other import. Typing courses in by
                 hand below stays a complete path on its own. */}
-            {isDesktop() && <div className="screenshot-step">
-              <label className="field full">
-                <span><ImageUp aria-hidden="true" /> Upload a schedule image</span>
-                <input type="file" accept="image/png,image/jpeg,application/pdf" disabled={screenshotBusy} onChange={(event) => {
+            {isDesktop() && <div
+              className={`screenshot-step schedule-dropzone ${draggingSchedule ? "dragging" : ""}`}
+              onDragEnter={(event) => { event.preventDefault(); setDraggingSchedule(true); }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => { if (event.currentTarget === event.target) setDraggingSchedule(false); }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDraggingSchedule(false);
+                const file = event.dataTransfer.files[0];
+                if (file) void importScreenshot(file);
+              }}
+            >
+              <ImageUp aria-hidden="true" />
+              <strong>Drop your schedule here</strong>
+              <p>PNG, JPEG, or PDF · or paste a screenshot with Ctrl/Cmd+V</p>
+              <label className="solid schedule-file-button">
+                Choose a file
+                <input className="visually-hidden" type="file" accept="image/png,image/jpeg,application/pdf" disabled={screenshotBusy} onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (file) void importScreenshot(file);
                 }} />
               </label>
-              <p className="field-help">Or press Ctrl/Cmd+V anywhere with a screenshot copied. The source is encrypted on your computer and read there; nothing is sent anywhere and nothing is added to your plan until you approve it.</p>
+              <p className="field-help">The source is encrypted and read on this computer. Detected classes and assignments stay pending until you review them.</p>
               {screenshotNotice && <p className="source-note" aria-live="polite">{screenshotNotice}</p>}
             </div>}
             <div className="course-builder-head"><div><strong>Your courses</strong><small>Suggestions are optional and always need confirmation.</small></div><button className="outline" onClick={() => update("courses", [...draft.courses, emptyCourse(draft.courses.length)])}><Plus /> Add course</button></div>
@@ -507,9 +562,28 @@ export function OnboardingExperience({
             </article>)}</div>
           </>}
           {step === 3 && <>
+            <div className="rhythm-mode-grid" role="radiogroup" aria-label="Choose how to build your weekly rhythm">
+              <button className={draft.rhythmMode === "manual" ? "selected" : ""} role="radio" aria-checked={draft.rhythmMode === "manual"} onClick={() => update("rhythmMode", "manual")}><Clock3 /><span><strong>Build it myself</strong><small>Set sleep, study windows, breaks, days off, and protected time.</small></span></button>
+              <button className={draft.rhythmMode === "ai-guided" ? "selected" : ""} role="radio" aria-checked={draft.rhythmMode === "ai-guided"} onClick={() => update("rhythmMode", "ai-guided")}><Sparkles /><span><strong>Talk through my week</strong><small>Use your own AI key to structure what you volunteer, then review every rule.</small></span></button>
+            </div>
+            {draft.rhythmMode === "ai-guided" && <section className="ai-rhythm-panel" aria-label="AI-guided weekly rhythm">
+              {!aiConnected ? <>
+                <div className="form-grid compact"><label className="field">Provider<select value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProviderId)}><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label><label className="field">API key<input type="password" value={aiKey} onChange={(event) => setAiKey(event.target.value)} autoComplete="off" placeholder="Stored in your OS credential vault" /></label></div>
+                <label className="confirm-row"><input type="checkbox" checked={ageConfirmed} onChange={(event) => setAgeConfirmed(event.target.checked)} /><span><strong>I am 18 or older</strong><small>Your chosen provider receives only this interview. Existing academic records are not included.</small></span></label>
+                <button className="outline" disabled={screenshotBusy || !ageConfirmed || aiKey.trim().length < 20} onClick={async () => { setScreenshotBusy(true); setError(""); try { await saveAiProviderKey(aiProvider, aiKey, undefined, ageConfirmed); setAiConnected(true); setAiKey(""); } catch (next) { setError(String(next)); } finally { setScreenshotBusy(false); } }}><ShieldCheck /> Connect securely</button>
+              </> : <>
+                <label className="field full">Tell Coqui about a typical week<textarea rows={6} value={rhythmInterview} onChange={(event) => setRhythmInterview(event.target.value)} placeholder="I work Tuesday and Thursday evenings, commute 35 minutes, prefer studying before lunch, and keep Sunday free…" /></label>
+                <label className="confirm-row"><input type="checkbox" checked={rhythmConsent} onChange={(event)=>setRhythmConsent(event.target.checked)}/><span><strong>Send only this interview to {aiProvider}</strong><small>No existing profile, courses, assignments, or documents are included.</small></span></label>
+                <button className="solid" disabled={screenshotBusy||!rhythmConsent||rhythmInterview.trim().length<20} onClick={async()=>{setScreenshotBusy(true);setError("");try{const proposal=await requestWeeklyRhythmProposal(rhythmInterview.trim(),rhythmConsent);setDraft((current)=>({...current,sleepStart:proposal.sleepStart,sleepEnd:proposal.sleepEnd,maxSessionMinutes:proposal.maxSessionMinutes,breakMinutes:proposal.breakMinutes,availability:proposal.availability,daysOff:proposal.daysOff,protectedTimeNotes:proposal.protectedTimeNotes,rhythmRules:proposal.rhythmRules}));setRhythmProposalSummary(proposal.summary);setRhythmInterview("");setRhythmConsent(false);setSaved(false);}catch(next){setError(String(next));}finally{setScreenshotBusy(false);}}}><Sparkles/>Create review draft</button>
+                {rhythmProposalSummary&&<div className="setup-intro compact" role="status"><Check/><div><strong>Proposal ready for review</strong><p>{rhythmProposalSummary} Check and edit every field below before applying.</p></div></div>}
+                <p className="field-help">The interview stays in memory and is cleared after a proposal returns. Only the fields you review below are saved. You can continue manually at any time.</p>
+              </>}
+            </section>}
             <div className="preset-row"><button onClick={() => applyAvailabilityPreset("balanced")}>Balanced week</button><button onClick={() => applyAvailabilityPreset("working")}>Working student</button><button onClick={() => applyAvailabilityPreset("custom")}>Keep custom</button></div>
             <div className="form-grid compact"><label className="field">Sleep starts<input type="time" value={draft.sleepStart} onChange={(event) => update("sleepStart", event.target.value)} /></label><label className="field">Wake time<input type="time" value={draft.sleepEnd} onChange={(event) => update("sleepEnd", event.target.value)} /></label><label className="field">Focus session<input type="number" min="15" max="240" step="5" value={draft.maxSessionMinutes} onChange={(event) => update("maxSessionMinutes", Number(event.target.value))} /></label><label className="field">Break<input type="number" min="0" max="60" step="5" value={draft.breakMinutes} onChange={(event) => update("breakMinutes", Number(event.target.value))} /></label><label className="field">Commute<input type="number" min="0" max="240" step="5" value={draft.defaultCommuteMinutes} onChange={(event) => update("defaultCommuteMinutes", Number(event.target.value))} /></label><label className="field">Transition<input type="number" min="0" max="120" step="5" value={draft.transitionMinutes} onChange={(event) => update("transitionMinutes", Number(event.target.value))} /></label></div>
-            <fieldset className="availability visual"><legend>When can Coqui schedule focused work?</legend>{dayLabels.map((day, weekday) => { const rule = draft.availability.find((item) => item.weekday === weekday); return <div key={day}><label><input type="checkbox" checked={Boolean(rule)} disabled={Boolean(rule) && draft.availability.length <= 1} onChange={(event) => toggleAvailability(weekday, event.target.checked)} /><span>{day}</span></label><input type="time" aria-label={`${day} starts`} disabled={!rule} value={rule?.startsAtLocal ?? "08:00"} onChange={(event) => update("availability", draft.availability.map((item) => item.weekday === weekday ? { ...item, startsAtLocal: event.target.value } : item))} /><span>to</span><input type="time" aria-label={`${day} ends`} disabled={!rule} value={rule?.endsAtLocal ?? "21:00"} onChange={(event) => update("availability", draft.availability.map((item) => item.weekday === weekday ? { ...item, endsAtLocal: event.target.value } : item))} /></div>; })}</fieldset>
+            <fieldset className="availability visual"><legend>Preferred study windows</legend><p className="field-help">Coqui schedules focused work inside these windows, then avoids the weekly anchors below.</p>{dayLabels.map((day, weekday) => { const rule = draft.availability.find((item) => item.weekday === weekday); return <div key={day}><label><input type="checkbox" checked={Boolean(rule)} disabled={Boolean(rule) && draft.availability.length <= 1} onChange={(event) => toggleAvailability(weekday, event.target.checked)} /><span>{day}</span></label><input type="time" aria-label={`${day} starts`} disabled={!rule} value={rule?.startsAtLocal ?? "08:00"} onChange={(event) => update("availability", draft.availability.map((item) => item.weekday === weekday ? { ...item, startsAtLocal: event.target.value } : item))} /><span>to</span><input type="time" aria-label={`${day} ends`} disabled={!rule} value={rule?.endsAtLocal ?? "21:00"} onChange={(event) => update("availability", draft.availability.map((item) => item.weekday === weekday ? { ...item, endsAtLocal: event.target.value } : item))} /></div>; })}</fieldset>
+            <fieldset className="setup-fieldset rhythm-anchors"><legend>Weekly anchors</legend><div className="course-builder-head"><div><strong>Times Coqui must plan around</strong><small>Work, commute, recurring obligations, meals, exercise, avoided times, and protected free time.</small></div><button className="outline" onClick={addRhythmRule}><Plus/> Add time</button></div>{draft.rhythmRules.length===0?<div className="rhythm-empty"><Clock3/><span><strong>No weekly anchors yet</strong><small>Add only the routines that should block generated study sessions.</small></span></div>:<div className="rhythm-rule-list">{draft.rhythmRules.map((rule,index)=><div className="rhythm-rule" key={`${index}-${rule.weekday}-${rule.startsAtLocal}`}><label className="field">Type<select aria-label={`Weekly anchor ${index+1} type`} value={rule.kind} onChange={(event)=>updateRhythmRule(index,{kind:event.target.value as RhythmRuleKind})}>{rhythmKinds.map((kind)=><option value={kind.value} key={kind.value}>{kind.label}</option>)}</select></label><label className="field">Day<select aria-label={`Weekly anchor ${index+1} day`} value={rule.weekday} onChange={(event)=>updateRhythmRule(index,{weekday:Number(event.target.value)})}>{dayLabels.map((day,weekday)=><option value={weekday} key={day}>{day}</option>)}</select></label><label className="field">Starts<input type="time" value={rule.startsAtLocal} onChange={(event)=>updateRhythmRule(index,{startsAtLocal:event.target.value})}/></label><label className="field">Ends<input type="time" value={rule.endsAtLocal} onChange={(event)=>updateRhythmRule(index,{endsAtLocal:event.target.value})}/></label><label className="field rhythm-rule-label">Label<input maxLength={100} value={rule.label} onChange={(event)=>updateRhythmRule(index,{label:event.target.value})}/></label><button className="icon-button rhythm-rule-remove" aria-label={`Remove ${rule.label||"weekly anchor"}`} onClick={()=>update("rhythmRules",draft.rhythmRules.filter((_,ruleIndex)=>ruleIndex!==index))}><Trash2/></button></div>)}</div>}</fieldset>
+            <fieldset className="setup-fieldset"><legend>Protected time and days off</legend><div className="day-chips">{dayLabels.map((day, weekday) => <button key={day} className={draft.daysOff.includes(weekday) ? "active" : ""} aria-pressed={draft.daysOff.includes(weekday)} onClick={() => toggleDayOff(weekday)}>{day}</button>)}</div><label className="field full">Anything else Coqui should protect?<textarea rows={3} value={draft.protectedTimeNotes} onChange={(event) => update("protectedTimeNotes", event.target.value)} placeholder="Family dinner after 6 PM, exercise Monday mornings, no work after 9 PM…" /></label></fieldset>
             <div className="setup-summary"><div><School /><span><strong>{draft.institution.name || "No school yet"}</strong><small>{draft.institution.name ? `${(draft.institution.campusNames ?? []).length > 1 ? `${draft.institution.campusNames!.length} campuses · ` : draft.institution.campusName ? `${draft.institution.campusName} · ` : ""}${draft.termName}` : "Add it later from Settings"}</small></span></div><div><BookOpen /><span><strong>{courseCount === 0 ? "No courses yet" : `${courseCount} ${courseCount === 1 ? "course" : "courses"}`}</strong><small>{courseCount === 0 ? "Add them any time from Courses" : `${draft.courses.reduce((sum, course) => sum + course.meetings.length, 0)} weekly class patterns`}</small></span></div><div><Clock3 /><span><strong>{draft.availability.length} available days</strong><small>{draft.maxSessionMinutes}-minute focus sessions</small></span></div></div>
             <label className="confirm-row"><input type="checkbox" checked={importAfter} onChange={(event) => setImportAfter(event.target.checked)} /><span><strong>Choose my first syllabus after setup</strong><small>Every extracted fact will still require review.</small></span></label>
           </>}

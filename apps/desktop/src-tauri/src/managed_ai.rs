@@ -33,32 +33,40 @@ pub type Result<T> = std::result::Result<T, ManagedAiError>;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AiCapability {
+    WeeklyRhythm,
     BrainDump,
     DocumentExtraction,
     ScheduleVision,
     TaskDecomposition,
     PlannerExplanation,
+    ScheduleAnalysis,
     SourceQa,
     StudyGuide,
     Flashcards,
     PracticeQuestions,
     PracticeTest,
+    StudyRerank,
+    FundingProfile,
     ScholarshipWriting,
 }
 
 impl AiCapability {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::WeeklyRhythm => "weekly_rhythm",
             Self::BrainDump => "brain_dump",
             Self::DocumentExtraction => "document_extraction",
             Self::ScheduleVision => "schedule_vision",
             Self::TaskDecomposition => "task_decomposition",
             Self::PlannerExplanation => "planner_explanation",
+            Self::ScheduleAnalysis => "schedule_analysis",
             Self::SourceQa => "source_qa",
             Self::StudyGuide => "study_guide",
             Self::Flashcards => "flashcards",
             Self::PracticeQuestions => "practice_questions",
             Self::PracticeTest => "practice_test",
+            Self::StudyRerank => "study_rerank",
+            Self::FundingProfile => "funding_profile",
             Self::ScholarshipWriting => "scholarship_writing",
         }
     }

@@ -9,6 +9,7 @@ import { foldIntoCourses, parseClassSearch } from "./catalog/asu-class-search.mj
 //   npm run catalog:prepare -- --institution=104151 --term=asu-fall-2026-c \
 //     --source-label="ASU Class Search" \
 //     --source-url="https://catalog.apps.asu.edu/catalog/classes" \
+//     --captured-at="2026-08-19" \
 //     export1.txt export2.txt
 //
 // Each input is `pdftotext -layout` output of a saved Class Search page.
@@ -32,6 +33,10 @@ const records = inputs.flatMap((file) => {
   return found;
 });
 const courses = foldIntoCourses(records);
+const capturedAt = option("--captured-at");
+if (records.length > 0 && (!/^\d{4}-\d{2}-\d{2}$/.test(capturedAt ?? "") || Number.isNaN(Date.parse(`${capturedAt}T00:00:00Z`)) || new Date(`${capturedAt}T00:00:00Z`).toISOString().slice(0, 10) !== capturedAt)) {
+  throw new Error("--captured-at=YYYY-MM-DD is required for the date the class-search pages were saved");
+}
 
 const existing = JSON.parse(readFileSync(output, "utf8"));
 const entry = {
@@ -39,6 +44,7 @@ const entry = {
   termId: option("--term") ?? "",
   sourceLabel: option("--source-label") ?? "",
   sourceUrl: option("--source-url") ?? "",
+  capturedAt: capturedAt ?? null,
   courses,
 };
 // Provenance is enforced by a Rust test, but failing here is a better error.

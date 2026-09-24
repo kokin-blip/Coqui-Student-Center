@@ -8,10 +8,10 @@ import {
   LibraryBig,
   Plus,
   RefreshCw,
-  Search,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   applyScholarshipRequirementsReview,
   deleteScholarshipStory,
@@ -33,16 +33,15 @@ import type {
 import { CoquiProgress } from "../../components/ui/CoquiPrimitives";
 import type { ScholarshipRunAction } from "./scholarshipTypes";
 import { ScholarshipEmpty, ScholarshipEvidence } from "./ScholarshipEmpty";
+import { FundingResultsControls } from "./FundingResultsControls";
+import { defaultFundingFilters, fundingPreferenceFit, fundingResults } from "./fundingResults";
 
 export function SavedSection({
   workspace,
   opportunities,
-  active,
-  match,
-  query,
+  active: requestedActive,
   busy,
   profileOpen,
-  setQuery,
   setSelected,
   setProfileOpen,
   updateProfile,
@@ -51,16 +50,18 @@ export function SavedSection({
   workspace: ScholarshipWorkspace | null;
   opportunities: ScholarshipOpportunity[];
   active?: ScholarshipOpportunity;
-  match?: ScholarshipWorkspace["matches"][number];
-  query: string;
   busy: boolean;
   profileOpen: boolean;
-  setQuery: (value: string) => void;
   setSelected: (value: string) => void;
   setProfileOpen: (value: boolean) => void;
   updateProfile: (form: HTMLFormElement) => void;
   run: ScholarshipRunAction;
 }) {
+  const [filters, setFilters] = useState(defaultFundingFilters);
+  const displayed = useMemo(() => workspace ? fundingResults(opportunities, workspace.matches, workspace.profile, filters) : [], [opportunities, workspace, filters]);
+  const active = displayed.find((item) => item.id === requestedActive?.id) ?? displayed[0];
+  const match = workspace?.matches.find((item) => item.opportunityId === active?.id);
+  const preferenceFit = active && workspace ? fundingPreferenceFit(active, workspace.profile) : null;
   return (
     <div className="scholarship-saved-layout">
       <section className="scholarship-panel">
@@ -72,22 +73,15 @@ export function SavedSection({
               guessed.
             </p>
           </div>
-          <label className="scholarship-search">
-            <Search />
-            <input
-              aria-label="Search saved scholarships"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search saved"
-            />
-          </label>
         </div>
-        {opportunities.length ? (
+        <FundingResultsControls filters={filters} onChange={setFilters} count={displayed.length} total={opportunities.length} gpa={workspace?.profile.gpa ?? null} />
+        {displayed.length ? (
           <div className="opportunity-list">
-            {opportunities.map((item) => {
+            {displayed.map((item) => {
               const itemMatch = workspace?.matches.find(
                 (value) => value.opportunityId === item.id,
               );
+              const itemPreference = workspace ? fundingPreferenceFit(item, workspace.profile) : null;
               return (
                 <button
                   key={item.id}
@@ -104,6 +98,7 @@ export function SavedSection({
                           ? ` · ${item.deadlineLabel}`
                           : " · Deadline unknown"}
                     </small>
+                    {itemPreference && itemPreference.reasons.length > 0 && <small>{itemPreference.reasons.join(" · ")}</small>}
                   </span>
                   <b>
                     {itemMatch
@@ -117,8 +112,8 @@ export function SavedSection({
         ) : (
           <ScholarshipEmpty
             icon={<LibraryBig />}
-            title="No saved scholarships yet"
-            copy="Add a public opportunity in Discover. Coqui will keep the source and verification state with it."
+            title={opportunities.length ? "No opportunities match these filters" : "No saved opportunities yet"}
+            copy={opportunities.length ? "Clear filters to see your saved opportunities." : "Add a public opportunity in Discover. Coqui will keep the source and verification state with it."}
           />
         )}
       </section>
@@ -200,6 +195,19 @@ export function SavedSection({
                 defaultValue={workspace.profile.gpa ?? ""}
               />
             </label>
+            <label>
+              Interests, comma separated
+              <input name="interests" defaultValue={workspace.profile.interests?.join(", ") ?? ""} placeholder="Climate, public service" />
+            </label>
+            <label>
+              Minimum preparation time (days)
+              <input name="deadlineToleranceDays" type="number" min="1" max="365" defaultValue={workspace.profile.deadlineToleranceDays ?? ""} placeholder="e.g. 30" />
+            </label>
+            <p>These preferences change Best Match order, not eligibility. Shorter deadlines remain visible.</p>
+            <label className="confirm-row">
+              <input type="checkbox" name="notificationsEnabled" defaultChecked={workspace.profile.notificationsEnabled === true} />
+              <span><strong>Notify me about funding</strong><small>Local alerts for strong matches, saved deadlines, and unfinished applications. Requires device notification permission; turn off here anytime.</small></span>
+            </label>
             <button className="solid" disabled={busy}>
               Save matching profile
             </button>
@@ -208,6 +216,7 @@ export function SavedSection({
         {!profileOpen && active && match ? (
           <div className="match-evidence">
             <h3>{active.title}</h3>
+            {preferenceFit && preferenceFit.reasons.length > 0 && <div><p>Profile preferences affect sorting, not eligibility.</p><ScholarshipEvidence title="Your preferences" items={preferenceFit.reasons} /></div>}
             {match.ineligible.length > 0 && (
               <ScholarshipEvidence
                 title="Does not currently match"

@@ -7,6 +7,7 @@ import {
   type CourseRecord,
   type StudyArtifact,
   type StudyWorkspace,
+  type TaskRecord,
 } from "../../native";
 
 export type StudyTab = "learn" | "materials" | "grades";
@@ -20,6 +21,7 @@ export function useStudyWorkspaceModel({
 }) {
   const [study, setStudy] = useState<StudyWorkspace | null>(null);
   const [courses, setCourses] = useState<CourseRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [providers, setProviders] = useState<AiProviderStatus[]>([]);
   const [tab, setTab] = useState<StudyTab>(initialTab ?? "learn");
   const [selectedCourses, setSelectedCourses] = useState<string[]>(
@@ -70,6 +72,7 @@ export function useStudyWorkspaceModel({
       ]);
       setStudy(next);
       setCourses(workspace.courses);
+      setTasks(workspace.tasks);
       setProviders(nextProviders);
       setGradeCourse(
         (current) =>
@@ -126,6 +129,7 @@ export function useStudyWorkspaceModel({
     study,
     setStudy,
     courses,
+    tasks,
     providers,
     setProviders,
     tab,

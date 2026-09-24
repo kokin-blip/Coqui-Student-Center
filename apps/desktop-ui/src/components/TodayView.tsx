@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Undo2,
   X,
 } from "lucide-react";
 import { getCalendarAgenda } from "../native";
@@ -62,6 +63,7 @@ type Props = {
   onConflicts: () => void;
   onReview: () => void;
   onCanvas: () => void;
+  onUndoGeneratedPlan: (token: string) => void;
 };
 
 export function TodayView(p: Props) {
@@ -261,6 +263,30 @@ export function TodayView(p: Props) {
             <X />
           </button>
         </div>
+      )}
+      {p.data.planGenerationSummary && (
+        <section className="plan-ready-summary" aria-labelledby="plan-ready-title">
+          <div>
+            <h2 id="plan-ready-title">Your week is ready</h2>
+            <p>
+              {p.data.planGenerationSummary.importedAssignments} imported assignment{p.data.planGenerationSummary.importedAssignments === 1 ? "" : "s"}
+              {" · "}{p.data.planGenerationSummary.assessments} assessment{p.data.planGenerationSummary.assessments === 1 ? "" : "s"}
+              {" · "}{Math.round(p.data.planGenerationSummary.availableStudyMinutes / 60)} available study hours
+            </p>
+            <p>
+              {p.data.planGenerationSummary.generatedSessions} study session{p.data.planGenerationSummary.generatedSessions === 1 ? "" : "s"} scheduled
+              {p.data.planGenerationSummary.preservedSessions > 0 ? ` · ${p.data.planGenerationSummary.preservedSessions} protected session${p.data.planGenerationSummary.preservedSessions === 1 ? "" : "s"} kept` : ""}
+              {p.data.planGenerationSummary.conflictCount > 0 ? ` · ${p.data.planGenerationSummary.conflictCount} conflict${p.data.planGenerationSummary.conflictCount === 1 ? "" : "s"} need attention` : " · no capacity conflicts"}
+            </p>
+          </div>
+          <button
+            className="outline"
+            disabled={p.busy}
+            onClick={() => p.onUndoGeneratedPlan(p.data.planGenerationSummary!.undoToken)}
+          >
+            <Undo2 /> Restore previous plan
+          </button>
+        </section>
       )}
       {showSetup && (
         <div

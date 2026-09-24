@@ -11,6 +11,7 @@ import {
   Plus,
   Upload,
   UserRound,
+  Route,
 } from "lucide-react";
 import { useState } from "react";
 import { AppLogo } from "./AppLogo";
@@ -22,6 +23,7 @@ export type StudentDestination =
   | "work"
   | "courses"
   | "study"
+  | "semester"
   | "scholarships";
 
 type AppNavigationProps = {
@@ -43,7 +45,8 @@ const destinations = [
   { id: "work", label: "Work", icon: ListChecks },
   { id: "courses", label: "Courses", icon: BookOpen },
   { id: "study", label: "Study", icon: Brain },
-  { id: "scholarships", label: "Scholarships", icon: GraduationCap },
+  { id: "semester", label: "Semester", icon: Route },
+  { id: "scholarships", label: "Funding", icon: GraduationCap },
 ] as const;
 
 export function DesktopNavigation({
@@ -135,7 +138,7 @@ export function MobileNavigation({
           aria-expanded={moreOpen}
           className={
             active === "courses" ||
-            active === "scholarships" ||
+            active === "scholarships" || active === "semester" ||
             active === "settings" ||
             active === "academic-settings"
               ? "active"
@@ -149,6 +152,10 @@ export function MobileNavigation({
       </nav>
       {moreOpen && (
         <div className="mobile-more" role="menu" aria-label="More destinations">
+          <button
+            role="menuitem"
+            onClick={() => { onNavigate("semester"); setMoreOpen(false); }}
+          ><Route />Semester planner</button>
           <button
             role="menuitem"
             onClick={() => {
@@ -167,7 +174,7 @@ export function MobileNavigation({
             }}
           >
             <GraduationCap />
-            Scholarships
+            Funding
           </button>
           <button
             role="menuitem"

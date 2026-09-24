@@ -8,6 +8,11 @@ import {
   ImportCandidate,
   updateImportCandidate,
 } from "../native";
+import {
+  priorityName,
+  priorityReasonLabel,
+  taskKindName,
+} from "../features/tasks/taskPresentation";
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -228,6 +233,15 @@ export function ScheduleImportReview({
                     <strong>{candidate.title}</strong>
                     <small>{candidate.course}{candidate.sectionNumber ? ` · Section ${candidate.sectionNumber}` : ""}</small>
                     <small>{candidate.kind === "class_meeting" ? `${candidate.weekdays?.map((day) => weekdays[day]).join(" ")} · ${candidate.startsAtLocal}–${candidate.endsAtLocal}` : candidate.dueAt ? `Due ${new Date(candidate.dueAt).toLocaleString()}` : candidate.startsAt ? new Date(candidate.startsAt).toLocaleString() : "Date needs review"}</small>
+                    {candidate.kind === "task" && candidate.taskKind && candidate.suggestedPriority && (
+                      <div className="candidate-priority" aria-label="Suggested task classification and priority">
+                        <strong>{taskKindName(candidate.taskKind)}</strong>
+                        <span>{priorityName(candidate.suggestedPriority)} priority</span>
+                        {(candidate.priorityReasonCodes ?? []).map((reason) => (
+                          <small key={reason}>{priorityReasonLabel(reason)}</small>
+                        ))}
+                      </div>
+                    )}
                     {candidate.kind === "class_meeting" && <small>{selectedTerm ? `${selectedTerm.name} · ${selectedTerm.startsOn}–${selectedTerm.endsOn}` : "Academic term/date range needs review"}</small>}
                     {(candidate.location || candidate.modality) && <small>{[candidate.location, candidate.modality?.replaceAll("_", " ")].filter(Boolean).join(" · ")}</small>}
                     <q>{candidate.evidence}</q>

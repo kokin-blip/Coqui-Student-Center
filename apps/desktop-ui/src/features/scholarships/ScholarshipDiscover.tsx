@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   applyScholarshipRequirementsReview,
   deleteScholarshipStory,
@@ -33,6 +34,8 @@ import type {
 import { CoquiProgress } from "../../components/ui/CoquiPrimitives";
 import type { ScholarshipRunAction } from "./scholarshipTypes";
 import { ScholarshipEmpty, ScholarshipEvidence } from "./ScholarshipEmpty";
+import { FundingResultsControls } from "./FundingResultsControls";
+import { defaultFundingFilters, fundingPreferenceFit, fundingResults } from "./fundingResults";
 
 export function DiscoverSection({
   workspace,
@@ -63,6 +66,8 @@ export function DiscoverSection({
   addManual: () => void;
   run: ScholarshipRunAction;
 }) {
+  const [filters, setFilters] = useState(defaultFundingFilters);
+  const displayed = useMemo(() => workspace ? fundingResults(discovered, workspace.matches, workspace.profile, filters) : [], [discovered, workspace, filters]);
   return (
     <div className="scholarship-grid">
       <section className="scholarship-panel">
@@ -83,13 +88,16 @@ export function DiscoverSection({
                 <span>
                   <strong>{source.name}</strong>
                   <small>
-                    {source.lastFetchedAt
+                    {source.status === "error" && source.lastError
+                      ? `${source.lastError} Cached opportunities remain available.`
+                      : source.lastFetchedAt
                       ? `Last checked ${new Date(source.lastFetchedAt).toLocaleString()}`
                       : source.status === "disabled"
                         ? (source.lastError ??
                           "Open this source to search manually")
                         : "Not checked yet"}
                   </small>
+                  {source.kind === "catalog" && source.status !== "disabled" && <small>Signed public opportunities. Your profile stays on this device.</small>}
                   {source.status !== "disabled" && (
                     <label className="source-refresh-toggle">
                       <input
@@ -108,19 +116,19 @@ export function DiscoverSection({
                           )
                         }
                       />
-                      Weekly
+                      {source.kind === "catalog" ? "Automatic daily" : "Weekly"}
                     </label>
                   )}
                 </span>
                 <div>
-                  <a
+                  {source.kind !== "catalog" && <a
                     href={source.origin}
                     target="_blank"
                     rel="noreferrer"
                     aria-label={`Open ${source.name}`}
                   >
                     <ExternalLink />
-                  </a>
+                  </a>}
                   {source.status !== "disabled" && (
                     <button
                       className="outline"
@@ -143,16 +151,21 @@ export function DiscoverSection({
         {discovered.length > 0 && (
           <div className="discovered-list">
             <h3>Newly discovered</h3>
-            {discovered.map((item) => (
+            <FundingResultsControls filters={filters} onChange={setFilters} count={displayed.length} total={discovered.length} gpa={workspace?.profile.gpa ?? null} />
+            {displayed.map((item) => {
+              const preference = workspace ? fundingPreferenceFit(item, workspace.profile) : null;
+              return (
               <article key={item.id}>
                 <span>
                   <strong>{item.title}</strong>
                   <small>
+                    {item.provider} · {(item.opportunityType ?? "scholarship").replaceAll("_", " ")} · {" "}
                     {item.awardMaximum
                       ? `Up to $${item.awardMaximum.toLocaleString()}`
                       : "Award varies"}{" "}
-                    · {item.deadlineLabel || "Deadline not published"}
+                    · {item.deadline ? `Due ${new Date(`${item.deadline}T12:00:00`).toLocaleDateString()}` : item.deadlineLabel || "Deadline not published"}
                   </small>
+                  {preference && preference.reasons.length > 0 && <small>Profile preferences: {preference.reasons.join(" · ")}. These do not establish eligibility.</small>}
                 </span>
                 <button
                   className="solid"
@@ -168,7 +181,9 @@ export function DiscoverSection({
                   Save
                 </button>
               </article>
-            ))}
+              );
+            })}
+            {displayed.length === 0 && <p className="funding-no-results">No discovered opportunities match these filters. Clear filters to see everything.</p>}
           </div>
         )}
       </section>

@@ -39,6 +39,7 @@ test("every nested Settings page is reachable and passes automated accessibility
   await user.click(
     await screen.findByRole("button", { name: "Settings", exact: true }),
   );
+  await screen.findByRole("heading", { name: "Settings", exact: true }, { timeout: 8000 });
   const sections = [
     [/Canvas Calendar-link/, "Connect Canvas"],
     [/AI providers OpenAI/, "AI providers"],
@@ -101,7 +102,7 @@ test("modal focus handling and schedule review pass automated accessibility chec
   await expectNoAccessibilityViolations();
 });
 
-test("Work, Courses, Study, Scholarships, and Settings pass automated accessibility checks", async () => {
+test("Work, Courses, Study, Funding, and Settings pass automated accessibility checks", async () => {
   const user = userEvent.setup();
   render(<StudentCenter />);
   const navigation = await screen.findByRole(
@@ -109,7 +110,7 @@ test("Work, Courses, Study, Scholarships, and Settings pass automated accessibil
     { name: "Primary navigation" },
     { timeout: 8000 },
   );
-  for (const destination of ["Work", "Courses", "Study", "Scholarships"]) {
+  for (const destination of ["Work", "Courses", "Study", "Funding"]) {
     await user.click(
       within(navigation).getByRole("button", { name: destination }),
     );
@@ -120,7 +121,7 @@ test("Work, Courses, Study, Scholarships, and Settings pass automated accessibil
     );
     if (destination === "Study")
       await screen.findByText(/Citations are required/);
-    if (destination === "Scholarships")
+    if (destination === "Funding")
       await screen.findByText("Trusted sources");
     await expectNoAccessibilityViolations();
   }
