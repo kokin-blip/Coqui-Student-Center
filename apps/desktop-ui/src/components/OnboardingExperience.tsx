@@ -1,3 +1,4 @@
+import { AutomaticPlanning } from "../features/planning/AutomaticPlanning";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -590,6 +591,7 @@ export function OnboardingExperience({
         </div>
         <footer className="setup-actions">{step > 0 ? <button className="outline" onClick={() => setStep((value) => value - 1)}><ArrowLeft /> Back</button> : <span />}<div className="setup-actions-end">{skippable && <button className="text-button" disabled={busy} onClick={() => step === 3 ? void finish() : setStep((value) => value + 1)}>Skip for now</button>}<button className="solid" disabled={!canContinue || busy} onClick={() => step === 3 ? void finish() : setStep((value) => value + 1)}>{step === 3 ? "Build my first plan" : "Continue"}<ArrowRight /></button></div></footer>
       </section>
+      <AutomaticPlanning refreshKey={aiConnected} onboarding />
     </main>
   );
 }

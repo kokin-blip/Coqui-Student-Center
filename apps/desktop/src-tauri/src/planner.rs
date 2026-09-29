@@ -212,6 +212,10 @@ impl PartialOrd for Score {
 }
 
 pub fn generate(snapshot: &PlannerSnapshot) -> Result<PlanOutcome, String> {
+    generate_ordered(snapshot, &[])
+}
+
+pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<PlanOutcome, String> {
     let timezone: Tz = snapshot
         .timezone
         .parse()
@@ -288,7 +292,10 @@ pub fn generate(snapshot: &PlannerSnapshot) -> Result<PlanOutcome, String> {
                     .then_some(*task)
             })
             .collect::<Vec<_>>();
-        ready.sort_by(|left, right| task_order(left, right));
+        ready.sort_by(|left, right| {
+            let rank = |id: &String| order.iter().position(|value| value == id).unwrap_or(usize::MAX);
+            rank(&left.id).cmp(&rank(&right.id)).then_with(|| task_order(left, right))
+        });
         if ready.is_empty() {
             for id in pending.iter() {
                 let task = tasks_by_id[id];
@@ -522,6 +529,71 @@ fn task_order(left: &PlannerTask, right: &PlannerTask) -> Ordering {
             -right.academic_risk,
             right.id.as_str(),
         ))
+}
+
+/// Validate a complete editable proposal using the same availability and occupied
+/// intervals as deterministic planning. Provider output never bypasses this gate.
+pub fn validate_proposed(snapshot: &PlannerSnapshot, blocks: &[PlannedBlock]) -> Result<PlanOutcome, String> {
+    let timezone: Tz = snapshot.timezone.parse().map_err(|_| "Invalid timezone")?;
+    let floor = round_up(snapshot.effective_time.max(snapshot.generated_at), GRANULARITY_MINUTES);
+    let end = round_up(snapshot.effective_time, GRANULARITY_MINUTES) + Duration::days(snapshot.horizon_days);
+    if floor>=end {return Err("Planning review horizon has expired".into());}
+    let availability = availability_intervals(snapshot, timezone, floor, end)?;
+    let mut occupied = constraint_intervals(snapshot, floor, end);
+    occupied.extend(sleep_intervals(snapshot, timezone, floor, end)?);
+    let fixed_minutes = occupied.iter().map(|item| (item.end-item.start).num_minutes().max(0)).sum();
+    let mut minutes = BTreeMap::<String, i64>::new();
+    let mut completion = BTreeMap::new();
+    for task in &snapshot.tasks {
+        if task.completed { completion.insert(task.id.clone(), floor); }
+    }
+    for block in &snapshot.existing_blocks {
+        if block.completed || block.locked || block.starts_at < floor {
+            occupied.push(Occupied { start:block.starts_at, end:block.ends_at + Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)), location:block.location.clone(), course_id:block.course_id.clone() });
+            if block.completed || block.ends_at > floor {
+                *minutes.entry(block.task_id.clone()).or_default() += (block.ends_at-block.starts_at).num_minutes();
+                completion.entry(block.task_id.clone()).and_modify(|time| *time=(*time).max(block.ends_at)).or_insert(block.ends_at);
+            }
+        }
+    }
+    let mut sorted = blocks.to_vec();
+    sorted.sort_by_key(|block| (block.starts_at, block.task_id.clone()));
+    if sorted.len() > 512 { return Err("Too many proposed sessions".into()); }
+    let mut ids = BTreeSet::new();
+    for block in &sorted {
+        let task = snapshot.tasks.iter().find(|task| task.id==block.task_id && !task.completed).ok_or("Proposal references an ineligible task")?;
+        if !ids.insert(&block.id) || snapshot.existing_blocks.iter().any(|old| old.id==block.id && (old.locked || old.completed || old.starts_at<floor)) {
+            return Err("Proposal modifies protected work or repeats a session".into());
+        }
+        let duration = (block.ends_at-block.starts_at).num_minutes();
+        let maximum = task.max_session_minutes.min(snapshot.preferences.max_session_minutes).max(5);
+        let minimum = task.min_session_minutes.max(snapshot.preferences.min_session_minutes).max(5).min(maximum);
+        let remaining = (task.duration_minutes-minutes.get(&task.id).copied().unwrap_or(0)).max(0);
+        if duration<=0 || block.ends_at-block.starts_at != Duration::minutes(duration) || duration>remaining ||
+            (task.splittable && (duration<minimum || duration>maximum)) || (!task.splittable && duration!=remaining) {
+            return Err(format!("{}: session duration violates remaining work or session limits", task.title));
+        }
+        let mut task_floor = floor.max(task.earliest_start.unwrap_or(floor));
+        for dependency in &task.dependencies {
+            let parent = snapshot.tasks.iter().find(|item| &item.id==dependency).ok_or("Missing dependency")?;
+            if !parent.completed && minutes.get(dependency).copied().unwrap_or(0)<parent.duration_minutes {
+                return Err(format!("{}: prerequisite work is unfinished",task.title));
+            }
+            task_floor=task_floor.max(completion.get(dependency).copied().unwrap_or(floor));
+        }
+        if !candidate_slots(task,duration,task_floor,end,&availability,&occupied,&[],0,timezone,false).iter().any(|(start,finish,_)| *start==block.starts_at && *finish==block.ends_at) {
+            return Err(format!("{}: time conflicts with availability, deadlines, sleep, breaks, or protected work",task.title));
+        }
+        *minutes.entry(task.id.clone()).or_default() += duration;
+        completion.entry(task.id.clone()).and_modify(|time| *time=(*time).max(block.ends_at)).or_insert(block.ends_at);
+        occupied.push(Occupied { start:block.starts_at,end:block.ends_at+Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),location:task.location.clone(),course_id:task.course_id.clone() });
+        occupied.sort_by_key(|item| (item.start,item.end));
+    }
+    let overload_conflicts = snapshot.tasks.iter().filter(|task| !task.completed).filter_map(|task| {
+        let unscheduled=(task.duration_minutes-minutes.get(&task.id).copied().unwrap_or(0)).max(0);
+        (unscheduled>0).then(|| OverloadConflict { task_id:task.id.clone(),title:task.title.clone(),unscheduled_minutes:unscheduled,reason_codes:vec!["unscheduled_in_preview".into()] })
+    }).collect::<Vec<_>>();
+    Ok(PlanOutcome { blocks:sorted, capacity:CapacitySummary { available_minutes:availability.iter().map(|(start,end)| (*end-*start).num_minutes()).sum(),fixed_minutes,planned_minutes:blocks.iter().map(|block| (block.ends_at-block.starts_at).num_minutes()).sum(),overload_minutes:overload_conflicts.iter().map(|conflict| conflict.unscheduled_minutes).sum() },overload_conflicts })
 }
 
 fn split_sessions(
@@ -1125,4 +1197,33 @@ mod tests {
         assert!(ranked.alternatives.len() <= 2);
         assert!(ranked.valid_until > ranked.valid_from);
     }
+    #[test]
+    fn editable_proposals_enforce_deadlines_dependencies_sleep_breaks_and_travel() {
+        let input=snapshot();
+        let baseline=generate(&input).unwrap();
+        validate_proposed(&input,&baseline.blocks).unwrap();
+        let mut altered=baseline.blocks.clone();
+        altered[0].starts_at=input.fixed_constraints[0].starts_at-Duration::minutes(20);
+        altered[0].ends_at=altered[0].starts_at+Duration::minutes(60);
+        assert!(validate_proposed(&input,&altered).is_err(),"travel intervals are hard constraints");
+        let mut altered=baseline.blocks.clone();
+        altered[1].starts_at=altered[0].ends_at;
+        altered[1].ends_at=altered[1].starts_at+Duration::minutes(60);
+        assert!(validate_proposed(&input,&altered).is_err(),"sessions need breaks");
+        let mut altered=baseline.blocks.clone();
+        altered[0].starts_at=input.tasks[0].due_at.unwrap();
+        altered[0].ends_at=altered[0].starts_at+Duration::minutes(60);
+        assert!(validate_proposed(&input,&altered).is_err(),"deadlines are enforced");
+        let mut altered=baseline.blocks.clone();
+        altered[0].starts_at="2026-08-18T07:00:00Z".parse().unwrap();
+        altered[0].ends_at=altered[0].starts_at+Duration::minutes(60);
+        assert!(validate_proposed(&input,&altered).is_err(),"sleep is protected");
+        let mut dependent=input.clone();
+        let mut parent=dependent.tasks[0].clone();parent.id="prerequisite".into();parent.duration_minutes=60;
+        dependent.tasks[0].dependencies.push(parent.id.clone());dependent.tasks.push(parent);
+        assert!(validate_proposed(&dependent,&baseline.blocks).is_err(),"unfinished prerequisites cannot be bypassed");
+        let mut duplicate=baseline.blocks.clone();duplicate.push(duplicate[0].clone());
+        assert!(validate_proposed(&input,&duplicate).is_err());
+    }
+
 }

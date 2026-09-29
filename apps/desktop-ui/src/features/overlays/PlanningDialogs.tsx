@@ -1,4 +1,6 @@
 import { ChevronRight, CircleAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import { getPlanningPreferences } from "../planning/planningApi";
 import type { Dashboard } from "../../native";
 import { Modal } from "../../components/Modal";
 
@@ -35,6 +37,8 @@ export function PlanningDialogs({
   ) => void;
   submitReplan: () => void;
 }) {
+  const [aiEnabled, setAiEnabled] = useState(false);
+  useEffect(() => { if (active === "replan") void getPlanningPreferences().then(value => setAiEnabled(value.choice === "enabled")).catch(() => setAiEnabled(false)); }, [active]);
   if (active === "conflicts") {
     return (
       <Modal
@@ -163,6 +167,7 @@ export function PlanningDialogs({
         <button className="outline" onClick={close}>
           Keep current plan
         </button>
+        {aiEnabled && <button className="outline" disabled={busy} onClick={() => { close(); window.dispatchEvent(new Event("coqui-open-ai-planning")); }}>AI-assisted planning</button>}
         <button className="solid" disabled={busy} onClick={submitReplan}>
           Build a realistic plan
         </button>

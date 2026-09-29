@@ -296,6 +296,7 @@ export const AiProviderId = z.enum(["openai", "anthropic", "gemini"]);
 export type AiProviderId = z.infer<typeof AiProviderId>;
 
 export const AiCapability = z.enum([
+  "automatic_planning",
   "brain_dump",
   "document_extraction",
   "schedule_vision",

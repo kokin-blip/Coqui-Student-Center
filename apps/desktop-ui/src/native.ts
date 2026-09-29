@@ -512,6 +512,7 @@ export type Dashboard = {
   planGenerationSummary?: PlanGenerationSummary;
 };
 export type PlanGenerationSummary = {
+  aiAssisted?: boolean;
   undoToken: string;
   generatedAt: string;
   importedAssignments: number;
@@ -2605,6 +2606,7 @@ let browserAiProviders: AiProviderStatus[] = (
     "schedule_vision",
     "task_decomposition",
     "planner_explanation",
+    "automatic_planning",
     "source_qa",
     "study_guide",
     "flashcards",
@@ -2643,14 +2645,17 @@ export async function saveAiProviderKey(
           }
         : item,
     );
+    window.dispatchEvent(new Event("coqui-planning-settings"));
     return structuredClone(browserAiProviders);
   }
-  return call<AiProviderStatus[]>("save_ai_provider_key", {
+  const connected = await call<AiProviderStatus[]>("save_ai_provider_key", {
     provider,
     key,
     model,
     ageConfirmed,
   });
+  window.dispatchEvent(new Event("coqui-planning-settings"));
+  return connected;
 }
 export async function testAiProvider(provider: AiProviderId) {
   return isDesktop()

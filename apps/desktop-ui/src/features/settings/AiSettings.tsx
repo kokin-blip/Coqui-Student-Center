@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PlanningSettings } from "../planning/PlanningSettings";
 import { Brain } from "lucide-react";
 import { SettingsDetail } from "../../components/SettingsDetail";
 import {
@@ -256,6 +257,7 @@ export function AiSettings({
               Validate and connect
             </button>
           </section>
+          <PlanningSettings />
           <section className="setup-fieldset">
           <h2>Local usage</h2>
             {aiUsage.length ? (

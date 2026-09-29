@@ -1,3 +1,4 @@
+import { AutomaticPlanning } from "./features/planning/AutomaticPlanning";
 import { TaskDetailsSession } from "./features/tasks/TaskDetailsSession";
 import type { WorkFilter } from "./components/WorkView";
 import type { StudyTab } from "./features/study/studyModel";
@@ -1156,6 +1157,7 @@ export function StudentCenter() {
               </button>
             </div>
           </header>
+          <AutomaticPlanning refreshKey={data} blocked={modal !== null} onDashboard={setData} onLocalPlanning={() => setModal("replan")} />
           <Suspense
             fallback={
               <div className="content">

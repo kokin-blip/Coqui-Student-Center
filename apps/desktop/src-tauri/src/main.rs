@@ -3,6 +3,7 @@
 mod auth;
 mod academic_intelligence;
 mod ai_providers;
+mod automatic_planning;
 mod backup;
 mod canvas;
 mod canvas_calendar;
@@ -431,6 +432,8 @@ struct PlanBlock {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct PlanGenerationSummary {
+    #[serde(default)]
+    ai_assisted: bool,
     undo_token: String,
     generated_at: String,
     imported_assignments: i64,
@@ -447,6 +450,10 @@ struct PlanGenerationUndo {
     token: String,
     before_blocks: Vec<PlanBlock>,
     after_blocks: Vec<PlanBlock>,
+    #[serde(default)]
+    before_auxiliary: Option<automatic_planning::Auxiliary>,
+    #[serde(default)]
+    after_auxiliary: Option<automatic_planning::Auxiliary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2937,6 +2944,7 @@ fn regenerate_plan_for_trigger(
             })
             .count() as i64;
         let summary = PlanGenerationSummary {
+            ai_assisted: false,
             undo_token: token.clone(),
             generated_at: now.clone(),
             imported_assignments,
@@ -2947,6 +2955,8 @@ fn regenerate_plan_for_trigger(
             conflict_count: outcome.overload_conflicts.len() as i64,
         };
         let undo = PlanGenerationUndo {
+            before_auxiliary: None,
+            after_auxiliary: None,
             token,
             before_blocks,
             after_blocks,
@@ -3605,8 +3615,12 @@ fn undo_generated_plan_in(conn: &Connection, token: &str) -> Result<()> {
                 .into(),
         ));
     }
+    if let Some(after) = &undo.after_auxiliary {
+        if &automatic_planning::capture_auxiliary(conn)? != after { return Err(AppError::Invalid("Planning capacity or conflicts changed; undo would overwrite newer work".into())); }
+    }
     let tx = conn.unchecked_transaction()?;
     restore_plan_blocks(&tx, &undo.before_blocks)?;
+    if let Some(auxiliary) = &undo.before_auxiliary { automatic_planning::restore_auxiliary(&tx, auxiliary)?; }
     invalidate_generated_plan_undo(&tx)?;
     mutation(&tx, "plan", token, "generation_undone", "{}")?;
     tx.commit()?;
@@ -8094,7 +8108,7 @@ fn resolve_ai_provider(conn: &Connection, capability: managed_ai::AiCapability) 
 }
 
 fn all_ai_capabilities() -> Vec<String> {
-    ["weekly_rhythm","brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","schedule_analysis","source_qa","study_guide","flashcards","practice_questions","practice_test","study_rerank","funding_profile","scholarship_writing"]
+    ["weekly_rhythm","brain_dump","document_extraction","schedule_vision","task_decomposition","planner_explanation","automatic_planning","schedule_analysis","source_qa","study_guide","flashcards","practice_questions","practice_test","study_rerank","funding_profile","scholarship_writing"]
         .into_iter().map(str::to_owned).collect()
 }
 
@@ -10652,6 +10666,7 @@ fn install_staged_profile(state: &AppState, staged: backup::StagedArchive) -> Re
         for provider in ai_providers::ProviderId::ALL {
             ai_providers::remove_key(provider)?;
         }
+        automatic_planning::clear_restore_authorization(&replacement)?;
         fs::remove_file(&journal_path)?;
         Ok(replacement)
     })();
@@ -10977,6 +10992,14 @@ fn main() {
             start_plan_block,
             snooze_reminder,
             dismiss_reminder,
+            automatic_planning::get_automatic_planning_preferences,
+            automatic_planning::set_automatic_planning_preferences,
+            automatic_planning::get_automatic_planning_status,
+            automatic_planning::prepare_automatic_planning,
+            automatic_planning::request_automatic_planning,
+            automatic_planning::validate_automatic_planning,
+            automatic_planning::apply_automatic_planning,
+            automatic_planning::discard_automatic_planning,
             list_ai_providers,
             save_ai_provider_key,
             test_ai_provider,
@@ -11324,7 +11347,7 @@ mod tests {
 
     #[test]
     fn every_data_bearing_command_has_a_locked_state_guard() {
-        let source = include_str!("main.rs");
+        let source = concat!(include_str!("main.rs"), "\n", include_str!("automatic_planning.rs"));
         for command in [
             "get_dashboard",
             "get_calendar_agenda",
@@ -11415,6 +11438,14 @@ mod tests {
             "start_plan_block",
             "snooze_reminder",
             "dismiss_reminder",
+            "get_automatic_planning_preferences",
+            "set_automatic_planning_preferences",
+            "get_automatic_planning_status",
+            "prepare_automatic_planning",
+            "request_automatic_planning",
+            "validate_automatic_planning",
+            "apply_automatic_planning",
+            "discard_automatic_planning",
             "list_ai_providers",
             "save_ai_provider_key",
             "test_ai_provider",
@@ -11789,7 +11820,7 @@ mod tests {
         assert!(document_columns.contains("extraction_status"));
     }
 
-    fn complete_test_onboarding(conn: &mut Connection) {
+    pub(crate) fn complete_test_onboarding(conn: &mut Connection) {
         profile::complete_onboarding(
             conn,
             &profile::OnboardingDraft {
@@ -12503,6 +12534,8 @@ mod tests {
         let after = vec![block("after", "2026-09-22T08:00:00Z", false)];
         restore_plan_blocks(&conn, &after).unwrap();
         let undo = PlanGenerationUndo {
+            before_auxiliary: None,
+            after_auxiliary: None,
             token: "undo-token".into(),
             before_blocks: before.clone(),
             after_blocks: after,
@@ -12548,6 +12581,8 @@ mod tests {
         };
         restore_plan_blocks(&conn, std::slice::from_ref(&generated)).unwrap();
         let undo = PlanGenerationUndo {
+            before_auxiliary: None,
+            after_auxiliary: None,
             token: "stale-token".into(),
             before_blocks: Vec::new(),
             after_blocks: vec![generated],

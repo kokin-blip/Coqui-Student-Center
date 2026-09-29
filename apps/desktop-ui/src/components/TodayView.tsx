@@ -267,12 +267,12 @@ export function TodayView(p: Props) {
       {p.data.planGenerationSummary && (
         <section className="plan-ready-summary" aria-labelledby="plan-ready-title">
           <div>
-            <h2 id="plan-ready-title">Your week is ready</h2>
-            <p>
+            <h2 id="plan-ready-title">{p.data.planGenerationSummary.aiAssisted ? "Your reviewed AI-assisted plan is ready" : "Your week is ready"}</h2>
+            {!p.data.planGenerationSummary.aiAssisted && <p>
               {p.data.planGenerationSummary.importedAssignments} imported assignment{p.data.planGenerationSummary.importedAssignments === 1 ? "" : "s"}
               {" · "}{p.data.planGenerationSummary.assessments} assessment{p.data.planGenerationSummary.assessments === 1 ? "" : "s"}
               {" · "}{Math.round(p.data.planGenerationSummary.availableStudyMinutes / 60)} available study hours
-            </p>
+            </p>}
             <p>
               {p.data.planGenerationSummary.generatedSessions} study session{p.data.planGenerationSummary.generatedSessions === 1 ? "" : "s"} scheduled
               {p.data.planGenerationSummary.preservedSessions > 0 ? ` · ${p.data.planGenerationSummary.preservedSessions} protected session${p.data.planGenerationSummary.preservedSessions === 1 ? "" : "s"} kept` : ""}
