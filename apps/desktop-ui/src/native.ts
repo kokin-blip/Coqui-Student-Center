@@ -377,6 +377,10 @@ export type StudyArtifact = {
   provider: string;
   model: string;
   updatedAt: string;
+  revision?: number;
+  tags?: string[];
+  pinned?: boolean;
+  sourceIds?: string[];
 };
 export type StudyReview = {
   id: string;
@@ -396,18 +400,18 @@ export type GradeCategory = {
 export type GradeItem = {
   id: string;
   courseId: string;
-  categoryId?: string;
+  categoryId?: string | null;
   title: string;
-  score?: number;
+  score?: number | null;
   pointsPossible: number;
-  dueAt?: string;
+  dueAt?: string | null;
   status: "graded" | "missing" | "planned";
 };
 export type CourseGrade = {
   courseId: string;
-  currentPercent?: number;
+  currentPercent?: number | null;
   missingWorkImpact: number;
-  projectedLetter?: string;
+  projectedLetter?: string | null;
   creditHours: number;
 };
 export type CourseGradingScale = {
@@ -423,7 +427,7 @@ export type StudyWorkspace = {
   gradeItems: GradeItem[];
   courseGrades: CourseGrade[];
   gradingScales: CourseGradingScale[];
-  gpaProjection?: number;
+  gpaProjection?: number | null;
 };
 export type GroundedStudyInput = {
   capability:
@@ -1304,7 +1308,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 30,
+      schemaVersion: 31,
       onboarding: onboardingMode
         ? structuredClone(browserOnboardingState)
         : null,
@@ -1678,7 +1682,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 30,
+      schemaVersion: 31,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -2692,7 +2696,8 @@ let browserStudyWorkspace: StudyWorkspace = {
   reviews: [],
   gradeCategories: [],
   gradeItems: [],
-  courseGrades: [],
+  courseGrades: browserWorkspace.courses.map(c => ({courseId:c.id,currentPercent:null,projectedLetter:null,missingWorkImpact:0,creditHours:3})),
+  gpaProjection: null,
   gradingScales: [],
 };
 export async function getStudyWorkspace() {
@@ -2722,36 +2727,62 @@ export async function updateStudyMaterial(input:StudyMaterialInput) {
   }
   return call<StudyWorkspace>("update_study_material", {input});
 }
-export async function generateGroundedStudyArtifact(input: GroundedStudyInput) {
-  if (!isDesktop()) {
-    const artifact: StudyArtifact = {
-      id: crypto.randomUUID(),
-      courseId: input.courseIds[0],
-      kind: input.capability,
-      title: input.title || "Grounded study result",
-      content:
-        "Browser preview: the installed app validates every claim against selected local sources.",
-      citations: [],
-      provider: "openai",
-      model: "browser-test-model",
-      updatedAt: new Date().toISOString(),
-    };
-    browserStudyWorkspace.artifacts.unshift(artifact);
-    return {
-      workspace: structuredClone(browserStudyWorkspace),
-      artifactId: artifact.id,
-      provider: artifact.provider,
-      model: artifact.model,
-    };
-  }
-  return call<{
-    workspace: StudyWorkspace;
-    artifactId: string;
-    provider: string;
-    model: string;
-  }>("generate_grounded_study_artifact", { input });
+export type StudySourceText = { id:string; locator:string; text:string };
+export type PrepareStudyInput = {kind:string;courseIds:string[];documentIds:string[];prompt:string;title:string};
+export type PreparedStudyRequest = {id:string;provider:string;model:string;input:PrepareStudyInput;sources:StudySourceText[];fingerprint:string;requestText?:string};
+export type StudyPreview = {previewId:string;courseId:string;kind:string;title:string;content:string;citations:GroundedCitation[];sourceIds:string[];provider:string;model:string};
+export type StudyNoteInput = {id?:string;expectedRevision:number;courseId:string;kind:string;title:string;content:string;tags:string[];pinned:boolean;sourceIds:string[];previewId?:string};
+const previewRequests = new Map<string,PreparedStudyRequest>();
+const studyPreviews = new Map<string,StudyPreview>();
+export async function prepareStudyRequest(input:PrepareStudyInput):Promise<PreparedStudyRequest>{
+  if(isDesktop())return call("prepare_study_request",{input});
+  const provider=(await listAiProviders()).find(p=>p.connected&&p.healthy);
+  if(!provider)throw new Error("Connect an AI provider first.");
+  const prepared={id:crypto.randomUUID(),provider:provider.provider,model:provider.model,input,sources:input.documentIds.map(id=>({id,locator:"Browser preview",text:"Synthetic preview text. Installed profiles disclose the exact locally extracted sections."})),fingerprint:JSON.stringify(input)};
+  previewRequests.set(prepared.id,prepared);return prepared;
 }
-export async function rerankStudyMaterials(input: { courseId:string;targetId:string;materialIds:string[];consent:boolean }) {
+export async function generateGroundedStudyArtifact(input:{preparedId:string;expectedProvider:string;expectedModel:string;consent:boolean}):Promise<StudyPreview>{
+  if(isDesktop())return call("generate_grounded_study_artifact",{input});
+  const p=previewRequests.get(input.preparedId);previewRequests.delete(input.preparedId);
+  if(!input.consent||!p||p.provider!==input.expectedProvider||p.model!==input.expectedModel)throw new Error("Prepare and consent to this request again.");
+  const preview={previewId:crypto.randomUUID(),courseId:p.input.courseIds[0],kind:p.input.kind,title:p.input.title||"Study draft",content:"Browser preview: the installed app validates references against selected sources.",citations:[],sourceIds:p.input.documentIds,provider:p.provider,model:p.model};
+  studyPreviews.set(preview.previewId,preview);return preview;
+}
+export async function saveStudyNote(input:StudyNoteInput):Promise<StudyWorkspace>{
+  if(isDesktop())return call("save_study_note",{input});
+  if(!input.title.trim()||!input.content.trim()||input.content.length>40000)throw new Error("Add a title and content up to 40,000 characters.");
+  const old=browserStudyWorkspace.artifacts.find(a=>a.id===input.id);
+  if(input.id&&(old?.revision??1)!==input.expectedRevision)throw new Error("This note changed. Reload before saving.");
+  const preview=input.previewId?studyPreviews.get(input.previewId):undefined;
+  if(input.previewId&&!preview)throw new Error("This preview is unavailable.");
+  const artifact:StudyArtifact={id:input.id??crypto.randomUUID(),courseId:input.courseId,kind:input.kind,title:input.title,content:input.content,citations:preview?.citations??old?.citations??[],provider:preview?.provider??old?.provider??"manual",model:preview?.model??old?.model??"local",updatedAt:new Date().toISOString(),revision:(old?.revision??0)+1,tags:input.tags,pinned:input.pinned,sourceIds:preview?.sourceIds??old?.sourceIds??input.sourceIds};
+  browserStudyWorkspace.artifacts=[artifact,...browserStudyWorkspace.artifacts.filter(a=>a.id!==artifact.id)];
+  if(input.previewId)studyPreviews.delete(input.previewId);
+  return structuredClone(browserStudyWorkspace);
+}
+export async function discardStudyPreview(previewId:string):Promise<void>{
+  if(isDesktop())return call("discard_study_preview",{previewId});
+  studyPreviews.delete(previewId);
+}
+export async function deleteStudyNote(id:string,expectedRevision:number):Promise<StudyWorkspace>{
+  if(isDesktop())return call("delete_study_note",{id,expectedRevision});
+  const old=browserStudyWorkspace.artifacts.find(a=>a.id===id);if((old?.revision??1)!==expectedRevision)throw new Error("This note changed. Reload before deleting.");
+  browserStudyWorkspace.artifacts=browserStudyWorkspace.artifacts.filter(a=>a.id!==id);return structuredClone(browserStudyWorkspace);
+}
+const browserSourceText=new Map<string,StudySourceText[]>();
+export async function getStudySourceText(documentId:string):Promise<StudySourceText[]>{
+  if(isDesktop())return call("get_study_source_text",{documentId});
+  const source=browserSourceText.get(documentId);if(!source)throw new Error("Source text is unavailable. Reimport a text source.");return structuredClone(source);
+}
+export async function importStudySource(courseId:string,file:File):Promise<StudyWorkspace>{
+  if(!file.size||file.size>25*1024*1024)throw new Error("Choose a non-empty file up to 25 MB.");
+  if(isDesktop())return call("import_study_source",{courseId,fileName:file.name,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))});
+  if(!/\.txt$/i.test(file.name))throw new Error("Browser preview imports TXT only. Native extraction supports PDF, DOCX, PPTX and images.");
+  const text=await file.text(),id=crypto.randomUUID();browserSourceText.set(id,[{id:crypto.randomUUID(),locator:"Text section 1",text}]);
+  browserStudyWorkspace.materials.unshift({id,fileName:file.name,mime:"text/plain",title:file.name,courseIds:[courseId],segmentCount:1,materialType:"notes",topics:[],dateAdded:new Date().toISOString(),extractionStatus:"complete",source:"Student import",favorite:false,teacherProvided:false});
+  return structuredClone(browserStudyWorkspace);
+}
+export async function rerankStudyMaterials(input: { courseId:string;targetId:string;materialIds:string[];consent:boolean;expectedProvider:string;expectedModel:string;sourceScope:string }) {
   if (!isDesktop()) return { rankedIds:[...input.materialIds],provider:"browser-preview",model:"deterministic-preview" };
   return call<{ rankedIds:string[];provider:string;model:string }>("rerank_study_materials",{input});
 }

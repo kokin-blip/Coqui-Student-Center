@@ -60,6 +60,7 @@ export function StudyView({
           )}
         </div>
       )}
+      {vm.providerStatusError && <p role="status" className="workflow-status">{vm.providerStatusError} <button className="text-button" onClick={()=>void vm.refreshProviders()}>Retry provider status</button></p>}
       {notice && (
         <p className="success-summary" role="status">
           {notice}

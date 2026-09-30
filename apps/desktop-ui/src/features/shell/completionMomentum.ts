@@ -1,7 +1,7 @@
 import type { Dashboard, TaskRecord } from "../../native";
 import { blocksForDay } from "../today/todayModel";
 
-export type CelebrationReason = "plan" | "major" | "early" | "streak" | "weekly";
+export type CelebrationReason = "plan" | "major" | "early" | "streak" | "weekly" | "on-time";
 export type CompletionMomentum = {
   seenTaskIds: string[];
   seenPlanDates: string[];

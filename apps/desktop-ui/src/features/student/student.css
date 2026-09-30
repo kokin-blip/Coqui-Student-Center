@@ -1,0 +1,50 @@
+.quick-notes-workspace,.daily-checkin,.assignment-streak,.notes-organizer { display:grid; gap:var(--space-4,16px); }
+.quick-note,.checkin-item { padding:var(--space-4,16px) 0; border-bottom:1px solid var(--line); }
+.note-content,.source-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.daily-checkin,.assignment-streak { grid-template-columns:minmax(0,1fr); margin:16px 0; padding:20px; border:1px solid var(--line); border-radius:12px; }
+.checkin-item .record-actions { flex-wrap:wrap; }
+.notes-organizer textarea { min-height:180px; }
+.source-text { max-height:280px; overflow:auto; }
+.workflow-status { color:var(--text-secondary); }
+.quick-notes-dialog .modal { width:min(880px,100%); padding:var(--space-6); }
+.quick-notes-dialog .modal > header { margin-bottom:var(--space-8); }
+.quick-notes-workspace { gap:var(--space-8); }
+.quick-note-editor { display:grid; align-content:start; gap:var(--space-5); min-width:0; }
+.quick-notes-workspace .field { margin:0; min-width:0; }
+.quick-note-capture { display:grid; gap:var(--space-2); }
+.quick-notes-dialog .quick-note-capture .field textarea { min-height:200px; font:400 var(--text-body)/var(--leading-normal) var(--font-ui); }
+.quick-notes-dialog .quick-notes-library .field input { font-weight:400; }
+.quick-note-help { display:flex; flex-wrap:wrap; justify-content:space-between; gap:var(--space-2); color:var(--text-secondary); font-size:var(--text-meta); }
+.quick-note-links.form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-3); }
+.quick-notes-workspace .field input,.quick-notes-workspace .field select,.quick-notes-workspace .field textarea { width:100%; min-width:0; max-width:100%; }
+.quick-note-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-3); padding-top:var(--space-4); border-top:1px solid var(--border-subtle); }
+.quick-note-footer .check-row { margin:0; }
+.quick-notes-workspace .record-actions { flex-wrap:wrap; gap:var(--space-2); }
+.quick-note-footer .record-actions button { padding:var(--space-2) var(--space-3); }
+.quick-notes-library { min-width:0; border-top:1px solid var(--border-subtle); padding-top:var(--space-6); }
+.quick-notes-library h3 { margin:0 0 var(--space-3); font-size:var(--text-card-title); }
+.quick-notes-library .empty-state { min-height:240px; }
+.quick-notes-library .empty-state strong { font-size:var(--text-secondary-size); }
+.quick-notes-library .empty-state p { margin:var(--space-2) 0 0; }
+.quick-note { display:grid; gap:var(--space-3); }
+.quick-note .note-content { margin:0; font-size:var(--text-body); line-height:var(--leading-normal); }
+.quick-note small,.quick-notes-notice { color:var(--text-secondary); font-size:var(--text-meta); }
+.quick-notes-notice { margin:0 0 var(--space-4); }
+@media(min-width:900px){
+  .quick-notes-workspace { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); }
+  .quick-notes-library { border-top:0; border-left:1px solid var(--border-subtle); padding-top:0; padding-left:var(--space-8); }
+}
+@media(max-width:480px){
+  .quick-notes-dialog .modal { padding:var(--space-5); }
+  .quick-note-links.form-grid { grid-template-columns:minmax(0,1fr); }
+  .quick-notes-library .empty-state { min-height:170px; }
+}
+
+@media(max-width:640px){
+  .notes-organizer > .section-head { flex-direction:column; align-items:flex-start; }
+  .notes-organizer > .section-head > button { flex-shrink:0; white-space:nowrap; }
+}
+
+.daily-checkin > .record-actions { grid-column:1 / -1; }
+
+.daily-checkin > h2,.daily-checkin > p { margin:0; }

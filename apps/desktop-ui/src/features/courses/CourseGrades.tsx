@@ -23,13 +23,13 @@ export function CourseGrades({
           Edit in Study
         </button>
       </div>
-      {grade || items.length ? (
+      {items.length ? (
         <>
           <div className="grade-summary">
             <article>
               <span>Current</span>
               <strong>
-                {grade?.currentPercent !== undefined
+                {grade?.currentPercent != null
                   ? `${grade.currentPercent.toFixed(1)}%`
                   : "—"}
               </strong>

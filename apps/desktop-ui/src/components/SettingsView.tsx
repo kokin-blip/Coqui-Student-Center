@@ -235,6 +235,14 @@ export function SettingsView({
             onAccent={onAccent}
           />
         </section>
+        <section className="workspace-panel settings-route-section">
+          <h2>Student workflow help</h2>
+          <details><summary>Check-in, notes, and assignment streak</summary>
+            <p>Enable daily check-in in Notifications. Review planned or due tasks yourself, snooze or dismiss the day, and confirm deadline changes in Work. Check-ins use your saved timezone and quiet hours.</p>
+            <p>Quick notes capture short thoughts locally. For longer notes, open Study → Materials to write, tag, search, and link source materials. Templates work offline. AI requests disclose the exact source text, provider, and model before fresh consent; review and save the draft explicitly.</p>
+            <p>The assignment streak uses recorded completion times and scoring deadlines. Deadline edits after completion or an elapsed deadline keep the original scoring deadline. Open the Today explanation to inspect outcomes and history, or hide the streak in Notifications.</p>
+          </details>
+        </section>
         {onDeleteProfile && (
           <section className="workspace-panel settings-route-section">
             <header>

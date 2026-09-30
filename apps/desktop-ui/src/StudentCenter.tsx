@@ -1,3 +1,8 @@
+import { revealPlanBlock } from "./features/shell/revealPlanBlock";
+import { workflowApi } from "./features/student/workflowApi";
+import { QuickNotes } from "./features/student/QuickNotes";
+import { DailyReview } from "./features/student/DailyReview";
+import { WorkspaceBoundary } from "./components/WorkspaceBoundary";
 import { AutomaticPlanning } from "./features/planning/AutomaticPlanning";
 import { TaskDetailsSession } from "./features/tasks/TaskDetailsSession";
 import type { WorkFilter } from "./components/WorkView";
@@ -18,7 +23,6 @@ import {
   MoreHorizontal,
   Plus,
   Search,
-  WifiOff,
   X,
 } from "lucide-react";
 import {
@@ -259,7 +263,11 @@ export function StudentCenter() {
     completionMomentum.current=result.state;
     if(weeklyGoalWeek&&result.newCompletion)updateDelight({...delight,lastWeeklyGoalWeek:weeklyGoalWeek});
     if(result.newCompletion&&delight.completionSounds)playCompletionSound(delight.volume);
-    if(result.reason){setCelebration(result.reason);window.setTimeout(()=>setCelebration(null),3200);}
+    let reason = result.reason;
+    if(delight.celebrations&&delight.momentumDisplay&&result.newCompletion){
+      try { if(await workflowApi.claimCelebration() && now-completionMomentum.current.lastCelebratedAt>=45_000){ reason="on-time"; completionMomentum.current.lastCelebratedAt=now; } } catch { /* A saved completion must not depend on celebration delivery. */ }
+    }
+    if(reason){setCelebration(reason);window.setTimeout(()=>setCelebration(null),3200);}
   };
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() =>
     import.meta.env.DEV &&
@@ -326,6 +334,9 @@ export function StudentCenter() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [modal, security?.locked, Boolean(data), view, delight.interfaceSounds, delight.volume]);
+  const [dayNavigation,setDayNavigation] = useState(0);
+  const [pendingBlock, setPendingBlock] = useState<string|null>(null);
+  const [notesTarget, setNotesTarget] = useState<{courseId?:string;taskId?:string}|null>(null);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection | null>(null);
   const settingsOpener = useRef<{
@@ -902,26 +913,22 @@ export function StudentCenter() {
   };
   const applyNavigation = (target: NavigationTarget) => {
     setModal(null);
+    setNotesTarget(null);
+    setDayNavigation(value=>value+1);
     setSettingsSection(null);
     if (target.view === "my-day") {
+      setPendingBlock(null);
       setView("today");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
-    requestAnimationFrame(() => {
-      const element = document.getElementById(`plan-block-${target.blockId}`);
-      if (!element) {
-        setToast("That plan block is no longer scheduled today.");
-        return;
-      }
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-      element.classList.add("deep-link-target");
-      window.setTimeout(
-        () => element.classList.remove("deep-link-target"),
-        2400,
-      );
-    });
+    setView("today");
+    setPendingBlock(target.blockId);
   };
+  useEffect(() => {
+    if(!pendingBlock || view!=="today")return;
+    return revealPlanBlock(pendingBlock, () => {setToast("That plan block is no longer scheduled today.");setPendingBlock(null);}, () => setPendingBlock(null));
+  },[pendingBlock,view]);
   useEffect(() => {
     if (!data || !isDesktop()) return;
     let active = true;
@@ -1080,6 +1087,7 @@ export function StudentCenter() {
         />
         <main className="main">
           <header className="topbar">
+            <button className="outline" onClick={() => setNotesTarget({taskId:selectedTaskId ?? undefined})}>Quick notes</button>
             {interfaceMode === "compact" && (
               <button
                 className="shell-command"
@@ -1131,9 +1139,6 @@ export function StudentCenter() {
                   </button>
                 ))}
               </div>
-              <span className="offline">
-                <WifiOff /> Works offline
-              </span>
               <button
                 className="icon-btn"
                 aria-label="Search"
@@ -1158,6 +1163,7 @@ export function StudentCenter() {
             </div>
           </header>
           <AutomaticPlanning refreshKey={data} blocked={modal !== null} onDashboard={setData} onLocalPlanning={() => setModal("replan")} />
+          <WorkspaceBoundary key={`${view}:${settingsSection ?? ""}`} onRecover={() => { setSettingsSection(null); setView("today"); }}>
           <Suspense
             fallback={
               <div className="content">
@@ -1224,6 +1230,7 @@ export function StudentCenter() {
                     close={closeSettingsSection}
                     onDashboard={setData}
                     onToast={setToast}
+                    onDailyReview={() => { setSettingsSection(null); setView("today"); }}
                   />
                 )}
                 {settingsSection === "security" && (
@@ -1260,7 +1267,9 @@ export function StudentCenter() {
                 )}
               </>
             ) : view === "today" ? (
-              <TodayView
+              <>
+              <div className="content"><DailyReview suppressed={Boolean(modal || notesTarget || security?.locked)} onDashboard={setData} onTaskCompleted={(id,saved) => { const task=todayWorkspace?.tasks.find(t=>t.id===id); if(task)void celebrateCompletion(task,saved); }} onEditTask={id => { setSelectedTaskId(id); setWorkFilter("all"); setView("work"); }} /></div>
+              <TodayView navigationRequest={dayNavigation}
                 mode={interfaceMode}
                 selectedTaskId={selectedTaskId}
                 onSelectTask={setSelectedTaskId}
@@ -1306,6 +1315,7 @@ export function StudentCenter() {
                   const task = todayWorkspace?.tasks.find((item) => item.id === taskId);
                   void run(() => toggleTask(taskId), "Progress saved locally.").then((saved) => { if (saved && task && !task.completed) celebrateCompletion(task,saved); });
                 }}
+                onQuickNote={() => setNotesTarget({taskId:selectedTaskId ?? undefined})}
                 onAssistant={() => {
                   setAssistantExplanation("");
                   setModal("assistant");
@@ -1320,6 +1330,7 @@ export function StudentCenter() {
                 }}
                 onCanvas={() => showSettingsSection("canvas")}
               />
+              </>
             ) : view === "study" ? (
               <ModularStudyView
                 onOpenAssistant={() => void openAiSettings()}
@@ -1426,6 +1437,7 @@ export function StudentCenter() {
                   setWorkFilter("all");
                   setView("work");
                 }}
+                onQuickNote={(courseId) => setNotesTarget({courseId})}
                 onOpenStudy={(courseId, tab) => {
                   setStudyTarget({ courseId, tab });
                   setView("study");
@@ -1433,6 +1445,7 @@ export function StudentCenter() {
               />
             )}
           </Suspense>
+          </WorkspaceBoundary>
           {interfaceMode === "compact" && (
             <footer className="shell-shortcuts">
               <button onClick={() => setModal("search")}>
@@ -1447,6 +1460,7 @@ export function StudentCenter() {
             </footer>
           )}
         </main>
+        {notesTarget && <WorkspaceBoundary onRecover={() => {setNotesTarget(null);setView("today");}}><QuickNotes {...notesTarget} close={() => setNotesTarget(null)} /></WorkspaceBoundary>}
         <button
           className="fab"
           onClick={() => setModal("task")}
@@ -1467,6 +1481,7 @@ export function StudentCenter() {
           onSecurity={openSecurity}
           onDeleteProfile={() => setModal("delete-profile")}
         />
+        <WorkspaceBoundary key={modal??"closed"} onRecover={() => {setModal(null);setView("today");}}>
         {modal === "import" && (
           <ImportDialog
             busy={busy}
@@ -1702,12 +1717,13 @@ export function StudentCenter() {
             erase={() => void eraseProfile()}
           />
         )}
+        </WorkspaceBoundary>
         {toast && (
           <div className="toast" role="status">
             ✦ {toast}
           </div>
         )}
-        {celebration && <div className="completion-celebration" role="status" aria-live="polite"><button aria-label="Dismiss celebration" onClick={()=>setCelebration(null)}><X aria-hidden="true" /></button><AppLogo /><strong>{celebration === "weekly" ? "Your weekly goal is done!" : celebration === "plan" ? "Today's study plan is done!" : celebration === "early" ? "Ahead of schedule!" : celebration === "streak" ? "Nice momentum!" : "Big step finished!"}</strong><span>{celebration === "weekly" ? `You completed ${delight.weeklyGoalTasks} tasks this week.` : celebration === "plan" ? "You finished every planned study session today." : celebration === "early" ? "You finished this well before its deadline." : celebration === "streak" ? "Three tasks finished in this work session." : "A major piece of work is complete."}</span></div>}
+        {celebration && <div className="completion-celebration" role="status" aria-live="polite"><button aria-label="Dismiss celebration" onClick={()=>setCelebration(null)}><X aria-hidden="true" /></button><AppLogo /><strong>{celebration === "on-time" ? "Your on-time streak is growing" : celebration === "weekly" ? "Your weekly goal is done!" : celebration === "plan" ? "Today's study plan is done!" : celebration === "early" ? "Ahead of schedule!" : celebration === "streak" ? "Nice momentum!" : "Big step finished!"}</strong><span>{celebration === "on-time" ? "Five more assignments finished by their scoring deadlines." : celebration === "weekly" ? `You completed ${delight.weeklyGoalTasks} tasks this week.` : celebration === "plan" ? "You finished every planned study session today." : celebration === "early" ? "You finished this well before its deadline." : celebration === "streak" ? "Three tasks finished in this work session." : "A major piece of work is complete."}</span></div>}
       </div>
     </TaskDetailsSession>
   );

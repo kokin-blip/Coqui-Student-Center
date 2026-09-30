@@ -914,6 +914,9 @@ pub fn complete_onboarding(
            version=planning_preferences.version+1",
         params![PROFILE_ID, input.sleep_start, input.sleep_end, input.max_session_minutes, input.break_minutes, input.transition_minutes, input.default_commute_minutes],
     )?;
+    if input.sleep_start!="23:00" || input.sleep_end!="07:00" || !input.rhythm_rules.is_empty() || !input.days_off.is_empty() || !input.protected_time_notes.trim().is_empty() {
+        transaction.execute("INSERT INTO settings(key,value) VALUES('student_rhythm_confirmed','true') ON CONFLICT(key) DO UPDATE SET value=excluded.value",[])?;
+    }
     transaction.execute(
         "DELETE FROM availability_rules WHERE profile_id=?1",
         params![PROFILE_ID],
@@ -1285,6 +1288,7 @@ pub fn update_preferences(conn: &mut Connection, input: &PreferenceInput) -> Res
     validate_preference_values(input)?;
     let tx = conn.transaction()?;
     require_changed(tx.execute("UPDATE planning_preferences SET sleep_start=?2,sleep_end=?3,max_session_minutes=?4,break_minutes=?5,transition_minutes=?6,default_commute_minutes=?7,version=version+1 WHERE profile_id=?1 AND version=?8",params![PROFILE_ID,input.sleep_start,input.sleep_end,input.max_session_minutes,input.break_minutes,input.transition_minutes,input.default_commute_minutes,input.expected_version])?)?;
+    tx.execute("INSERT INTO settings(key,value) VALUES('student_rhythm_confirmed','true') ON CONFLICT(key) DO UPDATE SET value=excluded.value",[])?;
     tx.execute(
         "DELETE FROM availability_rules WHERE profile_id=?1",
         params![PROFILE_ID],

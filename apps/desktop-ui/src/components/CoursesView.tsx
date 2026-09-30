@@ -61,8 +61,10 @@ export function CoursesView({
   onImport,
   onOpenTask,
   onOpenStudy,
+  onQuickNote,
 }: WorkspaceRouteProps & {
   onOpenTask?: (id: string) => void;
+  onQuickNote?: (courseId: string) => void;
   onOpenStudy?: (courseId: string, section: "materials" | "grades") => void;
 }) {
   const session = useTaskDetailsSession().courses;
@@ -479,6 +481,7 @@ export function CoursesView({
                 <CourseMaterials
                   study={study}
                   courseId={selected.id}
+                  onQuickNote={onQuickNote ? () => onQuickNote(selected.id) : undefined}
                   onStudy={() =>
                     onOpenStudy
                       ? onOpenStudy(selected.id, "materials")

@@ -1,11 +1,11 @@
+import { GroundedComposer } from "./GroundedComposer";
 import { ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  generateGroundedStudyArtifact,
   listAiProviders,
   reviewStudyArtifact,
   rerankStudyMaterials,
-  updateStudyArtifact,
+  saveStudyNote,
 } from "../../native";
 import type { StudyViewModel } from "./studyModel";
 import { aiRerankCandidateIds, applyAiRerank, recommendationReasonLabels, recommendStudyMaterials, studyTargets } from "./recommendations";
@@ -22,7 +22,6 @@ export function StudyLearn({
     artifactTitle,
     busy,
     capability,
-    consent,
     courseName,
     courses,
     editContent,
@@ -30,24 +29,19 @@ export function StudyLearn({
     eligibleMaterials,
     prompt,
     provider,
-    providers,
     selectedArtifact,
     selectedCourses,
     selectedMaterials,
     setArtifactTitle,
-    setBusy,
     setCapability,
-    setConsent,
     setEditContent,
     setEditTitle,
     setError,
     setNotice,
     setPrompt,
-    setProviders,
     setSelectedArtifact,
     setSelectedCourses,
     setSelectedMaterials,
-    setStudy,
     study,
     tasks,
   } = vm;
@@ -62,6 +56,8 @@ export function StudyLearn({
   const recommendations = recommendStudyMaterials(study?.materials ?? [], recommendationCourseId, target).slice(0, 5);
   const candidateIds = aiRerankCandidateIds(recommendations);
   const rerankKey = JSON.stringify([recommendationCourseId, target?.id, recommendations.map((item) => [item.materialId, item.score])]);
+  const rerankScope = JSON.stringify({targetTitle:target?.title??"",materials:candidateIds.map(id=>{const m=study?.materials.find(m=>m.id===id);return {id,title:m?.title||m?.fileName||"",materialType:m?.materialType||"other",topics:m?.topics??[]};})});
+  useEffect(()=>setRerankConsent(false),[rerankScope,provider?.provider,provider?.model]);
   const visibleRecommendations = aiOrder?.key === rerankKey ? applyAiRerank(recommendations, aiOrder.ids) : recommendations;
 
   return (
@@ -80,13 +76,14 @@ export function StudyLearn({
             return <button type="button" aria-pressed={selectedMaterials.includes(material.id)} className={selectedMaterials.includes(material.id) ? "mode-pill active" : "mode-pill"} key={material.id} onClick={() => setSelectedMaterials((current) => current.includes(material.id) ? current.filter((id) => id !== material.id) : [...current, material.id])}><strong>{material.title ?? material.fileName}</strong><small>{(material.materialType ?? "other").replaceAll("_", " ")} · {recommendation.reasonCodes.map((code) => recommendationReasonLabels[code]).join(" · ")}</small></button>;
           })}</div> : <p className="field-help">{recommendationCourseId ? "No materials are assigned to this course yet. Add them in Materials to get recommendations." : "Choose a course to see scoped recommendations. Coqui never recommends material from another course."}</p>}
           {target && candidateIds.length >= 2 && <div className="recommendation-refine">
-            <p>Optional AI tie-break: only this target title and the titles, types, and topics of {candidateIds.length} uncertain materials are sent to {provider?.provider ?? "your connected provider"}. Document text and other courses stay on this device. Strong matches keep their place.</p>
+            <p>Optional AI tie-break: only this target title and the titles, types, and topics of {candidateIds.length} uncertain materials are sent to {provider ? `${provider.provider} · ${provider.model}` : "your connected provider"}. Document text and other courses stay on this device. Strong matches keep their place.</p>
+            <details><summary>Exact metadata sent</summary><pre className="source-text">{rerankScope}</pre></details>
             <label><input type="checkbox" checked={rerankConsent} onChange={(event) => setRerankConsent(event.target.checked)} /> I approve sending this metadata for AI refinement.</label>
             <button type="button" className="outline" disabled={!provider || !rerankConsent || reranking} onClick={async () => {
               setReranking(true);
               setRerankError("");
               try {
-                const result = await rerankStudyMaterials({ courseId: recommendationCourseId, targetId: target.id, materialIds: candidateIds, consent: true });
+                const result = await rerankStudyMaterials({ courseId: recommendationCourseId, targetId: target.id, materialIds: candidateIds, consent: true, expectedProvider:provider!.provider,expectedModel:provider!.model,sourceScope:rerankScope });
                 setAiOrder({ key: rerankKey, ids: result.rankedIds, provider: result.provider });
               } catch (error) {
                 setRerankError(`${String(error)} Deterministic recommendations remain available.`);
@@ -172,6 +169,10 @@ export function StudyLearn({
                   setCapability(event.target.value as typeof capability)
                 }
               >
+                <option value="notes">Structured notes</option>
+                <option value="summary">Summary</option>
+                <option value="outline">Outline</option>
+                <option value="slides">Slide draft</option>
                 <option value="source_qa">Grounded answer</option>
                 <option value="study_guide">Study guide</option>
                 <option value="flashcards">Flashcards</option>
@@ -196,90 +197,8 @@ export function StudyLearn({
               placeholder="Explain operant conditioning using only these notes…"
             />
           </label>
-          <div className="consent-box">
-            <ShieldCheck />
-            <div>
-              <strong>Exact data scope</strong>
-              <p>
-                {selectedMaterials.length
-                  ? selectedMaterials
-                      .map(
-                        (id) =>
-                          study?.materials.find((item) => item.id === id)
-                            ?.fileName,
-                      )
-                      .filter(Boolean)
-                      .join(", ")
-                  : "No materials selected"}{" "}
-                will be sent to{" "}
-                {provider?.provider ?? "the provider you configure"}. No other
-                course or document is included.
-              </p>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(event) => setConsent(event.target.checked)}
-                />{" "}
-                I approve this request and provider data use.
-              </label>
-            </div>
-          </div>
-          <div className="modal-actions">
-            <button className="outline" onClick={onOpenAssistant}>
-              Provider settings
-            </button>
-            <button
-              className="solid"
-              disabled={
-                busy ||
-                !provider ||
-                !consent ||
-                !prompt.trim() ||
-                !selectedCourses.length ||
-                !selectedMaterials.length
-              }
-              onClick={async () => {
-                setBusy(true);
-                setError("");
-                try {
-                  const result = await generateGroundedStudyArtifact({
-                    capability,
-                    courseIds: selectedCourses,
-                    documentIds: selectedMaterials,
-                    prompt: prompt.trim(),
-                    title: artifactTitle.trim(),
-                    consent,
-                  });
-                  setStudy(result.workspace);
-                  setNotice(
-                    `${result.provider} created a cited ${capability.replaceAll("_", " ")} for review.`,
-                  );
-                  setPrompt("");
-                  setConsent(false);
-                  const artifact = result.workspace.artifacts.find(
-                    (item) => item.id === result.artifactId,
-                  );
-                  if (artifact) {
-                    setSelectedArtifact(artifact);
-                    setEditTitle(artifact.title);
-                    setEditContent(artifact.content);
-                  }
-                } catch (next) {
-                  setProviders(await listAiProviders().catch(() => providers));
-                  setConsent(false);
-                  setError(
-                    `${String(next)} Nothing was sent to another provider. Review the newly resolved provider and consent again to retry.`,
-                  );
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <Sparkles />
-              {busy ? "Creating…" : "Create cited result"}
-            </button>
-          </div>
+          <GroundedComposer vm={vm} />
+          <button className="outline" onClick={onOpenAssistant}>Provider settings</button>
         </div>
         <div className="artifact-list" aria-label="Saved study artifacts">
           {study?.artifacts.length ? (
@@ -336,11 +255,7 @@ export function StudyLearn({
               onClick={() =>
                 void act(
                   () =>
-                    updateStudyArtifact(
-                      selectedArtifact.id,
-                      editTitle,
-                      editContent,
-                    ),
+                    saveStudyNote({id:selectedArtifact.id,expectedRevision:selectedArtifact.revision??1,courseId:selectedArtifact.courseId,kind:selectedArtifact.kind,title:editTitle,content:editContent,tags:selectedArtifact.tags??[],pinned:selectedArtifact.pinned??false,sourceIds:selectedArtifact.sourceIds??[]}),
                   "Study artifact saved locally.",
                 )
               }
@@ -357,7 +272,7 @@ export function StudyLearn({
               ))
             ) : (
               <p>
-                This result is labeled unsupported by the selected materials.
+                {selectedArtifact.provider === "manual" ? "Locally authored note. Source links are available in Materials." : "This result is labeled unsupported by the selected materials."}
               </p>
             )}
             <h3>How well did you recall it?</h3>

@@ -1102,3 +1102,5 @@
     transition: none;
   }
 }
+
+.today-workspace .deep-link-target { outline:3px solid var(--accent); outline-offset:3px; }

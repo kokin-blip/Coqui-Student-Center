@@ -75,6 +75,7 @@ test("a failed grounded request clears consent, retains the draft, and does not 
       disclosureUrl: "https://example.invalid",
     },
   ]);
+  vi.spyOn(native, "prepareStudyRequest").mockResolvedValue({id:"prepared-one",provider:"openai",model:"test-model",input:{kind:"source_qa",courseIds:[course.id],documentIds:["material-one"],prompt:"Explain the key idea",title:""},sources:[{id:"segment-one",locator:"Page 1",text:"Reviewed source excerpt"}],fingerprint:"scope"});
   const generate = vi
     .spyOn(native, "generateGroundedStudyArtifact")
     .mockRejectedValue(new Error("Provider unavailable"));
@@ -87,10 +88,12 @@ test("a failed grounded request clears consent, retains the draft, and does not 
   const consent = screen.getByRole("checkbox", {
     name: /I approve this request/,
   });
+  await user.click(screen.getByRole("button", { name: "Review exact request" }));
+  await waitFor(() => expect(consent).toBeEnabled());
   await user.click(consent);
   await user.click(screen.getByRole("button", { name: /Create cited result/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Nothing was sent to another provider",
+    "The provider was not switched automatically",
   );
   expect(screen.getByLabelText("Request")).toHaveValue("Explain the key idea");
   expect(consent).not.toBeChecked();
@@ -150,9 +153,11 @@ test("material metadata is editable and organized with persisted filters", async
   await user.clear(within(editor).getByLabelText("Title"));
   await user.type(within(editor).getByLabelText("Title"), "Cell chemistry slides");
   await user.selectOptions(within(editor).getByLabelText("Type"), "study_guide");
+  await user.type(within(editor).getByLabelText("Topics"), ", protein");
+  expect(within(editor).getByLabelText("Topics")).toHaveValue("biomolecules, protein");
   await user.click(within(editor).getByRole("checkbox", {name:"Pin this material"}));
   await user.click(within(editor).getByRole("button", {name:"Save details"}));
-  await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({title:"Cell chemistry slides",materialType:"study_guide",favorite:true,teacherProvided:true,topics:["biomolecules"]})));
+  await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({title:"Cell chemistry slides",materialType:"study_guide",favorite:true,teacherProvided:true,topics:["biomolecules","protein"]})));
 });
 
 test("recommended materials follow the selected assessment and keep Ask selected materials available", async () => {
@@ -197,7 +202,7 @@ test("AI refinement requires consent and preserves deterministic results on fail
   expect(rerank).not.toHaveBeenCalled();
   await user.click(screen.getByRole("checkbox", { name: "I approve sending this metadata for AI refinement." }));
   await user.click(refine);
-  await waitFor(() => expect(rerank).toHaveBeenCalledWith({ courseId: course.id, targetId: "quiz", materialIds: ["notes-a", "notes-b"], consent: true }));
+  await waitFor(() => expect(rerank).toHaveBeenCalledWith(expect.objectContaining({ courseId: course.id, targetId: "quiz", materialIds: ["notes-a", "notes-b"], consent: true, expectedProvider: "openai", expectedModel: "test-model", sourceScope: JSON.stringify({targetTitle:"Cells quiz",materials:[base,{...base,id:"notes-b",fileName:"b.pdf",title:"Notes B"}].map(m=>({id:m.id,title:m.title,materialType:m.materialType,topics:m.topics}))}) })));
   expect(await screen.findByRole("alert")).toHaveTextContent("Deterministic recommendations remain available");
   expect(screen.getByRole("button", { name: /Notes A/ })).toBeVisible();
   expect(screen.getByRole("button", { name: /Notes B/ })).toBeVisible();

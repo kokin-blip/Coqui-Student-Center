@@ -1,3 +1,4 @@
+import { WorkspaceBoundary } from "./WorkspaceBoundary";
 import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
@@ -118,7 +119,7 @@ function DialogModal({
             <X />
           </button>
         </header>
-        {children}
+        <WorkspaceBoundary>{children}</WorkspaceBoundary>
       </section>
     </div>
   );

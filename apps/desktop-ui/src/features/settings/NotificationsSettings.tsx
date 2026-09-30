@@ -1,3 +1,4 @@
+import { CheckinControls } from "../student/CheckinControls";
 import { useState } from "react";
 import { Check, Play, ShieldCheck } from "lucide-react";
 import { SettingsDetail } from "../../components/SettingsDetail";
@@ -16,11 +17,13 @@ export function NotificationsSettings({
   onDashboard,
   onToast,
   close,
+  onDailyReview,
 }: {
   data: Dashboard;
   onDashboard: (data: Dashboard) => void;
   onToast: (message: string) => void;
   close: () => void;
+  onDailyReview?: () => void;
 }) {
   const [form, setForm] = useState(data.notificationSettings);
   const [busy, setBusy] = useState(false);
@@ -77,6 +80,7 @@ export function NotificationsSettings({
           app.
         </p>
       )}
+      <CheckinControls onReview={onDailyReview} />
       <fieldset className="settings-fields" disabled={busy}>
         <legend className="sr-only">Reminder preferences</legend>
         <label className="setting-toggle">

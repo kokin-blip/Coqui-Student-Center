@@ -60,6 +60,8 @@ type Props = {
   onReplan: () => void;
   onToggleTask: (id: string) => void;
   onAssistant: () => void;
+  onQuickNote?: () => void;
+  navigationRequest?:number;
   onConflicts: () => void;
   onReview: () => void;
   onCanvas: () => void;
@@ -73,6 +75,7 @@ export function TodayView(p: Props) {
     () => session.calendarDay || p.data.planDate.slice(0, 10) || dayKey(new Date(), p.data.timezone),
   );
   useEffect(() => { session.calendarDay = date; }, [date, session]);
+  useEffect(() => { if(p.navigationRequest) setDate(p.data.planDate.slice(0,10)); }, [p.navigationRequest]);
   const referenceClock =
     import.meta.env.DEV &&
     !p.desktop &&
@@ -580,7 +583,8 @@ export function TodayView(p: Props) {
         <button onClick={p.onReplan}>
           <RefreshCw /> Replan my day
         </button>
-        <button onClick={p.onAssistant}>Capture a thought</button>
+        <button onClick={p.onQuickNote ?? p.onAssistant}>Capture a thought</button>
+        <button onClick={p.onAssistant}>AI assistant</button>
         <button onClick={p.onImport}>Import work</button>
         <button onClick={p.onCanvas}>Canvas connections</button>
         {p.data.nextAction && (

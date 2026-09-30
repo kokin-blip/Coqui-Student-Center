@@ -33,6 +33,8 @@ Coqui Student Center is a downloadable, local-first desktop application for Wind
 - Verified-account, ciphertext-only sync/device/release service contracts and Supabase RLS migrations. Optional AI runs directly from the native desktop boundary with student-owned OpenAI, Anthropic, or Gemini keys; the cloud service has no AI route.
 - Browser output only for interface development and automated testing; it is not an end-user product.
 
+See [Student workflow help](docs/STUDENT_WORKFLOWS.md) for daily check-ins, on-time assignment history, quick notes, and the Materials notes workspace. These workflows remain device-local and are covered by encrypted full-profile backups.
+
 ## Repository structure
 
 ```text

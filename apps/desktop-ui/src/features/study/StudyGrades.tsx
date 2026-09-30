@@ -1,3 +1,4 @@
+import { GradeItemEditor, GradeCategoryEditor } from "./GradeEditor";
 import { useEffect, useState } from "react";
 import {
   calculateGradeWhatIf,
@@ -173,6 +174,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
     study,
     whatIf,
   } = vm;
+  if (!courses.length) return <section className="workspace-panel empty-state"><h2>No courses yet</h2><p>Add a course in Courses to start a local gradebook.</p></section>;
   return (
     <div className="study-grid study-grades-grid">
       <section className="workspace-panel">
@@ -181,7 +183,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
             <h2>Grades and what-if planning</h2>
             <p>Only scales and scores you enter are used.</p>
           </div>
-          {study?.gpaProjection !== undefined && (
+          {study?.gpaProjection != null && (
             <strong>Projected GPA {study.gpaProjection.toFixed(2)}</strong>
           )}
         </div>
@@ -205,7 +207,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
           <article>
             <span>Current</span>
             <strong>
-              {currentGrade?.currentPercent !== undefined
+              {currentGrade?.currentPercent != null
                 ? `${currentGrade.currentPercent.toFixed(1)}%`
                 : "—"}
             </strong>
@@ -224,6 +226,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
           </article>
         </div>
         <h3>Gradebook</h3>
+        {!study?.gradeItems.some(item => item.courseId === gradeCourse) && <p>No grades yet. Add a score or a planned what-if below.</p>}
         <div className="grade-list">
           {study?.gradeItems
             .filter((item) => item.courseId === gradeCourse)
@@ -241,6 +244,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
                 <b>
                   {item.score ?? 0}/{item.pointsPossible}
                 </b>
+                <GradeItemEditor item={item} busy={busy} onSave={work => { void act(work, "Grade edits saved."); }} />
               </article>
             ))}
         </div>
@@ -368,9 +372,10 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
           <h3>Categories</h3>
           {categories.length ? (
             categories.map((category) => (
-              <p key={category.id}>
-                {category.name} · {category.weight}%
-              </p>
+              <div key={category.id}>
+                <p>{category.name} · {category.weight}%</p>
+                <GradeCategoryEditor item={category} busy={busy} onSave={work => { void act(work, "Category edits saved."); }} />
+              </div>
             ))
           ) : (
             <p>No weighted categories yet.</p>

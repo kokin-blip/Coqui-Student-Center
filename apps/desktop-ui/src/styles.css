@@ -153,18 +153,6 @@ input:focus-visible {
 .crumb svg {
   width: 14px;
 }
-.offline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--bg-surface);
-  padding: 7px 10px;
-  border-radius: 999px;
-  color: var(--text-primary);
-}
-.offline svg {
-  width: 13px;
-}
 .icon-btn {
   width: 36px;
   height: 36px;
@@ -992,9 +980,6 @@ input:focus-visible {
   .topbar {
     height: 60px;
     padding: 0 15px;
-  }
-  .offline {
-    display: none;
   }
   .content {
     padding: 22px 14px 100px;

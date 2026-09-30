@@ -4,10 +4,12 @@ export function CourseMaterials({
   study,
   courseId,
   onStudy,
+  onQuickNote,
 }: {
   study: StudyWorkspace | null;
   courseId: string;
   onStudy: () => void;
+  onQuickNote?: () => void;
 }) {
   const materials =
     study?.materials.filter((item) => item.courseIds.includes(courseId)) ?? [];
@@ -18,6 +20,7 @@ export function CourseMaterials({
           <h3>Course materials</h3>
           <p>Encrypted sources assigned to this course.</p>
         </div>
+        {onQuickNote && <button className="outline" onClick={onQuickNote}>Quick note for this course</button>}
         <button className="outline" onClick={onStudy}>
           Manage in Study
         </button>

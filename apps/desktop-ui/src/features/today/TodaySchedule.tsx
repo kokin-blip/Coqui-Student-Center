@@ -100,6 +100,7 @@ export function TodaySchedule(p: Props) {
                 ))}
               {positions[index].map(({ block, start, end }) => (
                 <button
+                  id={`plan-block-${block.id}`}
                   key={block.id}
                   onClick={() =>
                     block.taskId ? p.onSelect(block.taskId) : p.onAdd()

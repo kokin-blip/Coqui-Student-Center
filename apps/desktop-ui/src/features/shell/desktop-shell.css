@@ -308,8 +308,7 @@
     padding: 8px 12px;
     flex-wrap: wrap;
   }
-  .rebuild-shell .crumb,
-  .rebuild-shell .top-actions .offline {
+  .rebuild-shell .crumb {
     display: none;
   }
   .shell-command {

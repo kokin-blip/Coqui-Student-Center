@@ -1,0 +1,21 @@
+import { useEffect, useState } from "react";
+import { discardStudyPreview, generateGroundedStudyArtifact, prepareStudyRequest, saveStudyNote, type PreparedStudyRequest, type StudyPreview } from "../../native";
+import type { StudyViewModel } from "./studyModel";
+export function GroundedComposer({vm}:{vm:StudyViewModel}){
+ const {selectedCourses,selectedMaterials,prompt,artifactTitle,capability,provider,consent,setConsent,setError,setStudy,setNotice}=vm;
+ const [prepared,setPrepared]=useState<PreparedStudyRequest|null>(null),[preview,setPreview]=useState<StudyPreview|null>(null),[busy,setBusy]=useState(false),[stale,setStale]=useState(false);
+ const scope=JSON.stringify({kind:capability,courseIds:selectedCourses,documentIds:selectedMaterials,prompt:prompt.trim(),title:artifactTitle.trim()});
+ useEffect(()=>{setPrepared(null);setConsent(false);setStale(Boolean(preview));},[scope,provider?.provider,provider?.model]);
+ const canPrepare=selectedCourses.length>0&&selectedMaterials.length>0&&Boolean(prompt.trim())&&Boolean(provider);
+ const run=async(work:()=>Promise<void>)=>{setBusy(true);setError("");try{await work();}catch(e){setConsent(false);setPrepared(null);setError(`${String(e)} Your draft remains available. The provider was not switched automatically.`);}finally{setBusy(false);}};
+ return <div className="grounded-composer">
+   <button className="outline" disabled={busy||!canPrepare||Boolean(preview)} onClick={()=>void run(async()=>{setPrepared(await prepareStudyRequest(JSON.parse(scope)));setConsent(false);})}>Review exact request</button>
+   <div className="consent-box"><div><strong>Exact data scope</strong>{prepared?<><p>{prepared.provider} · {prepared.model}. Only the request and source text below are sent, with standard grounding instructions and this format: {prepared.input.kind.replaceAll("_"," ")}. No other course, note, or profile is included.</p><details><summary>View request and all {prepared.sources.length} selected sections</summary><p className="source-text">{prepared.requestText??prepared.input.prompt}</p>{prepared.sources.map(s=><article key={s.id}><strong>{s.locator}</strong><small> · source {s.id}</small><p className="source-text">{s.text}</p></article>)}</details></>:<p>Review the request to load the exact locally extracted text and provider/model before consent.</p>}
+   <label><input type="checkbox" checked={consent} disabled={!prepared||busy} onChange={e=>setConsent(e.target.checked)}/> I approve this request and provider data use.</label></div></div>
+   <button className="solid" disabled={busy||!prepared||!consent||Boolean(preview)} onClick={()=>void run(async()=>{
+      const p=prepared!;setConsent(false);setPrepared(null);
+      setPreview(await generateGroundedStudyArtifact({preparedId:p.id,expectedProvider:p.provider,expectedModel:p.model,consent:true}));setStale(false);setNotice("Draft ready to review. Nothing has been saved to Materials.");
+   })}>{busy?"Creating…":"Create cited result"}</button>
+   {preview&&<section className="workspace-panel"><h3>Review your draft</h3><p>{preview.provider} · {preview.model} · {preview.kind.replaceAll("_"," ")}</p>{stale&&<p>The request changed. This draft retains its original course and source references.</p>}<label className="field">Draft title<input value={preview.title} maxLength={200} onChange={e=>setPreview({...preview,title:e.target.value})}/></label><label className="field">Editable draft<textarea value={preview.content} maxLength={40000} rows={12} onChange={e=>setPreview({...preview,content:e.target.value})}/></label><details><summary>Source references</summary>{preview.citations.map((c,i)=><p key={i}>{c.locator}: “{c.quote}”</p>)}</details><div className="record-actions"><button className="solid" disabled={busy||!preview.title.trim()||!preview.content.trim()} onClick={()=>void run(async()=>{setStudy(await saveStudyNote({expectedRevision:0,courseId:preview.courseId,kind:preview.kind,title:preview.title,content:preview.content,tags:[],pinned:false,sourceIds:preview.sourceIds,previewId:preview.previewId}));setPreview(null);setNotice("Reviewed draft saved to Materials.");})}>Save reviewed draft</button><button className="outline" disabled={busy} onClick={()=>void run(async()=>{await discardStudyPreview(preview.previewId);setPreview(null);})}>Discard draft</button></div></section>}
+ </div>;
+}

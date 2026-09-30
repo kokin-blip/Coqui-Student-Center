@@ -139,6 +139,13 @@ pub fn record_activity(conn: &Connection, id: &str, kind: &str, origin: &str) ->
 }
 
 pub fn save(conn: &Connection, id: &str, input: &TaskDetailsInput) -> Result<TaskDetails> {
+    let tx = conn.unchecked_transaction()?;
+    let result = save_in(&tx, id, input)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+pub fn save_in(conn: &Connection, id: &str, input: &TaskDetailsInput) -> Result<TaskDetails> {
     let mut ids = HashSet::new();
     let mut tags = HashSet::new();
     if input.description.chars().count()>20_000 || input.tags.len()>30 || input.subtasks.len()>200
@@ -146,13 +153,13 @@ pub fn save(conn: &Connection, id: &str, input: &TaskDetailsInput) -> Result<Tas
         || input.subtasks.iter().any(|s| Uuid::parse_str(&s.id).is_err() || !ids.insert(&s.id) || s.title.trim().is_empty() || s.title.chars().count()>500) {
         return Err(AppError::Invalid("Check task details: description up to 20,000 characters, 30 unique tags and 200 named subtasks.".into()));
     }
-    let tx = conn.unchecked_transaction()?;
+    let tx = conn;
     require_revision(&tx,id,input.expected_revision)?;
     let before = load(&tx,id)?;
     let tags:Vec<String> = input.tags.iter().map(|s|s.trim().into()).collect();
     let subtasks:Vec<TaskSubtask> = input.subtasks.iter().map(|s|TaskSubtask {id:s.id.clone(),title:s.title.trim().into(),completed:s.completed}).collect();
     if before.description==input.description && before.tags==tags && before.progress==input.progress && before.subtasks==subtasks {
-        tx.commit()?; return Ok(before);
+        return Ok(before);
     }
     advance_revision(&tx,id)?;
     let encoded_tags = serde_json::to_string(&tags).map_err(|_|AppError::Invalid("Task tags could not be saved".into()))?;
@@ -165,7 +172,6 @@ pub fn save(conn: &Connection, id: &str, input: &TaskDetailsInput) -> Result<Tas
         if changed { record_activity(&tx,id,kind,"local")?; }
     }
     let result = load(&tx,id)?;
-    tx.commit()?;
     Ok(result)
 }
 

@@ -1,3 +1,4 @@
+import { workflowApi, defaultCheckinSettings } from "../src/features/student/workflowApi";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -11,7 +12,7 @@ import { AiSettings } from "../src/features/settings/AiSettings";
 import { BackupSettings } from "../src/features/settings/BackupSettings";
 import { SecuritySettings } from "../src/features/settings/SecuritySettings";
 
-beforeEach(() => window.history.replaceState({}, "", "/?demo"));
+beforeEach(() => { window.history.replaceState({}, "", "/?demo"); vi.spyOn(workflowApi,"state").mockResolvedValue({settings:defaultCheckinSettings,checkin:null,streak:{count:0,entries:[]}}); });
 afterEach(() => vi.restoreAllMocks());
 const props = () => ({
   close: vi.fn(),

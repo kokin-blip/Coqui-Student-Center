@@ -265,6 +265,19 @@ pub fn request_grounded(
     sources: &[GroundedSource],
 ) -> Result<GroundedResult, ManagedAiError> {
     validate_key(key)?;
+    let prompt = grounded_request_text(capability, question, sources)?;
+    let schema = grounded_schema();
+    let (value, usage) = match provider {
+        ProviderId::Openai => grounded_openai(key, model, &prompt, &schema)?,
+        ProviderId::Anthropic => grounded_anthropic(key, model, &prompt, &schema)?,
+        ProviderId::Gemini => grounded_gemini(key, model, &prompt, &schema)?,
+    };
+    let (content,citations)=validate_grounded_value(value,sources)?;
+    Ok(GroundedResult { content, citations, model:model.into(), usage })
+}
+
+/// Exact user-message text shared by local disclosure and provider execution.
+pub fn grounded_request_text(capability: AiCapability, question: &str, sources: &[GroundedSource]) -> Result<String, ManagedAiError> {
     if !matches!(capability, AiCapability::SourceQa | AiCapability::StudyGuide | AiCapability::Flashcards | AiCapability::PracticeQuestions | AiCapability::PracticeTest)
         || question.trim().is_empty() || question.trim() != question || question.chars().count() > 4_000
         || sources.is_empty() || sources.len() > 100 {
@@ -283,14 +296,7 @@ pub fn request_grounded(
         prompt.push_str(&serde_json::to_string(source).map_err(|_| ManagedAiError::InvalidInput("study source is invalid".into()))?);
         prompt.push('\n');
     }
-    let schema = grounded_schema();
-    let (value, usage) = match provider {
-        ProviderId::Openai => grounded_openai(key, model, &prompt, &schema)?,
-        ProviderId::Anthropic => grounded_anthropic(key, model, &prompt, &schema)?,
-        ProviderId::Gemini => grounded_gemini(key, model, &prompt, &schema)?,
-    };
-    let (content,citations)=validate_grounded_value(value,sources)?;
-    Ok(GroundedResult { content, citations, model:model.into(), usage })
+    Ok(prompt)
 }
 
 fn validate_grounded_value(value:Value,sources:&[GroundedSource])->Result<(String,Vec<GroundedCitation>),ManagedAiError>{

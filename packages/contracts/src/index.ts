@@ -705,3 +705,5 @@ export type ScholarshipOpportunityDiff = z.infer<
 // resource file rather than a wire format, and because the Rust side is a
 // separate module for the same reason.
 export * from "./school-provider.js";
+
+export * from "./student-workflows.js";

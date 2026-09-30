@@ -29,6 +29,8 @@ mod school_provider;
 mod sync_crypto;
 mod sync_transport;
 mod task_details;
+mod student_workflows;
+mod study_notes;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use canvas::{CanvasCandidate, CanvasClient, CanvasPull};
@@ -62,7 +64,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 30;
+const CURRENT_SCHEMA_VERSION: i64 = 31;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -737,20 +739,10 @@ struct AiUsageSummary {
     average_latency_ms: f64,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GroundedStudyInput {
-    capability: managed_ai::AiCapability,
-    course_ids: Vec<String>,
-    document_ids: Vec<String>,
-    prompt: String,
-    title: String,
-    consent: bool,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all="camelCase")]
-struct StudyRerankInput { course_id:String,target_id:String,material_ids:Vec<String>,consent:bool }
+struct StudyRerankInput { course_id:String,target_id:String,material_ids:Vec<String>,consent:bool,expected_provider:String,expected_model:String,source_scope:String }
 
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -765,7 +757,7 @@ struct GradeBand { label: String, minimum_percent: f64, grade_points: f64 }
 struct StudyMaterialSummary { id:String,file_name:String,title:String,mime:String,material_type:String,course_ids:Vec<String>,topics:Vec<String>,related_target_id:Option<String>,segment_count:i64,date_added:String,extraction_status:String,source:String,favorite:bool,teacher_provided:bool,last_used_at:Option<String> }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StudyArtifactSummary { id:String,course_id:String,kind:String,title:String,content:String,citations:Vec<ai_providers::GroundedCitation>,provider:String,model:String,updated_at:String }
+struct StudyArtifactSummary { id:String,course_id:String,kind:String,title:String,content:String,citations:Vec<ai_providers::GroundedCitation>,provider:String,model:String,updated_at:String,revision:i64,tags:Vec<String>,pinned:bool,source_ids:Vec<String> }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudyReviewSummary { id:String,artifact_id:String,confidence:i64,misses:i64,interval_days:i64,next_review_at:String,last_reviewed_at:Option<String> }
@@ -787,9 +779,6 @@ struct GradeWhatIf { percent:Option<f64>,projected_letter:Option<String> }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudyWorkspace { materials:Vec<StudyMaterialSummary>,artifacts:Vec<StudyArtifactSummary>,reviews:Vec<StudyReviewSummary>,grade_categories:Vec<GradeCategorySummary>,grade_items:Vec<GradeItemSummary>,course_grades:Vec<CourseGradeSummary>,grading_scales:Vec<CourseGradingScaleSummary>,gpa_projection:Option<f64> }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GroundedStudyResult { workspace:StudyWorkspace,artifact_id:String,provider:String,model:String }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1265,6 +1254,9 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     ensure_column(&conn,"courses","created_at","TEXT NOT NULL DEFAULT ''")?;
     profile::initialize_defaults(&conn)?;
     task_details::migrate(&conn)?;
+    conn.execute("UPDATE tasks SET task_kind='task',completed_at=CASE WHEN completed=0 THEN NULL ELSE completed_at END WHERE source_uid LIKE 'study-review:%' AND task_kind!='task'",[])?;
+    student_workflows::migrate(&conn)?;
+    study_notes::migrate(&conn)?;
     conn.execute_batch(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))?;
     Ok(conn)
 }
@@ -2313,6 +2305,7 @@ fn start_reminder_worker<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: App
     std::thread::spawn(move || loop {
         let _ = run_reminder_tick(&app, &state);
         let _ = funding_alerts::run_tick(&app, &state);
+        let _ = student_workflows::run_tick(&app, &state);
         std::thread::sleep(StdDuration::from_secs(30));
     });
 }
@@ -2823,6 +2816,7 @@ fn regenerate_plan_for_trigger(
     let effective = effective
         .map(|value| value.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
+    student_workflows::capture_days(conn, effective)?;
     let snapshot = planner_snapshot(conn, effective, trigger.clone())?;
     let outcome = planner::generate(&snapshot).map_err(AppError::Invalid)?;
     let before_blocks = if trigger == planner::PlannerTrigger::ImportApproved {
@@ -4544,6 +4538,7 @@ fn get_local_workspace(state: tauri::State<AppState>) -> Result<profile::Workspa
     state.require_unlocked()?;
     let conn = state.db.lock().unwrap();
     require_onboarded(&conn)?;
+    student_workflows::capture_days(&conn, Utc::now())?;
     Ok(profile::workspace(&conn)?)
 }
 
@@ -5225,6 +5220,12 @@ fn reset_local_database(state: &AppState) -> Result<()> {
     };
     let tx = conn.transaction()?;
     for table in [
+        "quick_notes_local",
+        "checkin_items_local",
+        "day_checkins_local",
+        "study_requests_local",
+        "study_previews_local",
+        "study_note_history_local",
         "study_reviews",
         "study_artifacts",
         "study_material_metadata",
@@ -5245,6 +5246,8 @@ fn reset_local_database(state: &AppState) -> Result<()> {
         "plan_blocks",
         "task_dependencies",
         "tasks",
+        "assignment_streak_local",
+        "assignment_history_local",
         "commitments",
         "courses",
         "availability_rules",
@@ -8213,6 +8216,28 @@ fn ai_usage_summaries(db: &Connection) -> Result<Vec<AiUsageSummary>> {
     Ok(rows)
 }
 
+
+#[tauri::command]
+fn list_quick_notes(state:tauri::State<AppState>,query:String)->Result<Vec<student_workflows::QuickNote>>{state.require_unlocked()?;student_workflows::notes(&state.db.lock().unwrap(),&query)}
+#[tauri::command]
+fn save_quick_note(state:tauri::State<AppState>,input:student_workflows::NoteInput)->Result<Vec<student_workflows::QuickNote>>{state.require_unlocked()?;student_workflows::save_note(&state.db.lock().unwrap(),input)}
+#[tauri::command]
+fn delete_quick_note(state:tauri::State<AppState>,id:String,expected_revision:i64)->Result<Vec<student_workflows::QuickNote>>{state.require_unlocked()?;student_workflows::delete_note(&state.db.lock().unwrap(),&id,expected_revision)}
+#[tauri::command]
+fn get_student_workflows(state:tauri::State<AppState>,offer:bool)->Result<serde_json::Value>{state.require_unlocked()?;let db=state.db.lock().unwrap();require_onboarded(&db)?;let now=Utc::now();Ok(serde_json::json!({"version":1,"timezone":db_setting(&db,"timezone","Etc/UTC"),"settings":student_workflows::settings(&db)?,"checkin":student_workflows::pending(&db,now,offer)?,"streak":student_workflows::streak(&db,now)?}))}
+#[tauri::command]
+fn save_checkin_settings(state:tauri::State<AppState>,input:student_workflows::CheckinSettings)->Result<student_workflows::CheckinSettings>{state.require_unlocked()?;student_workflows::save_settings(&state.db.lock().unwrap(),input)}
+#[tauri::command]
+fn control_checkin(state:tauri::State<AppState>,day:String,action:String)->Result<()>{state.require_unlocked()?;student_workflows::control(&state.db.lock().unwrap(),&day,&action,Utc::now())}
+#[tauri::command]
+fn respond_checkin(state:tauri::State<AppState>,input:student_workflows::Response)->Result<Dashboard>{state.require_unlocked()?;let db=state.db.lock().unwrap();student_workflows::respond(&db,input,Utc::now())?;dashboard(&db,&state.ocr)}
+
+#[tauri::command]
+fn claim_assignment_celebration(state:tauri::State<AppState>)->Result<bool>{state.require_unlocked()?;student_workflows::claim_celebration(&state.db.lock().unwrap(),Utc::now())}
+
+#[tauri::command]
+fn discard_study_preview(state:tauri::State<AppState>,preview_id:String)->Result<()>{state.require_unlocked()?;state.db.lock().unwrap().execute("DELETE FROM study_previews_local WHERE id=?1",[preview_id])?;Ok(())}
+
 fn study_workspace_in(conn: &Connection) -> Result<StudyWorkspace> {
     let materials = {
         let mut query = conn.prepare("SELECT d.id,d.file_name,d.mime,(SELECT COUNT(*) FROM document_segments s WHERE s.document_id=d.id),d.imported_at,d.extraction_status,COALESCE(m.title,''),COALESCE(m.material_type,''),COALESCE(m.topics,'[]'),m.related_target_id,COALESCE(m.source,'import'),COALESCE(m.favorite,0),COALESCE(m.teacher_provided,0),m.last_used_at FROM documents d LEFT JOIN study_material_metadata m ON m.document_id=d.id WHERE d.vault_path!='' OR d.content_shredded=1 ORDER BY datetime(d.imported_at) DESC,d.id")?;
@@ -8229,10 +8254,10 @@ fn study_workspace_in(conn: &Connection) -> Result<StudyWorkspace> {
         values
     };
     let artifacts = {
-        let mut query = conn.prepare("SELECT id,course_id,kind,title,content,citations,provider,model,updated_at FROM study_artifacts ORDER BY datetime(updated_at) DESC,id")?;
+        let mut query = conn.prepare("SELECT id,course_id,kind,title,content,citations,provider,model,updated_at,version,tags,pinned,source_ids FROM study_artifacts ORDER BY datetime(updated_at) DESC,id")?;
         let values = query.query_map([], |row| {
             let citations: String = row.get(5)?;
-            Ok(StudyArtifactSummary { id: row.get(0)?, course_id: row.get(1)?, kind: row.get(2)?, title: row.get(3)?, content: row.get(4)?, citations: serde_json::from_str(&citations).unwrap_or_default(), provider: row.get(6)?, model: row.get(7)?, updated_at: row.get(8)? })
+            Ok(StudyArtifactSummary { id: row.get(0)?, course_id: row.get(1)?, kind: row.get(2)?, title: row.get(3)?, content: row.get(4)?, citations: serde_json::from_str(&citations).unwrap_or_default(), provider: row.get(6)?, model: row.get(7)?, updated_at: row.get(8)?, revision:row.get(9)?,tags:serde_json::from_str(&row.get::<_,String>(10)?).unwrap_or_default(),pinned:row.get(11)?,source_ids:serde_json::from_str(&row.get::<_,String>(12)?).unwrap_or_default() })
         })?.collect::<std::result::Result<Vec<_>, _>>()?;
         values
     };
@@ -8618,45 +8643,17 @@ async fn request_funding_profile_proposal(state:tauri::State<'_,AppState>,interv
 }
 
 #[tauri::command]
-async fn generate_grounded_study_artifact(
-    state: tauri::State<'_, AppState>,
-    input: GroundedStudyInput,
-) -> Result<GroundedStudyResult> {
-    state.require_unlocked()?;
-    if !input.consent { return Err(AppError::Invalid("explicit consent is required before selected materials leave this device".into())); }
-    if !matches!(input.capability,managed_ai::AiCapability::SourceQa|managed_ai::AiCapability::StudyGuide|managed_ai::AiCapability::Flashcards|managed_ai::AiCapability::PracticeQuestions|managed_ai::AiCapability::PracticeTest)
-        || input.course_ids.is_empty() || input.document_ids.is_empty() || input.course_ids.len()>20 || input.document_ids.len()>100 {
-        return Err(AppError::Invalid("select at least one course and material for this study request".into()));
-    }
-    let state=state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move||{
-        state.require_unlocked()?;
-        let (provider,api_key,model,sources,course_id,document_ids)={
-            let db=state.db.lock().unwrap();let mut course_ids=input.course_ids.clone();course_ids.sort();course_ids.dedup();let mut document_ids=input.document_ids.clone();document_ids.sort();document_ids.dedup();
-            for id in course_ids.iter().chain(document_ids.iter()){Uuid::parse_str(id).map_err(|_|AppError::Invalid("selected study identifier is invalid".into()))?;}
-            let mut sources=Vec::new();
-            for document_id in &document_ids {
-                let linked=course_ids.iter().any(|course_id|db.query_row("SELECT EXISTS(SELECT 1 FROM study_materials WHERE document_id=?1 AND course_id=?2)",params![document_id,course_id],|row|row.get::<_,i64>(0)).unwrap_or(0)!=0);
-                if !linked{return Err(AppError::Invalid("every selected material must be assigned to a selected course".into()));}
-                let mut query=db.prepare("SELECT id,locator,text FROM document_segments WHERE document_id=?1 ORDER BY position LIMIT 100")?;
-                let mut segments=query.query_map(params![document_id],|row|Ok(ai_providers::GroundedSource{id:row.get(0)?,locator:row.get(1)?,text:row.get(2)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;
-                if segments.is_empty(){let mut evidence=db.prepare("SELECT id,source_locator,evidence FROM import_candidates WHERE document_id=?1 AND evidence!='' ORDER BY id LIMIT 100")?;segments=evidence.query_map(params![document_id],|row|Ok(ai_providers::GroundedSource{id:row.get(0)?,locator:row.get(1)?,text:row.get(2)?}))?.collect::<std::result::Result<Vec<_>,_>>()?;}
-                sources.extend(segments);
-            }
-            if sources.is_empty(){return Err(AppError::Invalid("the selected materials contain no locally extracted text to ground an answer".into()));}
-            let (provider,key,model)=resolve_ai_provider(&db,input.capability)?;(provider,key,model,sources,course_ids[0].clone(),document_ids)
-        };
-        let started=Instant::now();
-        let response=match ai_providers::request_grounded(provider,&api_key,&model,input.capability,input.prompt.trim(),&sources){Ok(value)=>value,Err(error)=>{let db=state.db.lock().unwrap();record_ai_invocation(&db,provider.as_str(),input.capability,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,0,0,"failed",Some(ai_error_category(&error)))?;persist_ai_health(&db,provider,false)?;return Err(AppError::ManagedAi(error));}};
-        let artifact_id=Uuid::new_v4().to_string();let now=Utc::now();let title=if input.title.trim().is_empty(){match input.capability{managed_ai::AiCapability::SourceQa=>"Grounded answer",managed_ai::AiCapability::StudyGuide=>"Study guide",managed_ai::AiCapability::Flashcards=>"Flashcards",managed_ai::AiCapability::PracticeQuestions=>"Practice questions",managed_ai::AiCapability::PracticeTest=>"Practice test",_=>"Study artifact"}}else{input.title.trim()};
-        let mut db=state.db.lock().unwrap();let tx=db.transaction()?;
-        tx.execute("INSERT INTO study_artifacts(id,course_id,kind,title,content,citations,provider,model,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",params![artifact_id,course_id,input.capability.as_str(),title,response.content,serde_json::to_string(&response.citations).map_err(|error|AppError::Background(error.to_string()))?,provider.as_str(),response.model,now.to_rfc3339()])?;
-        tx.execute("INSERT INTO study_reviews(id,artifact_id,next_review_at) VALUES(?1,?2,?3)",params![Uuid::new_v4().to_string(),artifact_id,(now+chrono::Duration::days(1)).to_rfc3339()])?;
-        for document_id in document_ids {tx.execute("INSERT INTO study_material_metadata(document_id,updated_at,last_used_at) VALUES(?1,?2,?2) ON CONFLICT(document_id) DO UPDATE SET last_used_at=excluded.last_used_at,updated_at=excluded.updated_at",params![document_id,now.to_rfc3339()])?;}
-        record_ai_invocation(&tx,provider.as_str(),input.capability,Some(&model),started.elapsed().as_millis().min(i64::MAX as u128) as i64,response.usage.input_tokens,response.usage.output_tokens,"artifact_created",None)?;
-        tx.commit()?;let workspace=study_workspace_in(&db)?;Ok(GroundedStudyResult{workspace,artifact_id,provider:provider.as_str().into(),model})
-    }).await.map_err(|error|AppError::Background(error.to_string()))?
-}
+async fn generate_grounded_study_artifact(state:tauri::State<'_,AppState>,input:study_notes::GenerateInput)->Result<study_notes::Preview>{state.require_unlocked()?;study_notes::generate(state.inner().clone(),input).await}
+#[tauri::command]
+fn prepare_study_request(state:tauri::State<AppState>,input:study_notes::PrepareInput)->Result<study_notes::Prepared>{state.require_unlocked()?;study_notes::prepare(&state.db.lock().unwrap(),input)}
+#[tauri::command]
+fn save_study_note(state:tauri::State<AppState>,input:study_notes::NoteInput)->Result<StudyWorkspace>{state.require_unlocked()?;study_notes::save(&state.db.lock().unwrap(),input)}
+#[tauri::command]
+fn delete_study_note(state:tauri::State<AppState>,id:String,expected_revision:i64)->Result<StudyWorkspace>{state.require_unlocked()?;study_notes::delete(&state.db.lock().unwrap(),&id,expected_revision)}
+#[tauri::command]
+fn get_study_source_text(state:tauri::State<AppState>,document_id:String)->Result<Vec<ai_providers::GroundedSource>>{state.require_unlocked()?;study_notes::source_text(&state.db.lock().unwrap(),&document_id)}
+#[tauri::command]
+fn import_study_source(state:tauri::State<AppState>,course_id:String,file_name:String,bytes:Vec<u8>)->Result<StudyWorkspace>{state.require_unlocked()?;study_notes::import(&state,course_id,file_name,bytes)}
 
 #[tauri::command]
 async fn rerank_study_materials(state:tauri::State<'_,AppState>,input:StudyRerankInput)->Result<StudyRerankResult>{
@@ -8678,6 +8675,9 @@ async fn rerank_study_materials(state:tauri::State<'_,AppState>,input:StudyReran
                 candidates.push(ai_providers::StudyRerankCandidate{id:id.clone(),title,material_type,topics:serde_json::from_str(&topics).unwrap_or_default()});
             }
             let (provider,key,model)=resolve_ai_provider(&db,managed_ai::AiCapability::StudyRerank)?;
+            if input.expected_provider!=provider.as_str()||input.expected_model!=model{return Err(AppError::Invalid("Provider or model changed. Review and consent again.".into()));}
+            let reviewed:serde_json::Value=serde_json::from_str(&input.source_scope).map_err(|_|AppError::Invalid("Review the exact metadata before sending.".into()))?;
+            if reviewed!=serde_json::json!({"targetTitle":target_title,"materials":candidates}){return Err(AppError::Invalid("Study metadata changed. Review and consent again.".into()));}
             (provider,key,model,target_title,candidates)
         };
         let started=Instant::now();
@@ -8696,7 +8696,7 @@ fn review_study_artifact(state:tauri::State<AppState>,artifact_id:String,confide
     let (review_id,previous_interval,misses,title,course_id)=tx.query_row("SELECT r.id,r.interval_days,r.misses,a.title,a.course_id FROM study_reviews r JOIN study_artifacts a ON a.id=r.artifact_id WHERE a.id=?1",params![artifact_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,i64>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?))).optional()?.ok_or_else(||AppError::Invalid("study artifact not found".into()))?;
     let interval=match confidence{1=>1,2=>previous_interval.max(1),3=>(previous_interval*2).max(3),4=>(previous_interval*3).max(7),_=>(previous_interval*4).max(14)}.min(90);let next=Utc::now()+chrono::Duration::days(interval);let misses=misses+i64::from(confidence<=2);
     tx.execute("UPDATE study_reviews SET confidence=?2,misses=?3,interval_days=?4,next_review_at=?5,last_reviewed_at=?6 WHERE id=?1",params![review_id,confidence,misses,interval,next.to_rfc3339(),Utc::now().to_rfc3339()])?;
-    let task_id=format!("study-review-{review_id}");tx.execute("INSERT INTO tasks(id,title,minutes,due_at,course_id,priority,created_at,source_uid) VALUES(?1,?2,25,?3,?4,2,?5,?6) ON CONFLICT(id) DO UPDATE SET title=excluded.title,due_at=excluded.due_at,completed=0,version=version+1",params![task_id,format!("Review · {title}"),next.to_rfc3339(),course_id,Utc::now().to_rfc3339(),format!("study-review:{review_id}")])?;
+    let task_id=format!("study-review-{review_id}");tx.execute("INSERT INTO tasks(id,title,minutes,due_at,course_id,priority,created_at,source_uid,task_kind) VALUES(?1,?2,25,?3,?4,2,?5,?6,'task') ON CONFLICT(id) DO UPDATE SET title=excluded.title,due_at=excluded.due_at,completed=0,completed_at=NULL,task_kind='task',version=version+1",params![task_id,format!("Review · {title}"),next.to_rfc3339(),course_id,Utc::now().to_rfc3339(),format!("study-review:{review_id}")])?;
     tx.commit()?;regenerate_plan_for_trigger(&db,None,planner::PlannerTrigger::DeadlineChanged)?;study_workspace_in(&db)
 }
 
@@ -11011,6 +11011,20 @@ fn main() {
             request_weekly_rhythm_proposal,
             request_semester_schedule_analysis,
             request_funding_profile_proposal,
+            list_quick_notes,
+            save_quick_note,
+            delete_quick_note,
+            get_student_workflows,
+            claim_assignment_celebration,
+            save_checkin_settings,
+            control_checkin,
+            respond_checkin,
+            prepare_study_request,
+            discard_study_preview,
+            save_study_note,
+            delete_study_note,
+            get_study_source_text,
+            import_study_source,
             get_study_workspace,
             set_study_material_courses,
             update_study_material,
@@ -11456,6 +11470,20 @@ mod tests {
             "request_ai_capability",
             "request_weekly_rhythm_proposal",
             "request_funding_profile_proposal",
+            "list_quick_notes",
+            "save_quick_note",
+            "delete_quick_note",
+            "get_student_workflows",
+            "claim_assignment_celebration",
+            "save_checkin_settings",
+            "control_checkin",
+            "respond_checkin",
+            "prepare_study_request",
+            "discard_study_preview",
+            "save_study_note",
+            "delete_study_note",
+            "get_study_source_text",
+            "import_study_source",
             "get_study_workspace",
             "set_study_material_courses",
             "update_study_material",
@@ -12662,7 +12690,8 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 30);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 31);
+        for table in ["quick_notes_local","day_checkins_local","checkin_items_local","assignment_streak_local","assignment_history_local","study_requests_local","study_previews_local","study_note_history_local"] { assert!(table_columns(&conn,table).is_ok(),"missing {table}"); }
         assert!(table_columns(&conn,"weekly_rhythm_rules").is_ok());
         assert!(table_columns(&conn,"study_material_metadata").is_ok());
         assert!(table_columns(&conn,"scholarship_story_examples").is_ok());
@@ -13496,6 +13525,16 @@ mod tests {
     }
 
     #[test]
+    fn grades_native_payload_keeps_null_distinct_from_a_recorded_zero() {
+        let dir=tempfile::tempdir().unwrap();let db=open_database(&dir.path().join("grades.db"),&random_key()).unwrap();
+        db.execute("INSERT INTO courses(id,title,source_uid) VALUES('nullable-course','No scores','nullable-course')",[]).unwrap();
+        let empty=serde_json::to_value(study_workspace_in(&db).unwrap()).unwrap();
+        assert!(empty["gpaProjection"].is_null());assert!(empty["courseGrades"][0]["currentPercent"].is_null());assert!(empty["courseGrades"][0]["projectedLetter"].is_null());assert!(empty["gradeItems"].as_array().unwrap().is_empty());
+        db.execute("INSERT INTO grade_items(id,course_id,title,score,points_possible,status) VALUES('zero','nullable-course','Recorded zero',0,10,'graded')",[]).unwrap();
+        let scored=serde_json::to_value(study_workspace_in(&db).unwrap()).unwrap();assert_eq!(scored["gradeItems"][0]["score"],0.0);assert_eq!(scored["courseGrades"][0]["currentPercent"],0.0);
+    }
+
+    #[test]
     fn encrypted_backup_round_trip_rekeys_and_replaces_the_profile() {
         // Restore must exercise credential invalidation without opening or
         // mutating the developer machine's real operating-system keychain.
@@ -13507,6 +13546,12 @@ mod tests {
         let source_key = random_key();
         let source_db_path = source_root.join("student-center.db");
         let source_db = open_database(&source_db_path, &source_key).unwrap();
+        let portable_notes=student_workflows::save_note(&source_db,student_workflows::NoteInput{id:None,expected_revision:0,content:"Private backed-up sticky".into(),course_id:None,task_id:None,pinned:true}).unwrap();
+        student_workflows::save_settings(&source_db,student_workflows::CheckinSettings{enabled:true,time:"21:15".into(),..Default::default()}).unwrap();
+        source_db.execute("INSERT INTO courses(id,title,source_uid) VALUES('portable-notes-course','Notes course','portable-notes-course')",[]).unwrap();
+        study_notes::save(&source_db,study_notes::NoteInput{id:None,expected_revision:0,course_id:"portable-notes-course".into(),kind:"slides".into(),title:"Editable presentation draft".into(),content:"# Slide 1\nPrivate speaker notes".into(),tags:vec!["review".into()],pinned:true,source_ids:vec![],preview_id:None}).unwrap();
+        source_db.execute("INSERT INTO day_checkins_local(day,timezone,due_at,status,offered_at) VALUES('2026-09-28','America/Phoenix','2026-09-29T03:00:00Z','dismissed','2026-09-29T03:10:00Z')",[]).unwrap();
+        source_db.execute("INSERT INTO assignment_streak_local(task_id,title,kind,due_at,completed,completed_at,frozen) VALUES('old-scored','History','assignment','2026-09-28T03:00:00Z',1,'2026-09-28T02:00:00Z',1)",[]).unwrap();
         let saved_interface = interface_preferences::InterfacePreferences {
             mode: interface_preferences::InterfaceMode::Compact,
             themes: interface_preferences::ModeThemes { comfy: "system".into(), compact: "forest".into() },
@@ -13619,6 +13664,11 @@ mod tests {
         install_staged_profile(&state, staged).unwrap();
 
         let restored = state.db.lock().unwrap();
+        assert_eq!(student_workflows::notes(&restored,"").unwrap()[0].id,portable_notes[0].id);
+        assert_eq!(student_workflows::settings(&restored).unwrap().time,"21:15");
+        assert_eq!(restored.query_row("SELECT status FROM day_checkins_local WHERE day='2026-09-28'",[],|r|r.get::<_,String>(0)).unwrap(),"dismissed");
+        assert!(student_workflows::streak(&restored,Utc::now()).unwrap().entries.iter().any(|e|e.task_id=="old-scored"));
+        assert!(study_workspace_in(&restored).unwrap().artifacts.iter().any(|a|a.title=="Editable presentation draft"&&a.pinned&&a.tags==vec!["review"]));
         assert_eq!(task_details::load(&restored,"portable-task").unwrap(),saved_details);
         assert_eq!(task_details::activity(&restored,"portable-task",None,100).unwrap().entries.len(),5);
         assert!(restored.query_row("SELECT EXISTS(SELECT 1 FROM task_private_documents WHERE document_id=?1)",[&document_id],|r|r.get::<_,bool>(0)).unwrap());

@@ -22,6 +22,9 @@ export function useStudyWorkspaceModel({
   const [study, setStudy] = useState<StudyWorkspace | null>(null);
   const [courses, setCourses] = useState<CourseRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [providerStatusError,setProviderStatusError]=useState("");
+  const refreshProviders=async()=>{try{setProviders(await listAiProviders());setProviderStatusError("");}catch{setProviderStatusError("AI provider status could not be loaded. Local notes and grade tools remain available.");}};
+  const [timezone,setTimezone] = useState("UTC");
   const [providers, setProviders] = useState<AiProviderStatus[]>([]);
   const [tab, setTab] = useState<StudyTab>(initialTab ?? "learn");
   const [selectedCourses, setSelectedCourses] = useState<string[]>(
@@ -29,6 +32,10 @@ export function useStudyWorkspaceModel({
   );
   const [selectedMaterials, setSelectedMaterials] = useState<string[]>([]);
   const [capability, setCapability] = useState<
+    | "notes"
+    | "summary"
+    | "outline"
+    | "slides"
     | "source_qa"
     | "study_guide"
     | "flashcards"
@@ -68,10 +75,14 @@ export function useStudyWorkspaceModel({
       const [next, workspace, nextProviders] = await Promise.all([
         getStudyWorkspace(),
         getLocalWorkspace(),
-        listAiProviders(),
+        listAiProviders().catch(() => {
+          setProviderStatusError("AI provider status could not be loaded. Local notes and grade tools remain available.");
+          return [];
+        }),
       ]);
       setStudy(next);
       setCourses(workspace.courses);
+      setTimezone(workspace.profile?.timezone??"UTC");
       setTasks(workspace.tasks);
       setProviders(nextProviders);
       setGradeCourse(
@@ -94,7 +105,9 @@ export function useStudyWorkspaceModel({
     setBusy(true);
     setError("");
     try {
-      setStudy(await operation());
+      const next = await operation();
+      setStudy(next);
+      setSelectedArtifact(current => current ? next.artifacts.find(item => item.id === current.id) ?? null : null);
       setNotice(message);
     } catch (next) {
       setError(String(next));
@@ -131,6 +144,9 @@ export function useStudyWorkspaceModel({
     courses,
     tasks,
     providers,
+    providerStatusError,
+    refreshProviders,
+    timezone,
     setProviders,
     tab,
     setTab,
