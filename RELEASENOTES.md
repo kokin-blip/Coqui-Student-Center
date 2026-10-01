@@ -1,4 +1,4 @@
-# Coqui Student Center 0.13.0-rc.4
+# Coqui Student Center 0.13.0-rc.5
 
 Review-first Brightspace calendar and academic-document imports for Windows and macOS.
 

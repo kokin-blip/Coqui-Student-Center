@@ -1,6 +1,6 @@
 {
   "name": "@student-center/desktop",
-  "version": "0.13.0-rc.4",
+  "version": "0.13.0-rc.5",
   "private": true,
   "scripts": {
     "dev": "tauri dev --config src-tauri/tauri.conf.json",
