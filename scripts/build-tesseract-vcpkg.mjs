@@ -45,7 +45,12 @@ if (process.platform === "win32") {
   run("bash", [join(root, "bootstrap-vcpkg.sh"), "-disableMetrics"]);
 }
 
-const installArguments = ["install", `tesseract:${triplet}`, `--x-install-root=${installRoot}`];
+const installArguments = [
+  "install",
+  `tesseract:${triplet}`,
+  `--x-install-root=${installRoot}`,
+  `--overlay-ports=${resolve("scripts/ocr/ports")}`,
+];
 if (triplet === "arm64-osx-static") {
   installArguments.push(`--overlay-triplets=${resolve("scripts/ocr/triplets")}`);
 }

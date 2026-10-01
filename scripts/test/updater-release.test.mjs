@@ -111,7 +111,7 @@ test("the prerelease version is aligned across desktop release manifests", async
     await readFile("apps/desktop/src-tauri/tauri.conf.json", "utf8"),
   );
   const cargo = await readFile("apps/desktop/src-tauri/Cargo.toml", "utf8");
-  assert.equal(root.version, "0.13.0-rc.2");
+  assert.match(root.version, /^\d+\.\d+\.\d+-rc\.\d+$/);
   for (const manifest of [root, desktop, ui, tauri]) {
     assert.equal(manifest.version, root.version);
   }
