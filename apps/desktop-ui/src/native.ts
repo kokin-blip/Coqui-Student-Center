@@ -2542,6 +2542,20 @@ export async function dismissReminder(blockId: string) {
 export async function approveCandidates(ids: string[]) {
   return call<Dashboard>("apply_schedule_import", { ids });
 }
+export type ImportReviewDecision = CanvasImportDecision;
+export async function applyImportReview(decisions: ImportReviewDecision[]) {
+  return call<Dashboard>("apply_import_review", { decisions });
+}
+export type DocumentImportResult = { dashboard: Dashboard; documentId: string };
+export async function importBrightspaceDocument(path: string) {
+  return call<DocumentImportResult>("import_brightspace_document", { path });
+}
+export async function selectAndImportBrightspace(): Promise<DocumentImportResult | null> {
+  if (!isDesktop()) throw new Error("Brightspace file import is available in the installed desktop app.");
+  const path = await open({ multiple: false, filters: [{ name: "Brightspace calendar or academic document", extensions: ["ics", "pdf", "docx", "pptx", "csv", "xlsx", "txt", "png", "jpg", "jpeg", "tif", "tiff"] }] });
+  return path ? importBrightspaceDocument(String(path)) : null;
+}
+
 export async function applyCanvasImport(decisions: CanvasImportDecision[]) {
   return call<Dashboard>("apply_canvas_import", { decisions });
 }

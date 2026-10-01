@@ -434,6 +434,8 @@ export const ScheduleImportSession = z.object({
   id: z.string().uuid(),
   sourceKind: z.enum([
     "canvas_calendar",
+    "brightspace_calendar",
+    "brightspace_document",
     "screenshot",
     "pdf",
     "ics",

@@ -391,3 +391,12 @@
 .settings-delight label { display: flex; gap: 8px; align-items: center; }
 .settings-delight .weekly-goal-input { width: 4rem; margin-left: auto; }
 .settings-delight label:last-of-type { display: grid; grid-template-columns: auto 1fr; }
+
+.brightspace-example {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}

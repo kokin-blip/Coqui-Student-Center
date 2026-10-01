@@ -27,6 +27,7 @@ export function ImportDialog({
   evidence,
   close,
   openCanvas,
+  openBrightspace,
   capture,
   photosImported,
   selectFile,
@@ -44,6 +45,7 @@ export function ImportDialog({
   evidence: Evidence;
   close: () => void;
   openCanvas: () => void;
+  openBrightspace?: () => void;
   capture: () => void;
   photosImported: (dashboard: Dashboard, count: number) => void;
   selectFile: () => void;
@@ -72,6 +74,10 @@ export function ImportDialog({
           <span className="import-choice-copy">
             Paste the one link Canvas provides
           </span>
+        </button>
+        <button className="outline" disabled={busy} onClick={openBrightspace}>
+          <span className="import-choice-title"><Upload aria-hidden="true" /><strong>Brightspace file</strong></span>
+          <span className="import-choice-copy">Import a downloaded calendar or document</span>
         </button>
         <button className="outline" disabled={busy} onClick={capture}>
           <span className="import-choice-title">

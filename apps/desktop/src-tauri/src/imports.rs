@@ -1098,6 +1098,73 @@ fn extract_ics_at_with_diagnostics(
     Ok(CalendarExtraction { candidates, diagnostic })
 }
 
+/// The same explicit-title rule is used by both LMS calendar importers.
+pub fn classify_calendar_deadline(candidate: &mut ExtractedCandidate, provider: &str) {
+    let title = candidate.title.to_ascii_lowercase();
+    let task_like = ["assignment", "exam", "quiz", "homework", "project due", "paper due", "due:"]
+        .iter().any(|word| title.contains(word));
+    if candidate.kind == "commitment" && task_like {
+        candidate.kind = "task".into();
+        candidate.due_at = candidate.starts_at.take();
+        candidate.ends_at = None;
+        candidate.duration_minutes = Some(45);
+        candidate.course = provider.into();
+        candidate.warnings.push(format!("Classified from the explicit {provider} event title; confirm the due date before approval"));
+        candidate.confidence = 0.82;
+    }
+}
+
+/// Local Brightspace snapshots use UID rather than a mutable start date for
+/// single events. Recurring occurrences retain their original instance identity.
+pub fn extract_brightspace_calendar(bytes: &[u8], tz: Tz, document_hash: &str) -> Result<Extraction, ImportError> {
+    extract_brightspace_calendar_at(bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes), tz, document_hash, Utc::now())
+}
+
+fn extract_brightspace_calendar_at(bytes: &[u8], tz: Tz, document_hash: &str, observed_at: DateTime<Utc>) -> Result<Extraction, ImportError> {
+    let mut candidates = Vec::new();
+    let mut diagnostic = CalendarImportDiagnostic::default();
+    let mut containers = 0;
+    for calendar in IcalParser::new(BufReader::new(Cursor::new(bytes))) {
+        containers += 1;
+        let calendar = calendar.map_err(|_| ImportError::Malformed("calendar container could not be parsed".into()))?;
+        for (index, event) in calendar.events.iter().enumerate() {
+            diagnostic.events_read += 1;
+            match candidates_from_event(event, tz, observed_at) {
+                Ok(mut values) => {
+                    if values.is_empty() { diagnostic.events_skipped += 1; }
+                    let uid = property_value(&event.properties, "UID").filter(|value| !value.trim().is_empty());
+                    let recurring = property(&event.properties, "RRULE").is_some()
+                        || property(&event.properties, "RECURRENCE-ID").is_some();
+                    for candidate in &mut values {
+                        let instance = candidate.source_uid.rsplit(':').next().unwrap_or("event");
+                        candidate.source_uid = match uid {
+                            Some(uid) if recurring => format!("brightspace-calendar:{uid}:{instance}"),
+                            Some(uid) => format!("brightspace-calendar:{uid}"),
+                            None => {
+                                candidate.warnings.push("No calendar UID was supplied; changed exports cannot reliably match this item.".into());
+                                format!("brightspace-calendar:document:{document_hash}:{containers}:{index}:{instance}")
+                            }
+                        };
+                        candidate.source_locator = format!("Brightspace calendar · {}", candidate.source_locator);
+                        classify_calendar_deadline(candidate, "Brightspace");
+                    }
+                    candidates.extend(values);
+                }
+                Err(_) => diagnostic.events_skipped += 1,
+            }
+        }
+    }
+    if containers == 0 { return Err(ImportError::Malformed("calendar container was missing".into())); }
+    if candidates.is_empty() { return Err(ImportError::Malformed("calendar contains no usable events".into())); }
+    // Repeated UIDs in overlapping calendars represent one source item.
+    let mut seen = HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.source_uid.clone()));
+    let warnings = if diagnostic.events_skipped > 0 {
+        vec![format!("{} calendar event(s) were skipped because they were unsupported or outside the import horizon. Review the usable items and add missing work manually.", diagnostic.events_skipped)]
+    } else { Vec::new() };
+    Ok(Extraction { candidates, warnings, segments: Vec::new() })
+}
+
 fn push_reason(reasons: &mut Vec<String>, reason: &str) {
     if !reasons.iter().any(|value| value == reason) {
         reasons.push(reason.into());
@@ -1864,6 +1931,62 @@ mod tests {
             archive.write_all(body.as_bytes()).unwrap();
         }
         archive.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn brightspace_calendar_reuses_dates_classes_and_reports_partial_reads() {
+        let bytes = include_bytes!("../test-fixtures/brightspace/calendar.ics");
+        let now = DateTime::parse_from_rfc3339("2026-09-30T12:00:00Z").unwrap().with_timezone(&Utc);
+        let result = extract_brightspace_calendar_at(bytes, chrono_tz::America::Phoenix, "hash", now).unwrap();
+        assert_eq!(result.candidates.len(), 5);
+        assert!(result.warnings[0].contains("1 calendar event"));
+        let deadline = &result.candidates[0];
+        assert_eq!(deadline.kind, "task");
+        assert_eq!(deadline.source_uid, "brightspace-calendar:assignment-101");
+        assert_eq!(deadline.due_at.as_deref(), Some("2026-10-02T06:59:00+00:00"));
+        assert_eq!(result.candidates[1].kind, "commitment");
+        assert_eq!(result.candidates[2].kind, "task");
+        assert!(!result.candidates[2].warnings.is_empty());
+        assert_eq!(result.candidates[3].kind, "class_meeting");
+        assert_eq!(result.candidates[3].weekdays, vec![1, 3]);
+        assert!(result.candidates[4].source_uid.contains("document:hash"));
+        assert!(result.candidates[4].warnings.iter().any(|warning| warning.contains("No calendar UID")));
+        let changed = String::from_utf8_lossy(bytes).replace("20261001", "20261008");
+        let next = extract_brightspace_calendar_at(changed.as_bytes(), chrono_tz::America::Phoenix, "changed", now).unwrap();
+        assert_eq!(next.candidates[0].source_uid, deadline.source_uid);
+        assert_ne!(next.candidates[0].due_at, deadline.due_at);
+        assert_ne!(next.candidates[4].source_uid, result.candidates[4].source_uid);
+    }
+
+    #[test]
+    fn brightspace_recurring_instances_keep_their_original_identity() {
+        let now = DateTime::parse_from_rfc3339("2026-09-30T12:00:00Z").unwrap().with_timezone(&Utc);
+        let event = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:recurring\nRECURRENCE-ID:20261001T090000Z\nSUMMARY:Meeting\nDTSTART:20261002T090000Z\nDTEND:20261002T100000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        let first = extract_brightspace_calendar_at(event.as_bytes(), chrono_tz::UTC, "one", now).unwrap();
+        let changed = event.replace("20261002", "20261003");
+        let next = extract_brightspace_calendar_at(changed.as_bytes(), chrono_tz::UTC, "two", now).unwrap();
+        assert_eq!(first.candidates[0].source_uid, next.candidates[0].source_uid);
+        let overlapping = format!("{event}{event}");
+        let duplicate = extract_brightspace_calendar_at(overlapping.as_bytes(), chrono_tz::UTC, "three", now).unwrap();
+        assert_eq!(duplicate.candidates.len(), 1);
+    }
+
+    #[test]
+    fn brightspace_document_reading_surfaces_unavailable_ocr() {
+        let mut runtime = OcrRuntime::discover(None);
+        runtime.tesseract = PathBuf::from("/missing-coqui-test-tesseract");
+        let image = include_bytes!("../test-fixtures/schedule/unreadable-capture.png");
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), image).unwrap();
+        let error = extract_document(DocumentSource::File(file.path()), image, "brightspace.png", "America/Phoenix", &runtime, &[], &[]).unwrap_err();
+        assert!(matches!(error, ImportError::OcrUnavailable(_)));
+    }
+
+    #[test]
+    fn brightspace_refuses_empty_or_malformed_calendars() {
+        for bytes in [b"".as_slice(), b"BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR", b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:bad\nEND:VEVENT\nEND:VCALENDAR", b"not a calendar"] {
+            assert!(extract_brightspace_calendar(bytes, chrono_tz::UTC, "hash").is_err());
+        }
     }
 
     #[test]

@@ -1,11 +1,5 @@
-# COQUI STUDENT CENTER V 1.13.0
+# Coqui Student Center 0.13.0-rc.3
 
-# UPDATES
-- Updated UI, with a comfy sizing option as well as a compact one that resembles other student apps.
-- Updated look for every tab
-- Tasks tracker / notifications added
--  Updated Scholarships tab with integrated search w/ options for integrating websites 1 by 1.
-- Study tab updated & optimized for mac and windows runtimes.
+- Adds review-first Brightspace calendar and academic-document imports for Windows and macOS.
 
-
-## 9-2-2026 EXM
+added brightspace connector for yeanvia :P

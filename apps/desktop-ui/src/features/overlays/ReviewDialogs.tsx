@@ -16,6 +16,7 @@ export function ReviewDialog({
   selectedIds,
   linkedTaskCandidateIds,
   canvasScoped,
+  sourceProvider,
   conflictedIds,
   busy,
   terms,
@@ -32,6 +33,7 @@ export function ReviewDialog({
   selectedIds: string[];
   linkedTaskCandidateIds: string[];
   canvasScoped: boolean;
+  sourceProvider?: "Brightspace";
   conflictedIds: Set<string>;
   busy: boolean;
   terms: AcademicTermRecord[];
@@ -46,9 +48,9 @@ export function ReviewDialog({
 }) {
   return (
     <Modal
-      title={canvasScoped ? "Review Canvas imports" : "Review extracted facts"}
+      title={sourceProvider ? `Review ${sourceProvider} imports` : canvasScoped ? "Review Canvas imports" : "Review extracted facts"}
       subtitle={
-        canvasScoped
+        (canvasScoped || sourceProvider)
           ? "Assignments go to Work. Timed events go to Calendar, with an optional linked to-do."
           : "Every candidate shows its source evidence. Approve only what is correct."
       }
@@ -61,6 +63,7 @@ export function ReviewDialog({
             selectedIds={selectedIds}
             linkedTaskCandidateIds={linkedTaskCandidateIds}
             canvasScoped={canvasScoped}
+            sourceProvider={sourceProvider}
             conflictedIds={conflictedIds}
             busy={busy}
             onSelection={onSelection}

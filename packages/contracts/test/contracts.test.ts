@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AiStructureRequest, AiStructureResult, EncryptedMutation, encryptedMutationSigningMessage, FieldProvenance } from "../src/index.js";
+import { AiStructureRequest, AiStructureResult, EncryptedMutation, encryptedMutationSigningMessage, FieldProvenance, ScheduleImportSession } from "../src/index.js";
 
 /**
  * Fixed envelope shared with the Rust golden-vector test in sync_transport.rs. The signing message
@@ -149,4 +149,12 @@ test("field provenance distinguishes source observation from a student edit",()=
     lastObservedSourceValue:"2026-09-03T19:00:00Z"
   });
   assert.equal(result.success,true);
+});
+
+
+test("Brightspace file sources retain review and provenance contracts", () => {
+  for (const sourceKind of ["brightspace_calendar", "brightspace_document"]) {
+    assert.equal(ScheduleImportSession.safeParse({ id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", sourceKind, status: "review", candidateIds: ["candidate"], conflictIds: [], startedAt: "2026-09-30T12:00:00Z" }).success, true);
+    assert.equal(FieldProvenance.safeParse({ sourceKind, sanitizedSourceIdentifier: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", externalStableId: "brightspace-calendar:event", evidence: "SUMMARY:Essay", confidence: 0.9, importTime: "2026-09-30T12:00:00Z", studentEdited: false }).success, true);
+  }
 });

@@ -49,6 +49,7 @@ type Props = {
   selectedIds: string[];
   linkedTaskCandidateIds: string[];
   canvasScoped: boolean;
+  sourceProvider?: "Brightspace";
   conflictedIds: Set<string>;
   busy: boolean;
   onSelection: (ids: string[]) => void;
@@ -63,6 +64,7 @@ export function ScheduleImportReview({
   selectedIds,
   linkedTaskCandidateIds,
   canvasScoped,
+  sourceProvider,
   conflictedIds,
   busy,
   onSelection,
@@ -138,7 +140,7 @@ export function ScheduleImportReview({
                       candidate.sourceType.startsWith("canvas"),
                   )
                     ? "Canvas"
-                    : "Schedule"}{" "}
+                    : candidates.some(candidate => candidate.documentId === source && candidate.sourceType.startsWith("brightspace_")) ? "Brightspace" : "Schedule"}{" "}
                   source {index + 1}
                 </option>
               ))}
@@ -163,7 +165,7 @@ export function ScheduleImportReview({
         ) : (
           <div className="source-preview-empty">
             <FileLock2 />
-            <strong>Source evidence</strong>
+            <strong>{sourceProvider === "Brightspace" || visible.some(candidate => candidate.sourceType.startsWith("brightspace_")) ? "Brightspace source evidence" : "Source evidence"}</strong>
             <p>{previewNotice || "Opening the encrypted source preview…"}</p>
           </div>
         )}
@@ -248,10 +250,10 @@ export function ScheduleImportReview({
                     <em>{candidate.sourceLocator} · {Math.round(candidate.confidence * 100)}% confidence</em>
                     {candidate.studentEditedFields?.length ? <mark>Edited by you</mark> : null}
                     <small>Approval action: {action.toLowerCase()}.</small>
-                    {canvasScoped && candidate.kind === "task" && (
+                    {(canvasScoped || candidate.sourceType.startsWith("brightspace_")) && candidate.kind === "task" && (
                       <small className="candidate-destination">Destination: Work</small>
                     )}
-                    {canvasScoped && candidate.kind === "commitment" && (
+                    {(canvasScoped || candidate.sourceType.startsWith("brightspace_")) && candidate.kind === "commitment" && (
                       <>
                         <small className="candidate-destination">Destination: Calendar</small>
                         <label className="check-row candidate-linked-task">

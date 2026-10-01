@@ -8765,17 +8765,60 @@ fn ingest_document(
     bytes: Vec<u8>,
     name: String,
 ) -> Result<Dashboard> {
+    Ok(ingest_document_with_source(state, source, bytes, name, false)?.dashboard)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentImportResult {
+    dashboard: Dashboard,
+    document_id: String,
+}
+
+#[tauri::command]
+fn import_brightspace_document(state: tauri::State<AppState>, path: String) -> Result<DocumentImportResult> {
+    state.require_unlocked()?;
+    import_brightspace_document_in(&state, &PathBuf::from(path))
+}
+
+fn import_brightspace_document_in(state: &AppState, source: &Path) -> Result<DocumentImportResult> {
+    state.require_unlocked()?;
+    if !source.is_file() { return Err(AppError::Invalid("selected path is not a file".into())); }
+    let size = source.metadata()?.len();
+    if size == 0 || size > MAX_IMPORT_BYTES {
+        return Err(AppError::Invalid("files must be non-empty and 25 MB or smaller".into()));
+    }
+    let bytes = fs::read(source)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_IMPORT_BYTES { return Err(AppError::Invalid("files must be non-empty and 25 MB or smaller".into())); }
+    let name = source.file_name().and_then(|value| value.to_str()).unwrap_or("document").to_string();
+    ingest_document_with_source(state, imports::DocumentSource::File(source), bytes, name, true)
+}
+
+fn ingest_document_with_source(
+    state: &AppState, source: imports::DocumentSource<'_>, bytes: Vec<u8>, name: String, brightspace: bool,
+) -> Result<DocumentImportResult> {
     let hash = hex::encode(Sha256::digest(&bytes));
     let detected = imports::detect_document(&bytes, &name)
         .map_err(|error| AppError::Extract(error.to_string()))?;
 
+    if brightspace {
+        let text = String::from_utf8_lossy(&bytes);
+        let leading = text.trim_start_matches('\u{feff}').trim_start().to_ascii_lowercase();
+        if leading.starts_with("<!doctype html") || leading.starts_with("<html") {
+            return Err(AppError::Invalid("Brightspace web pages and login pages are not supported. Download a calendar .ics or an academic document.".into()));
+        }
+    }
     let db = state.db.lock().unwrap();
     if let Some(existing_name) = duplicate_document_name(&db, &hash)? {
-        return dashboard_with_notice(
+        let document_id = db.query_row(
+            "SELECT id FROM documents WHERE sha256=?1 AND vault_path!='' AND content_shredded=0 ORDER BY imported_at LIMIT 1",
+            params![hash], |row| row.get::<_, String>(0),
+        )?;
+        return Ok(DocumentImportResult { document_id, dashboard: dashboard_with_notice(
             &db,
             &state.ocr,
             Some(format!("This file already exists in your encrypted vault as {existing_name}; no duplicate was created.")),
-        );
+        )? });
     }
 
     let document_key = random_key();
@@ -8800,7 +8843,9 @@ fn ingest_document(
     // them is a hint the read went wrong, so the reader offers a second opinion
     // rather than presenting a confident answer.
     let known_courses = enrolled_course_codes(&db);
-    let extraction = imports::extract_document(
+    let mut extraction = if brightspace && detected == imports::DocumentKind::Ics {
+        imports::extract_brightspace_calendar(&bytes, timezone.parse().unwrap_or(chrono_tz::UTC), &hash)
+    } else { imports::extract_document(
         source,
         &bytes,
         &name,
@@ -8808,7 +8853,23 @@ fn ingest_document(
         &state.ocr,
         &layouts,
         &known_courses,
-    );
+    ) };
+    // The generic reader also accepts undated tasks. Brightspace spreadsheets
+    // are advertised as deadline sources, so do not turn title-only grade or
+    // roster exports into apparently reliable assignments.
+    if brightspace && matches!(detected, imports::DocumentKind::Csv | imports::DocumentKind::Xlsx) {
+        if extraction.as_ref().is_ok_and(|result| result.candidates.iter().all(|candidate| candidate.due_at.is_none() && candidate.warnings.is_empty())) {
+            extraction = Err(imports::ImportError::Malformed("Brightspace spreadsheets need a title/assignment column and a due-date column containing dates. Grade and roster exports are not assignment schedules.".into()));
+        }
+    }
+    if brightspace && detected != imports::DocumentKind::Ics {
+        if let Ok(result) = &mut extraction {
+            for candidate in &mut result.candidates {
+                candidate.source_uid = format!("brightspace-document:{hash}:{}", candidate.source_uid);
+                candidate.source_locator = format!("Brightspace document · {}", candidate.source_locator);
+            }
+        }
+    }
     let (status, extraction_error) = match &extraction {
         Ok(result) if result.candidates.is_empty() => (
             "needs_attention",
@@ -8851,8 +8912,8 @@ fn ingest_document(
         for candidate in extraction.candidates {
             let candidate_id = Uuid::new_v4().to_string();
             db.execute(
-        "INSERT INTO import_candidates(id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_uid,confidence,warnings,weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
+        "INSERT INTO import_candidates(id,document_id,kind,title,course,due_at,starts_at,ends_at,duration_minutes,evidence,source_locator,source_uid,source_type,observed_at,confidence,warnings,weekdays,starts_at_local,ends_at_local,timezone,section_number,location,modality)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
         params![
           candidate_id,
           id,
@@ -8866,6 +8927,8 @@ fn ingest_document(
           candidate.evidence,
           candidate.source_locator,
           candidate.source_uid,
+          if brightspace { if detected == imports::DocumentKind::Ics { "brightspace_calendar" } else { "brightspace_document" } } else { "document" },
+          brightspace.then(|| Utc::now().to_rfc3339()),
           candidate.confidence,
           serde_json::to_string(&candidate.warnings).unwrap_or_else(|_| "[]".into()),
           serde_json::to_string(&candidate.weekdays).unwrap_or_else(|_| "[]".into()),
@@ -8890,7 +8953,7 @@ fn ingest_document(
                 .into()
         }
     };
-    dashboard_with_notice(&db, &state.ocr, Some(notice))
+    Ok(DocumentImportResult { document_id: id, dashboard: dashboard_with_notice(&db, &state.ocr, Some(notice))? })
 }
 
 #[tauri::command]
@@ -10043,9 +10106,9 @@ fn apply_candidate(
     Ok(entity_id)
 }
 
-fn apply_linked_canvas_task(conn: &Connection, candidate: &PendingCandidate) -> Result<String> {
+fn apply_linked_import_task(conn: &Connection, candidate: &PendingCandidate) -> Result<String> {
     if candidate.title.trim().is_empty() {
-        return Err(AppError::Invalid("Canvas event has no title".into()));
+        return Err(AppError::Invalid("Imported event has no title".into()));
     }
     let base_source_uid = if candidate.source_uid.is_empty() {
         format!("candidate:{}", candidate.id)
@@ -10056,7 +10119,7 @@ fn apply_linked_canvas_task(conn: &Connection, candidate: &PendingCandidate) -> 
     let due_at = candidate
         .starts_at
         .clone()
-        .ok_or_else(|| AppError::Invalid("Canvas event has no start time".into()))?;
+        .ok_or_else(|| AppError::Invalid("Imported event has no start time".into()))?;
     let minutes = match (
         candidate.starts_at.as_deref().and_then(parse_rfc3339),
         candidate.ends_at.as_deref().and_then(parse_rfc3339),
@@ -10149,6 +10212,16 @@ fn apply_canvas_import(
     decisions: Vec<CanvasImportDecision>,
 ) -> Result<Dashboard> {
     state.require_unlocked()?;
+    apply_import_review_in(&state, decisions, true)
+}
+
+#[tauri::command]
+fn apply_import_review(state: tauri::State<AppState>, decisions: Vec<CanvasImportDecision>) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    apply_import_review_in(&state, decisions, false)
+}
+
+fn apply_import_review_in(state: &AppState, decisions: Vec<CanvasImportDecision>, canvas_only: bool) -> Result<Dashboard> {
     let mut db = state.db.lock().unwrap();
     require_onboarded(&db)?;
     let transaction = db.transaction()?;
@@ -10161,12 +10234,17 @@ fn apply_canvas_import(
             .any(|item| item.candidate_id == decision.candidate_id)
         {
             return Err(AppError::Invalid(
-                "Canvas review contains a duplicate item".into(),
+                "Import review contains a duplicate item".into(),
             ));
         }
-        if !is_canvas_candidate(&transaction, &decision.candidate_id)? {
+        let canvas = is_canvas_candidate(&transaction, &decision.candidate_id)?;
+        let local_source = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM import_candidates ic JOIN documents d ON d.id=ic.document_id WHERE ic.id=?1 AND ic.source_type IN ('document','brightspace_calendar','brightspace_document'))",
+            params![decision.candidate_id], |row| row.get::<_, bool>(0),
+        )?;
+        if !canvas && (canvas_only || !local_source) {
             return Err(AppError::Invalid(
-                "Canvas review contains an invalid item".into(),
+                "Import review contains an invalid item".into(),
             ));
         }
         if has_unresolved_candidate_conflict(&transaction, &decision.candidate_id)? {
@@ -10179,7 +10257,7 @@ fn apply_canvas_import(
         };
         if decision.create_linked_task && candidate.kind != "commitment" {
             return Err(AppError::Invalid(
-                "Only a timed Canvas event can create a linked to-do".into(),
+                "Only a timed imported event can create a linked to-do".into(),
             ));
         }
         let kind = candidate.kind.clone();
@@ -10198,7 +10276,7 @@ fn apply_canvas_import(
                     existing_entity_for_source(&transaction, "tasks", &linked_source_uid)?
                         .is_some();
                 if decision.create_linked_task || linked_exists {
-                    apply_linked_canvas_task(&transaction, &candidate)?;
+                    apply_linked_import_task(&transaction, &candidate)?;
                     tasks += 1;
                 }
             }
@@ -10207,8 +10285,9 @@ fn apply_canvas_import(
     }
     transaction.commit()?;
     regenerate_plan_for_trigger(&db, None, planner::PlannerTrigger::ImportApproved)?;
+    let label = if canvas_only { "Canvas" } else { "imported" };
     let notice = format!(
-        "{approved} Canvas item{} approved · {tasks} task{} planned in Work · {events} event{} planned in Calendar.",
+        "{approved} {label} item{} approved · {tasks} task{} planned in Work · {events} event{} planned in Calendar.",
         if approved == 1 { "" } else { "s" },
         if tasks == 1 { "" } else { "s" },
         if events == 1 { "" } else { "s" },
@@ -10219,6 +10298,10 @@ fn apply_canvas_import(
 #[tauri::command]
 fn reject_candidates(state: tauri::State<AppState>, ids: Vec<String>) -> Result<Dashboard> {
     state.require_unlocked()?;
+    reject_candidates_in(&state, ids)
+}
+
+fn reject_candidates_in(state: &AppState, ids: Vec<String>) -> Result<Dashboard> {
     let mut db = state.db.lock().unwrap();
     let transaction = db.transaction()?;
     for id in ids {
@@ -11054,6 +11137,7 @@ fn main() {
             save_scholarship_story,
             delete_scholarship_story,
             import_document,
+            import_brightspace_document,
             import_document_bytes,
             launch_schedule_capture,
             settle_schedule_source,
@@ -11066,6 +11150,7 @@ fn main() {
             approve_candidates,
             apply_schedule_import,
             apply_canvas_import,
+            apply_import_review,
             reject_candidates,
             resolve_source_conflict,
             connect_canvas,
@@ -11522,6 +11607,8 @@ mod tests {
             "set_canvas_calendar_refresh",
             "disconnect_canvas_calendar",
             "import_document",
+            "import_brightspace_document",
+            "apply_import_review",
             "list_documents",
             "get_document_evidence",
             "get_schedule_source_preview",
@@ -11797,6 +11884,183 @@ mod tests {
         let (cipher, nonce) = encrypt(&key, plain).unwrap();
         assert_eq!(decrypt(&key, &nonce, &cipher).unwrap(), plain);
         assert!(decrypt(&wrong_key, &nonce, &cipher).is_err());
+    }
+
+    fn brightspace_test_state(root: &Path) -> AppState {
+        let key = random_key();
+        let db_path = root.join("brightspace.db");
+        let mut db = open_database(&db_path, &key).unwrap();
+        complete_test_onboarding(&mut db);
+        let vault = root.join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        AppState {
+            db: Arc::new(Mutex::new(db)), master_key: key, root: root.into(), db_path, vault,
+            ocr: OcrRuntime::discover(None), locked: Arc::new(AtomicBool::new(false)),
+            pin_attempts: Arc::new(Mutex::new(PinAttempts::default())), pending_navigation: Arc::new(Mutex::new(None)),
+            account: Arc::new(Mutex::new(auth::AccountRuntime::test_unconfigured())),
+            sync_protection: Arc::new(Mutex::new(sync_crypto::SyncProtectionRuntime::default())),
+        }
+    }
+
+    fn brightspace_calendar_fixture(start: DateTime<Utc>) -> String {
+        let deadline = start.format("%Y%m%dT%H%M%SZ");
+        let end = (start + chrono::Duration::hours(1)).format("%Y%m%dT%H%M%SZ");
+        format!("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:essay\nSUMMARY:Essay assignment\nDTSTART:{deadline}\nDTEND:{deadline}\nEND:VEVENT\nBEGIN:VEVENT\nUID:group\nSUMMARY:Study group\nDTSTART:{deadline}\nDTEND:{end}\nEND:VEVENT\nEND:VCALENDAR\n")
+    }
+
+    #[test]
+    fn brightspace_import_is_encrypted_reviewable_and_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let state = brightspace_test_state(root.path());
+        let path = root.path().join("calendar.ics");
+        let content = brightspace_calendar_fixture(Utc::now() + chrono::Duration::days(3));
+        fs::write(&path, &content).unwrap();
+        let task_count = || state.db.lock().unwrap().query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_,i64>(0)).unwrap();
+        let before_tasks = task_count();
+        let before = dashboard(&state.db.lock().unwrap(), &state.ocr).unwrap();
+        let result = import_brightspace_document_in(&state, &path).unwrap();
+        assert_eq!(task_count(), before_tasks);
+        assert_eq!(result.dashboard.blocks.len(), before.blocks.len());
+        let candidates: Vec<_> = result.dashboard.candidates.iter().filter(|c| c.document_id == result.document_id).collect();
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|c| c.status == "pending" && c.source_type == "brightspace_calendar"));
+        let duplicate = import_brightspace_document_in(&state, &path).unwrap();
+        assert_eq!(duplicate.document_id, result.document_id);
+        assert!(duplicate.dashboard.import_notice.unwrap().contains("no duplicate"));
+        {
+            let db = state.db.lock().unwrap();
+            assert_eq!(decrypt_original_document(&state, &db, &result.document_id).unwrap().0, content.as_bytes());
+            let encrypted = fs::read(state.vault.join(format!("{}.vault", result.document_id))).unwrap();
+            assert!(!String::from_utf8_lossy(&encrypted).contains("Essay assignment"));
+            assert!(settle_schedule_source_in(&db, &state.vault, &state.root, &result.document_id, "delete_now").is_err());
+        }
+        let decisions = candidates.iter().map(|candidate| CanvasImportDecision { candidate_id: candidate.id.clone(), create_linked_task: candidate.kind == "commitment" }).collect();
+        let _approved = apply_import_review_in(&state, decisions, false).unwrap();
+        assert_eq!(task_count(), before_tasks + 2);
+        let _repeated = apply_import_review_in(&state, candidates.iter().map(|c| CanvasImportDecision { candidate_id: c.id.clone(), create_linked_task: c.kind == "commitment" }).collect(), false).unwrap();
+        assert_eq!(task_count(), before_tasks + 2);
+        let db = state.db.lock().unwrap();
+        let provenance: (String, String, String) = db.query_row("SELECT source_kind,sanitized_source_identifier,external_stable_id FROM provenance_links WHERE candidate_id=?1 LIMIT 1", [&candidates[0].id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(provenance.0, "brightspace_calendar");
+        assert_eq!(provenance.1, result.document_id);
+        assert!(provenance.2.starts_with("brightspace-calendar:"));
+        settle_schedule_source_in(&db, &state.vault, &state.root, &result.document_id, "delete_now").unwrap();
+        assert!(!state.vault.join(format!("{}.vault", result.document_id)).exists());
+        assert_eq!(db.query_row("SELECT evidence FROM import_candidates WHERE id=?1", [&candidates[0].id], |r| r.get::<_,String>(0)).unwrap(), candidates[0].evidence);
+    }
+
+    #[test]
+    fn brightspace_overlapping_exports_and_partial_decisions_preserve_work() {
+        let root = tempfile::tempdir().unwrap();
+        let state = brightspace_test_state(root.path());
+        let path = root.path().join("calendar.ics");
+        let content = brightspace_calendar_fixture(Utc::now() + chrono::Duration::days(3));
+        fs::write(&path, &content).unwrap();
+        let first = import_brightspace_document_in(&state, &path).unwrap();
+        let group = first.dashboard.candidates.iter().find(|c| c.document_id == first.document_id && c.kind == "commitment").unwrap();
+        let approved = apply_import_review_in(&state, vec![CanvasImportDecision { candidate_id: group.id.clone(), create_linked_task: true }], false).unwrap();
+        assert!(approved.candidates.iter().any(|c| c.document_id == first.document_id && c.kind == "task" && c.status == "pending"));
+        // A different snapshot contains the same source items.
+        fs::write(&path, content.replace("VERSION:2.0", "VERSION:2.0\nPRODID:-//Different snapshot//EN")).unwrap();
+        let second = import_brightspace_document_in(&state, &path).unwrap();
+        let second_group = second.dashboard.candidates.iter().find(|c| c.document_id == second.document_id && c.kind == "commitment").unwrap();
+        assert!(second_group.has_linked_task);
+        apply_import_review_in(&state, vec![CanvasImportDecision { candidate_id: second_group.id.clone(), create_linked_task: false }], false).unwrap();
+        let db = state.db.lock().unwrap();
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM commitments WHERE source_uid='brightspace-calendar:group'", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM tasks WHERE source_uid='brightspace-calendar:group:linked-task'", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn brightspace_text_and_office_files_keep_document_provenance() {
+        let root = tempfile::tempdir().unwrap();
+        let state = brightspace_test_state(root.path());
+        let text = "Research memo due Sep 12, 2030 at 11:30 PM";
+        for (name, entry, locator) in [("syllabus.txt", "", "text body"), ("syllabus.docx", "word/document.xml", "paragraph"), ("syllabus.pptx", "ppt/slides/slide1.xml", "slide")] {
+            let bytes = if entry.is_empty() { text.as_bytes().to_vec() } else {
+                let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+                if name.ends_with("pptx") {
+                    archive.start_file("ppt/presentation.xml", zip::write::SimpleFileOptions::default()).unwrap();
+                    std::io::Write::write_all(&mut archive, b"<presentation/>").unwrap();
+                }
+                archive.start_file(entry, zip::write::SimpleFileOptions::default()).unwrap();
+                std::io::Write::write_all(&mut archive, format!("<document><p><t>{text}</t></p></document>").as_bytes()).unwrap();
+                archive.finish().unwrap().into_inner()
+            };
+            let path = root.path().join(name);
+            fs::write(&path, &bytes).unwrap();
+            let result = import_brightspace_document_in(&state, &path).unwrap();
+            let candidate = result.dashboard.candidates.iter().find(|c| c.document_id == result.document_id).unwrap();
+            assert_eq!(candidate.source_type, "brightspace_document");
+            assert!(candidate.source_locator.contains(locator));
+            assert!(candidate.evidence.contains("Research memo"));
+            apply_import_review_in(&state, vec![CanvasImportDecision { candidate_id: candidate.id.clone(), create_linked_task: false }], false).unwrap();
+            let db = state.db.lock().unwrap();
+            assert_eq!(db.query_row("SELECT source_kind FROM provenance_links WHERE candidate_id=?1 LIMIT 1", [&candidate.id], |r| r.get::<_,String>(0)).unwrap(), "brightspace_document");
+        }
+    }
+
+    #[test]
+    fn brightspace_changed_dates_require_conflict_review_and_do_not_duplicate_tasks() {
+        let root = tempfile::tempdir().unwrap();
+        let state = brightspace_test_state(root.path());
+        let path = root.path().join("calendar.ics");
+        let start = Utc::now() + chrono::Duration::days(3);
+        fs::write(&path, brightspace_calendar_fixture(start)).unwrap();
+        let first = import_brightspace_document_in(&state, &path).unwrap();
+        let task = first.dashboard.candidates.iter().find(|c| c.document_id == first.document_id && c.kind == "task").unwrap();
+        apply_import_review_in(&state, vec![CanvasImportDecision { candidate_id: task.id.clone(), create_linked_task: false }], false).unwrap();
+        fs::write(&path, brightspace_calendar_fixture(start + chrono::Duration::days(1))).unwrap();
+        let next = import_brightspace_document_in(&state, &path).unwrap();
+        let changed = next.dashboard.candidates.iter().find(|c| c.document_id == next.document_id && c.kind == "task").unwrap();
+        assert!(apply_import_review_in(&state, vec![CanvasImportDecision { candidate_id: changed.id.clone(), create_linked_task: false }], false).is_err());
+        let conflict = next.dashboard.conflicts.iter().find(|c| c.candidate_id.as_deref() == Some(&changed.id)).unwrap();
+        let mut db = state.db.lock().unwrap();
+        resolve_source_conflict_in_db(&mut db, &conflict.id, "use_source").unwrap();
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM tasks WHERE source_uid='brightspace-calendar:essay'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let due: String = db.query_row("SELECT due_at FROM tasks WHERE source_uid='brightspace-calendar:essay'", [], |r| r.get(0)).unwrap();
+        assert_eq!(Some(due.as_str()), changed.due_at.as_deref());
+    }
+
+    #[test]
+    fn brightspace_documents_dismissal_errors_and_review_validation() {
+        let root = tempfile::tempdir().unwrap();
+        let state = brightspace_test_state(root.path());
+        let path = root.path().join("assignments.csv");
+        fs::write(&path, include_bytes!("../test-fixtures/brightspace/assignments.csv")).unwrap();
+        let before_tasks: i64 = state.db.lock().unwrap().query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0)).unwrap();
+        let result = import_brightspace_document_in(&state, &path).unwrap();
+        let candidates: Vec<_> = result.dashboard.candidates.iter().filter(|c| c.document_id == result.document_id).collect();
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|c| c.source_type == "brightspace_document"));
+        assert!(candidates.iter().any(|c| !c.warnings.is_empty()));
+        let bad = || CanvasImportDecision { candidate_id: candidates[0].id.clone(), create_linked_task: true };
+        assert!(apply_import_review_in(&state, vec![bad()], false).is_err());
+        let good = || CanvasImportDecision { candidate_id: candidates[0].id.clone(), create_linked_task: false };
+        assert!(apply_import_review_in(&state, vec![good(),good()], false).is_err());
+        assert!(apply_import_review_in(&state, vec![good()], true).is_err());
+        assert!(apply_import_review_in(&state, vec![CanvasImportDecision { candidate_id: "missing".into(), create_linked_task: false }], false).is_err());
+        let dismissed = reject_candidates_in(&state, candidates.iter().map(|c| c.id.clone()).collect()).unwrap();
+        assert_eq!(state.db.lock().unwrap().query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_,i64>(0)).unwrap(), before_tasks);
+        assert_eq!(dismissed.blocks.len(), result.dashboard.blocks.len());
+        assert!(dismissed.candidates.iter().filter(|c| c.document_id == result.document_id).all(|c| c.status == "rejected"));
+        for (name, content) in [("empty.txt", ""), ("login.html", "<html>Sign in</html>"), ("login.txt", "<!DOCTYPE html><html>Sign in</html>"), ("wrong.pdf", "plain text"), ("course.zip", "PK course package"), ("course.imscc", "unsupported")] {
+            let path = root.path().join(name);
+            fs::write(&path, content).unwrap();
+            assert!(import_brightspace_document_in(&state, &path).is_err(), "accepted {name}");
+        }
+        let oversized = root.path().join("large.txt");
+        fs::File::create(&oversized).unwrap().set_len(MAX_IMPORT_BYTES + 1).unwrap();
+        assert!(import_brightspace_document_in(&state, &oversized).is_err());
+        for (name, content) in [("empty.ics", "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR"), ("broken.csv", "unrecognized,columns\none,two"), ("grades.csv", "Name,Grade\nEssay,95"), ("notes.txt", "No academic dates here"), ("broken.pdf", "%PDF-1.7\nnot a valid PDF")] {
+            let path = root.path().join(name);
+            fs::write(&path, content).unwrap();
+            let failed = import_brightspace_document_in(&state, &path).unwrap();
+            assert!(failed.dashboard.import_notice.unwrap().contains("needs attention"));
+            assert!(failed.dashboard.candidates.iter().all(|c| c.document_id != failed.document_id));
+            assert!(state.vault.join(format!("{}.vault", failed.document_id)).exists());
+        }
     }
 
     #[test]
@@ -13040,11 +13304,11 @@ mod tests {
         };
         insert_candidate("candidate-1", "object-1", "hash-1", "Study group");
         let first = pending_candidate(&conn, "candidate-1").unwrap().unwrap();
-        let first_task = apply_linked_canvas_task(&conn, &first).unwrap();
+        let first_task = apply_linked_import_task(&conn, &first).unwrap();
 
         insert_candidate("candidate-2", "object-2", "hash-2", "Study group moved");
         let second = pending_candidate(&conn, "candidate-2").unwrap().unwrap();
-        let second_task = apply_linked_canvas_task(&conn, &second).unwrap();
+        let second_task = apply_linked_import_task(&conn, &second).unwrap();
 
         assert_eq!(first_task, second_task);
         assert_eq!(

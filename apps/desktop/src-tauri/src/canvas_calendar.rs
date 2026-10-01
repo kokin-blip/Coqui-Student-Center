@@ -95,14 +95,7 @@ fn normalize_candidates(candidates: &mut [imports::ExtractedCandidate]) {
     for candidate in candidates {
         candidate.source_uid = candidate.source_uid.replacen("ics:", "canvas-calendar:", 1);
         candidate.source_locator = format!("Canvas calendar · {}", candidate.source_locator);
-        let title=candidate.title.to_ascii_lowercase();
-        let task_like=["assignment","exam","quiz","homework","project due","paper due","due:"].iter().any(|word| title.contains(word));
-        if candidate.kind=="commitment" && task_like {
-            candidate.kind="task".into(); candidate.due_at=candidate.starts_at.take(); candidate.ends_at=None;
-            candidate.duration_minutes=Some(45); candidate.course="Canvas".into();
-            candidate.warnings.push("Classified from the explicit Canvas event title; confirm the due date before approval".into());
-            candidate.confidence=0.82;
-        }
+        imports::classify_calendar_deadline(candidate, "Canvas");
     }
 }
 

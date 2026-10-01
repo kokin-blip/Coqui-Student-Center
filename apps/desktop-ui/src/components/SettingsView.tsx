@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Sparkles,
   UserRound,
+  Upload,
 } from "lucide-react";
 import { type ReactNode } from "react";
 import type { InterfaceMode } from "../features/shell/interfacePreferences";
@@ -19,6 +20,7 @@ import type { DelightPreferences } from "../features/shell/delightPreferences";
 export type SettingsSection =
   | "academic"
   | "canvas"
+  | "brightspace"
   | "ai"
   | "account"
   | "backups"
@@ -38,6 +40,7 @@ type SettingsViewProps = {
   onAppearance: (value: AppearancePreference) => void;
   onAccent: (value: AccentPreference) => void;
   onCanvas: () => void;
+  onBrightspace?: () => void;
   onAi: () => void;
   onAccount: () => void;
   onBackups: () => void;
@@ -77,6 +80,7 @@ export function SettingsView({
   onAppearance,
   onAccent,
   onCanvas,
+  onBrightspace,
   onAi,
   onAccount,
   onBackups,
@@ -119,6 +123,7 @@ export function SettingsView({
               detail="Calendar-link and full read-only connections"
               onClick={onCanvas}
             />
+            <SettingsAction icon={<Upload />} title="Brightspace" detail="Downloaded calendars and academic documents" onClick={onBrightspace ?? (() => {})} />
             <SettingsAction
               icon={<Brain />}
               title="AI providers"

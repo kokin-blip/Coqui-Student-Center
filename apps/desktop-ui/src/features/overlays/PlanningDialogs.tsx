@@ -52,6 +52,7 @@ export function PlanningDialogs({
               const candidate = dashboard.candidates.find(
                 (item) => item.id === conflict.candidateId,
               );
+              const provider = candidate?.sourceType?.startsWith("brightspace_") ? "Brightspace" : candidate?.sourceType?.startsWith("canvas") ? "Canvas" : "source";
               const critical = ["source_change", "sync_critical_date"].includes(
                 conflict.kind,
               );
@@ -83,7 +84,7 @@ export function PlanningDialogs({
                           <small>
                             {conflict.kind === "sync_critical_date"
                               ? "Newest device value"
-                              : "Newest Canvas value"}
+                              : `Newest ${provider} value`}
                           </small>
                           <strong>
                             {ranged
@@ -114,11 +115,11 @@ export function PlanningDialogs({
                             resolveConflict(
                               conflict.id,
                               "use_source",
-                              "Canvas value accepted and plan rebuilt.",
+                              `${provider === "source" ? "Source" : provider} value accepted and plan rebuilt.`,
                             )
                           }
                         >
-                          Use Canvas value
+                          Use {provider} value
                         </button>
                       </div>
                     </>

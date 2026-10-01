@@ -73,6 +73,7 @@ import {
 import {
   AccountStatus,
   applyCanvasImport,
+  applyImportReview,
   approveCandidates,
   CalendarDiff,
   Dashboard,
@@ -133,6 +134,7 @@ const AiSettings = lazy(() =>
     default: module.AiSettings,
   })),
 );
+const BrightspaceSettings = lazy(() => import("./features/settings/BrightspaceSettings").then(module => ({ default: module.BrightspaceSettings })));
 const CanvasSettings = lazy(() =>
   import("./features/settings/CanvasSettings").then((module) => ({
     default: module.CanvasSettings,
@@ -381,6 +383,7 @@ export function StudentCenter() {
   const [reviewConnectionId, setReviewConnectionId] = useState<string | null>(
     null,
   );
+  const [reviewDocumentId, setReviewDocumentId] = useState<string | null>(null);
   const [linkedTaskCandidateIds, setLinkedTaskCandidateIds] = useState<
     string[]
   >([]);
@@ -665,7 +668,7 @@ export function StudentCenter() {
     ? pending.filter(
         (candidate) => candidate.sourceConnectionId === reviewConnectionId,
       )
-    : pending;
+    : reviewDocumentId ? pending.filter(candidate => candidate.documentId === reviewDocumentId) : pending;
   const conflictCandidateIds = useMemo(
     () =>
       new Set(
@@ -707,7 +710,7 @@ export function StudentCenter() {
     todayWorkspace?.terms.map((term) => `${term.id}:${term.active}`).join("|"),
   ]);
   useEffect(() => {
-    if (modal !== "review") setReviewConnectionId(null);
+    if (modal !== "review") { setReviewConnectionId(null); setReviewDocumentId(null); }
   }, [modal]);
   useEffect(() => {
     if (modal !== "review") return;
@@ -771,14 +774,16 @@ export function StudentCenter() {
                     linkedTaskCandidateIds.includes(candidateId),
                 })),
               )
-            : approveCandidates(selectedCandidates)
+            : selected.some(candidate => candidate.sourceType.startsWith("brightspace_"))
+              ? applyImportReview(selectedCandidates.map(candidateId => ({ candidateId, createLinkedTask: linkedTaskCandidateIds.includes(candidateId) })))
+              : approveCandidates(selectedCandidates)
           : rejectCandidates(selectedCandidates),
       choice === "approve"
         ? `${selectedCandidates.length} items approved and planned.`
         : `${selectedCandidates.length} candidates rejected.`,
     );
     if (!next) return;
-    if (choice === "approve" && reviewConnectionId) {
+    if (choice === "approve" && (reviewConnectionId || reviewDocumentId)) {
       closeSettingsSection();
       if (workCount > 0) {
         setWorkFilter("all");
@@ -1217,6 +1222,7 @@ export function StudentCenter() {
                     }}
                   />
                 )}
+                {settingsSection === "brightspace" && <BrightspaceSettings data={data} close={closeSettingsSection} onDashboard={setData} onToast={setToast} onReview={documentId => { setReviewDocumentId(documentId); setReviewConnectionId(null); setModal("review"); }} />}
                 {settingsSection === "backups" && (
                   <BackupSettings
                     close={closeSettingsSection}
@@ -1403,6 +1409,7 @@ export function StudentCenter() {
                 onCanvas={() => {
                   showSettingsSection("canvas");
                 }}
+                onBrightspace={() => showSettingsSection("brightspace")}
                 onAi={() => void openAiSettings()}
                 onAccount={() => void openAccount()}
                 onBackups={openBackups}
@@ -1491,6 +1498,7 @@ export function StudentCenter() {
             evidence={vaultEvidence}
             close={() => setModal(null)}
             openCanvas={() => showSettingsSection("canvas")}
+            openBrightspace={() => showSettingsSection("brightspace")}
             capture={async () => {
               setBusy(true);
               setError("");
@@ -1561,6 +1569,7 @@ export function StudentCenter() {
             selectedIds={selectedCandidates}
             linkedTaskCandidateIds={linkedTaskCandidateIds}
             canvasScoped={Boolean(reviewConnectionId)}
+            sourceProvider={reviewDocumentId && pendingForReview.some(candidate => candidate.sourceType.startsWith("brightspace_")) ? "Brightspace" : undefined}
             conflictedIds={conflictCandidateIds}
             busy={busy}
             terms={todayWorkspace?.terms ?? []}

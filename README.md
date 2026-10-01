@@ -35,6 +35,23 @@ Coqui Student Center is a downloadable, local-first desktop application for Wind
 
 See [Student workflow help](docs/STUDENT_WORKFLOWS.md) for daily check-ins, on-time assignment history, quick notes, and the Materials notes workspace. These workflows remain device-local and are covered by encrypted full-profile backups.
 
+## Importing Brightspace files
+
+Open **Settings → Brightspace** or **Calendar → Import schedule → Brightspace file**. In Brightspace Calendar, choose **Subscribe**, select the calendars you need, and download the `.ics` file. Availability varies by school; see the [official Calendar guide](https://community.d2l.com/brightspace/kb/articles/18042-manage-course-events-with-the-calendar-tool).
+
+Coqui accepts downloaded `.ics` calendars and academic PDF, DOCX, PPTX, CSV, XLSX, TXT, PNG, JPEG, and TIFF files up to 25 MB. Documents are read for academic dates and class schedules, not as a complete course export. Images and scanned PDFs require local OCR. CSV/XLSX headers can use `title` or `assignment`, `course`, and `due_date`; for example:
+
+```csv
+title,course,due_date
+Essay,ENG 101,2026-10-15 23:59
+```
+
+Calendar deadlines propose Work tasks; timed events propose Calendar entries with optional linked Work to-dos. Weekly class patterns require a selected academic term. Review source evidence, dates, classification, estimates, and course details before approving. Date-only deadlines use 11:59 PM in the calendar/saved timezone; this inferred time needs confirmation. Timed calendar occurrences use the existing 180-day future import horizon and recurrence safety limits. No course enrollment, grades, submissions, or missing assignments are fetched.
+
+Imports are local snapshots: there is no live Brightspace API, private feed-link subscription, or automatic refresh. Re-export and import when dates change. Calendar UIDs match previously imported items and changed critical dates require explicit conflict resolution. Identical retained files are detected by content hash. Changed documents and calendar events without UIDs cannot reliably match prior work, so check for duplicates manually. ZIP/IMSCC course packages, HTML/login pages, encrypted/password-protected files, and mismatched contents are unsupported.
+
+**Keep for later** leaves candidates pending; **Ignore selected** dismisses them without creating work; **Approve and plan** applies only selected candidates. Original files are encrypted locally. Unreadable supported documents stay in the document library with an extraction explanation; import a readable copy or enter missing work manually. After finishing review, choose whether to keep the original encrypted or delete it; approved evidence remains available. Optional AI rereading requires separate explicit consent.
+
 ## Repository structure
 
 ```text

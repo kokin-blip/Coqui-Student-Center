@@ -20,6 +20,7 @@ const dashboard = {
       id: "candidate-1",
       title: "Research paper",
       evidence: "Canvas lists a newer due date.",
+      sourceType: "canvas_assignment",
     },
   ],
   conflicts: [
