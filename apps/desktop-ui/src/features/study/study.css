@@ -157,3 +157,22 @@
 @media (max-width:640px) {
   .app-shell .content.mode-study { padding-bottom:96px; }
 }
+
+.grade-import { margin:var(--space-4) 0; min-width:0; }
+.grade-import-rows { display:grid; gap:var(--space-4); margin:var(--space-4) 0; }
+.grade-import-rows fieldset { min-width:0; padding:var(--space-4); border:1px solid var(--border-subtle); border-radius:var(--radius-md); }
+.grade-import-rows legend,.grade-import blockquote { overflow-wrap:anywhere; }
+.grade-source-image { display:block; max-width:100%; height:auto; }
+.grade-import .form-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr)); }
+.grade-import .record-actions { flex-wrap:wrap; }
+
+.study-learn-grid { grid-template-columns:minmax(0,1fr); max-width:var(--content-max); }
+.study-learn-grid .section-head h2 { font:700 var(--text-section-title)/var(--leading-tight) var(--font-ui); }
+.study-learn-grid .study-course-picker { max-width:32rem; }
+.study-learn-grid > details { padding:var(--space-4); border-top:1px solid var(--border-subtle); }
+.course-difficulty { margin:var(--space-4) 0; }
+.difficulty-list { padding-left:var(--space-5); }
+.difficulty-list li { margin-bottom:var(--space-4); overflow-wrap:anywhere; }
+.difficulty-list small { display:block; color:var(--text-secondary); }
+.course-difficulty .record-actions { flex-wrap:wrap; }
+.course-difficulty .form-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr)); }

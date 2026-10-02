@@ -1,0 +1,28 @@
+import {webcrypto} from "node:crypto";
+import {render,screen,waitFor} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {afterEach,expect,test,vi} from "vitest";
+import * as native from "../src/native";
+import {SemesterScheduleAnalysisView} from "../src/features/semester/SemesterScheduleAnalysisView";
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
+test("provider rejection preserves an offline report and requires renewed consent",async()=>{
+ vi.stubGlobal("crypto",webcrypto);
+ const workspace=await native.getLocalWorkspace(),providers=await native.listAiProviders();
+ vi.spyOn(native,"listAiProviders").mockResolvedValue([{...providers[0],provider:"openai",model:"fixture-model",connected:true,healthy:true}]);
+ vi.spyOn(native,"getPlannerProfile").mockResolvedValue({program:"",catalogYear:"",studyGoals:"",careerInterests:"",constraints:"",version:0});
+ vi.spyOn(native,"getSemesterRoadmaps").mockResolvedValue([]);vi.spyOn(native,"getSemesterAnalysisReports").mockResolvedValue([]);
+ const save=vi.spyOn(native,"saveSemesterAnalysisReport").mockImplementation(async r=>[{...r,id:"offline",version:1}]);
+ const request=vi.spyOn(native,"requestSemesterScheduleAnalysis").mockRejectedValue(new Error("provider rejected request (HTTP 400): private response"));
+ const scenario:native.SemesterScenario={id:"idea",name:"Idea",version:0,termId:workspace.terms[0].id,sections:[{id:"section",courseId:workspace.courses[0].id,weekdays:[1],startsAtLocal:"09:00",endsAtLocal:"10:00",modality:"unknown",location:""}]};
+ const user=userEvent.setup();render(<SemesterScheduleAnalysisView workspace={workspace} term={workspace.terms[0]} scenario={scenario} onScenarioFromScreenshot={vi.fn()}/>);
+ await user.click(screen.getByRole("button",{name:"Save offline analysis"}));
+ expect(await screen.findByText(/Saved analysis ·/)).toBeVisible();
+ await user.click(screen.getByText("Optional AI interpretation",{selector:"summary"}));
+ const consent=screen.getByRole("checkbox",{name:/I consent to sending/});await user.click(consent);
+ await waitFor(()=>expect(screen.getByRole("button",{name:"Interpret with AI"})).toBeEnabled());
+ await user.click(screen.getByRole("button",{name:"Interpret with AI"}));
+ expect(await screen.findByRole("alert")).toHaveTextContent("Check the selected model");
+ expect(screen.queryByText(/private response/)).not.toBeInTheDocument();
+ expect(consent).not.toBeChecked();expect(screen.getByText(/Saved analysis ·/)).toBeVisible();expect(save).toHaveBeenCalledTimes(1);
+ expect(request).toHaveBeenCalledWith(expect.objectContaining({expectedModel:"fixture-model",expectedProfileVersion:0}));
+});

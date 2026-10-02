@@ -1,3 +1,5 @@
+import { GradeEvidence } from "./GradeEvidence";
+import { GradeImportReview } from "./GradeImportReview";
 import { GradeItemEditor, GradeCategoryEditor } from "./GradeEditor";
 import { useEffect, useState } from "react";
 import {
@@ -181,7 +183,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
         <div className="section-head">
           <div>
             <h2>Grades and what-if planning</h2>
-            <p>Only scales and scores you enter are used.</p>
+            <p>Only scores you enter or explicitly approve are used.</p>
           </div>
           {study?.gpaProjection != null && (
             <strong>Projected GPA {study.gpaProjection.toFixed(2)}</strong>
@@ -191,6 +193,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
           Course
           <select
             value={gradeCourse}
+            disabled={busy}
             onChange={(event) => {
               setGradeCourse(event.target.value);
               setGradeCategory("");
@@ -225,6 +228,7 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
             </strong>
           </article>
         </div>
+        <GradeImportReview vm={vm} />
         <h3>Gradebook</h3>
         {!study?.gradeItems.some(item => item.courseId === gradeCourse) && <p>No grades yet. Add a score or a planned what-if below.</p>}
         <div className="grade-list">
@@ -242,8 +246,9 @@ export function StudyGrades({ vm }: { vm: StudyViewModel }) {
                   </small>
                 </span>
                 <b>
-                  {item.score ?? 0}/{item.pointsPossible}
+                  {item.score ?? "—"}/{item.pointsPossible}
                 </b>
+                <GradeEvidence gradeId={item.id} />
                 <GradeItemEditor item={item} busy={busy} onSave={work => { void act(work, "Grade edits saved."); }} />
               </article>
             ))}

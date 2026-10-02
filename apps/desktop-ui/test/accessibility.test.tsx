@@ -120,7 +120,7 @@ test("Work, Courses, Study, Funding, and Settings pass automated accessibility c
       { timeout: 8000 },
     );
     if (destination === "Study")
-      await screen.findByText(/Citations are required/);
+      await screen.findByRole("heading", {name:"What to study next"});
     if (destination === "Funding")
       await screen.findByText("Trusted sources");
     await expectNoAccessibilityViolations();

@@ -20,6 +20,7 @@ export function recommendStudyMaterials(
   courseId: string,
   target: TaskRecord | undefined,
   now = new Date(),
+  difficultConcepts: string[] = [],
 ): StudyRecommendation[] {
   if (!courseId || (target && target.courseId !== courseId)) return [];
   const targetWords = new Set((target?.title.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []));
@@ -27,8 +28,10 @@ export function recommendStudyMaterials(
     const reasonCodes: string[] = [];
     let score = 0;
     if (target && material.relatedTargetId === target.id) { score += 100; reasonCodes.push("related_target"); }
-    if (target && material.topics.some((topic) => (topic.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []).some((word) => targetWords.has(word)))) { score += 45; reasonCodes.push("topic_match"); }
+    if (target && (material.topics ?? []).some((topic) => (topic.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []).some((word) => targetWords.has(word)))) { score += 45; reasonCodes.push("topic_match"); }
     if (target && assessmentKinds.has(target.kind) && practiceTypes.has(material.materialType)) { score += 25; reasonCodes.push("assessment_practice"); }
+    const materialWords = new Set(([material.title ?? material.fileName, ...(material.topics ?? [])].join(" ").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []));
+    if (difficultConcepts.some(concept => (concept.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).some(word => materialWords.has(word)))) { score += 55; reasonCodes.push("student_difficulty"); }
     if (material.teacherProvided) { score += 15; reasonCodes.push("teacher_provided"); }
     if (material.favorite) { score += 10; reasonCodes.push("pinned"); }
     if (material.lastUsedAt) { score += 5; reasonCodes.push("used_before"); }
@@ -53,6 +56,7 @@ export function applyAiRerank(recommendations: StudyRecommendation[], rankedIds:
 }
 
 export const recommendationReasonLabels: Record<string, string> = {
+  student_difficulty: "matches a concept you want to review",
   related_target: "linked to this task",
   topic_match: "matching topic",
   assessment_practice: "assessment practice",

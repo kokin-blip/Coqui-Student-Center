@@ -126,7 +126,7 @@ describe("application shell", () => {
         within(sections).getByRole("button", { name: item }),
       ).toBeInTheDocument();
     expect(
-      await screen.findByText(/Citations are required/),
+      await screen.findByRole("heading", {name:"What to study next"}),
     ).toBeInTheDocument();
   });
 

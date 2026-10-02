@@ -1,3 +1,6 @@
+import { SensitiveEligibilityFields } from "./SensitiveEligibilityFields";
+import { IdentityEvidence } from "./IdentityEvidence";
+import { FundingCriteriaEditor } from "./FundingCriteriaEditor";
 import {
   AlertTriangle,
   Award,
@@ -208,6 +211,7 @@ export function SavedSection({
               <input type="checkbox" name="notificationsEnabled" defaultChecked={workspace.profile.notificationsEnabled === true} />
               <span><strong>Notify me about funding</strong><small>Local alerts for strong matches, saved deadlines, and unfinished applications. Requires device notification permission; turn off here anytime.</small></span>
             </label>
+            <SensitiveEligibilityFields profile={workspace.profile} />
             <button className="solid" disabled={busy}>
               Save matching profile
             </button>
@@ -235,12 +239,14 @@ export function SavedSection({
               />
             )}
             <ScholarshipEvidence title="Still unknown" items={match.unknown} />
+            <IdentityEvidence opportunity={active} profile={workspace!.profile} />
           </div>
         ) : (
           !profileOpen && (
             <p>Select a saved opportunity to inspect its match.</p>
           )
         )}
+        {active && <FundingCriteriaEditor opportunity={active} run={run} busy={busy} />}
         {active && (
           <RequirementSources
             workspace={workspace}

@@ -9,6 +9,8 @@ const KEY: &str = "semester_scenarios_v1";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemesterScenarioSection {
+    #[serde(default)]
+    pub source_evidence: Option<ScenarioSourceEvidence>,
     pub id: String,
     pub course_id: String,
     #[serde(default)]
@@ -29,6 +31,10 @@ pub struct SemesterScenarioSection {
     pub rotation_offset_weeks: u32,
     pub source_meeting_id: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct ScenarioSourceEvidence {pub candidate_id:String,pub document_id:String,pub quote:String,pub locator:String,pub confidence:f64}
 
 fn default_rotation_interval() -> u32 { 1 }
 
@@ -82,6 +88,7 @@ fn validate(conn: &Connection, scenario: &SemesterScenario, catalog_professors: 
         if uuid::Uuid::parse_str(&section.id).is_err() || !ids.insert(&section.id)
             || section.weekdays.is_empty() || section.weekdays.iter().any(|day| *day > 6 || !days.insert(day))
             || start.zip(end).is_none_or(|(start, end)| start >= end)
+            || section.source_evidence.as_ref().is_some_and(|e|e.quote.len()>50000||e.locator.len()>1000||!e.confidence.is_finite()||!(0.0..=1.0).contains(&e.confidence))
             || section.location.len() > 160 || section.imported_course_label.as_ref().is_some_and(|label| label.len() > 160) || !matches!(section.modality.as_str(), "in_person" | "online" | "hybrid" | "unknown")
             || !(1..=8).contains(&section.rotation_interval_weeks) || section.rotation_offset_weeks >= section.rotation_interval_weeks {
             return Err(AppError::Invalid("A scenario section has invalid days, times, or details".into()));
@@ -150,7 +157,7 @@ mod tests {
     fn saves_drafts_and_rejects_stale_or_invalid_sections() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE academic_terms(id TEXT PRIMARY KEY); CREATE TABLE courses(id TEXT PRIMARY KEY,term_id TEXT); CREATE TABLE instructors(id TEXT PRIMARY KEY,course_id TEXT); INSERT INTO academic_terms VALUES('term'); INSERT INTO courses VALUES('course','term');").unwrap();
-        let mut scenario = SemesterScenario { id: uuid::Uuid::new_v4().to_string(), term_id: "term".into(), name: "Earlier classes".into(), sections: vec![SemesterScenarioSection { id: uuid::Uuid::new_v4().to_string(), course_id: "course".into(), imported_course_label: None, instructor_id: None, professor_record_id: None, catalog_section_line_number: None, weekdays: vec![1,3], starts_at_local: "09:00".into(), ends_at_local: "10:15".into(), location: "Campus".into(), modality: "in_person".into(), rotation_interval_weeks: 1, rotation_offset_weeks: 0, source_meeting_id: None }], version: 0 };
+        let mut scenario = SemesterScenario { id: uuid::Uuid::new_v4().to_string(), term_id: "term".into(), name: "Earlier classes".into(), sections: vec![SemesterScenarioSection { id: uuid::Uuid::new_v4().to_string(), course_id: "course".into(), imported_course_label: None, instructor_id: None, professor_record_id: None, catalog_section_line_number: None, weekdays: vec![1,3], starts_at_local: "09:00".into(), ends_at_local: "10:15".into(), location: "Campus".into(), modality: "in_person".into(), rotation_interval_weeks: 1, rotation_offset_weeks: 0, source_meeting_id: None, source_evidence: None }], version: 0 };
         let professors = HashMap::from([("catalog:one".to_string(), "course".to_string())]);
         let sections = HashMap::from([("course|123".to_string(), "course".to_string())]);
         assert_eq!(upsert(&conn, scenario.clone(), &professors, &sections).unwrap()[0].version, 1);

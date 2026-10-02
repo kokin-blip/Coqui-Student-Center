@@ -207,3 +207,9 @@
 .funding-ai-review { display: grid; justify-items: start; gap: var(--space-2); }
 .funding-ai-review ul { margin: 0; padding-left: 1.3rem; }
 @media (max-width: 640px) { .funding-results-primary, .funding-advanced-grid { grid-template-columns: minmax(0, 1fr); } }
+.funding-search .field { margin:var(--space-3) 0; }
+.funding-search .record-actions { flex-wrap:wrap; }
+.funding-search .opportunity-list article { padding:var(--space-4) 0; border-bottom:1px solid var(--border-subtle); min-width:0; overflow-wrap:anywhere; }
+.funding-comparison { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr)); gap:var(--space-4); }
+.funding-comparison section { min-width:0; padding:var(--space-4) 0; border-top:1px solid var(--border-subtle); }
+.funding-search h2 { font:700 var(--text-section-title)/var(--leading-tight) var(--font-ui); }

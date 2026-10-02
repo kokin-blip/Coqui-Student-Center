@@ -23,7 +23,6 @@ export function StudyView({
     <div className="content workspace-page mode-study">
       <div className="page-head">
         <div>
-          <p className="eyebrow">Source-grounded learning</p>
           <h1>Study</h1>
           <p>
             Ask selected materials, edit cited study tools, schedule revision,

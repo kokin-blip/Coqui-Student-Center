@@ -1,3 +1,4 @@
+import { CourseDifficultyEditor } from "../study/CourseDifficultyEditor";
 import type { Dispatch, SetStateAction } from "react";
 import { BookOpen } from "lucide-react";
 import {
@@ -39,6 +40,7 @@ export function CourseOverview({
   };
   return (
     <div className="course-overview">
+      <CourseDifficultyEditor key={selected.id} courseId={selected.id} />
       <section>
         <h3>People</h3>
         {instructors.length ? (

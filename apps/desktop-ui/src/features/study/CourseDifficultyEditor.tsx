@@ -1,0 +1,28 @@
+import { useEffect, useRef, useState } from "react";
+import { createLocalTask, deleteCourseDifficulties, listCourseDifficulties, saveCourseDifficulty, type CourseDifficulty } from "../../native";
+import "./study.css";
+export function CourseDifficultyEditor({courseId,onChange,onPractice}:{courseId:string;onChange?:(records:CourseDifficulty[])=>void;onPractice?:(record:CourseDifficulty)=>void}){
+ const [records,setRecords]=useState<CourseDifficulty[]>([]),[edit,setEdit]=useState<CourseDifficulty|null>(null);
+ const [concept,setConcept]=useState(""),[note,setNote]=useState(""),[confidence,setConfidence]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
+ const [task,setTask]=useState<{title:string;minutes:number}|null>(null);
+ const mounted=useRef(true);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
+ const update=(rows:CourseDifficulty[])=>{if(mounted.current){setRecords(rows);onChange?.(rows);}};
+ useEffect(()=>{let active=true;setEdit(null);setConcept("");setNote("");setConfidence("");setTask(null);setError("");setNotice("");setRecords([]);void listCourseDifficulties(courseId).then(rows=>{if(active)update(rows);}).catch(()=>{if(active)setError("Concept notes could not be loaded. Reopen this course to retry.");});return()=>{active=false;};},[courseId]);
+ const work=async(action:()=>Promise<void>)=>{setBusy(true);setError("");try{await action();}catch(e){setError(String(e));}finally{setBusy(false);}};
+ const reset=()=>{setEdit(null);setConcept("");setNote("");setConfidence("");};
+ if(!courseId)return null;
+ return <details className="progressive-form course-difficulty"><summary>What feels hardest right now?</summary><p>Optional, in your own words. These notes help you choose materials and practice; they are never inferred from grades.</p>
+ {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+ <ul className="difficulty-list">{records.map(r=><li key={r.id}><strong>{r.concept}</strong> · {r.easier?"Feels easier now":"Want to review"}{r.confidence?` · confidence ${r.confidence}/5`:""}<small>Updated {new Date(r.updatedAt).toLocaleDateString()}</small>{r.note&&<p>{r.note}</p>}<div className="record-actions">
+ <button className="text-button" disabled={busy} onClick={()=>{setEdit(r);setConcept(r.concept);setNote(r.note);setConfidence(r.confidence===null?"":String(r.confidence));}}>Edit</button>
+ <button className="text-button" disabled={busy} onClick={()=>void work(async()=>{update(await saveCourseDifficulty({...r,expectedRevision:r.revision,easier:!r.easier}));setNotice(r.easier?"Concept active again.":"Marked easier; it no longer influences recommendations.");})}>{r.easier?"Review again":"Feels easier"}</button>
+ {onPractice&&<button className="text-button" disabled={busy} onClick={()=>onPractice(r)}>Prepare practice request</button>}
+ <button className="text-button" disabled={busy} onClick={()=>setTask({title:`Review ${r.concept}`,minutes:25})}>Plan extra review</button>
+ <button className="text-button" disabled={busy} onClick={()=>void work(async()=>{update(await deleteCourseDifficulties(courseId,[[r.id,r.revision]]));if(edit?.id===r.id)reset();setNotice("Concept removed.");})}>Remove</button></div></li>)}</ul>
+ <form onSubmit={e=>{e.preventDefault();void work(async()=>{update(await saveCourseDifficulty({id:edit?.id,courseId,concept,note,confidence:confidence===""?null:Number(confidence),easier:edit?.easier??false,expectedRevision:edit?.revision??0}));reset();setNotice("Your concept note was saved locally.");});}}>
+ <div className="form-grid"><label className="field">Concept<input maxLength={200} required value={concept} onChange={e=>setConcept(e.target.value)}/></label><label className="field">Confidence (optional)<select value={confidence} onChange={e=>setConfidence(e.target.value)}><option value="">Skip</option>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n}{n===1?" — least confident":n===5?" — most confident":""}</option>)}</select></label></div><label className="field">Short note (optional)<textarea maxLength={2000} value={note} onChange={e=>setNote(e.target.value)}/></label>
+ <div className="record-actions"><button className="outline" disabled={busy||!concept.trim()}>{edit?"Save edits":"Save concept locally"}</button>{edit&&<button type="button" className="text-button" onClick={reset}>Cancel edit</button>}{records.length>0&&<button type="button" className="text-button" disabled={busy} onClick={()=>void work(async()=>{update(await deleteCourseDifficulties(courseId,records.map(r=>[r.id,r.revision])));reset();setNotice("All concept notes cleared.");})}>Clear all concepts</button>}</div></form>
+ {task&&<div role="group" aria-label="Review task draft"><h4>Review task draft</h4><label className="field">Task title<input value={task.title} onChange={e=>setTask({...task,title:e.target.value})}/></label><label className="field">Minutes<input type="number" min="1" max="480" value={task.minutes} onChange={e=>setTask({...task,minutes:Number(e.target.value)})}/></label><div className="record-actions"><button className="outline" disabled={busy||!task.title.trim()||task.minutes<1||task.minutes>480} onClick={()=>void work(async()=>{await createLocalTask({title:task.title,minutes:task.minutes,courseId,priority:2,kind:"task",academicRisk:0,energyDemand:"medium",location:"",splittable:true,minSessionMinutes:25,maxSessionMinutes:50,dependencies:[]});setTask(null);setNotice("Review task saved locally.");})}>Save review task</button><button className="text-button" onClick={()=>setTask(null)}>Cancel task</button></div></div>}
+ </details>;
+}

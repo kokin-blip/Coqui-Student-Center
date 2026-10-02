@@ -82,6 +82,7 @@ export function useStudyWorkspaceModel({
       ]);
       setStudy(next);
       setCourses(workspace.courses);
+      setSelectedCourses(current => current.length ? current : workspace.courses[0] ? [workspace.courses[0].id] : []);
       setTimezone(workspace.profile?.timezone??"UTC");
       setTasks(workspace.tasks);
       setProviders(nextProviders);
@@ -109,8 +110,10 @@ export function useStudyWorkspaceModel({
       setStudy(next);
       setSelectedArtifact(current => current ? next.artifacts.find(item => item.id === current.id) ?? null : null);
       setNotice(message);
+      return true;
     } catch (next) {
       setError(String(next));
+      return false;
     } finally {
       setBusy(false);
     }

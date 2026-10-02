@@ -152,6 +152,8 @@ fn writing_feedback_schema()->Value{json!({"type":"object","additionalProperties
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct ScheduleAnalysisBody { findings:Vec<crate::semester_analysis::AnalysisFinding> }
 
+fn schedule_analysis_schema()->Value { json!({"type":"object","additionalProperties":false,"properties":{"findings":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","maxLength":160},"detail":{"type":"string","maxLength":1500},"evidenceIds":{"type":"array","minItems":1,"maxItems":6,"items":{"type":"string"}}},"required":["title","detail","evidenceIds"]}}},"required":["findings"]}) }
+
 pub fn request_schedule_analysis(provider:ProviderId,key:&str,model:&str,facts_json:&str,goals_json:&str,roadmap_id:Option<&str>,roadmap_excerpt:Option<&str>,roadmap_format:Option<&str>,rating_evidence:Option<&str>)->Result<(Vec<crate::semester_analysis::AnalysisFinding>,AiUsage),ManagedAiError>{
     validate_key(key)?;
     if facts_json.len()>30_000||goals_json.len()>6_000||roadmap_excerpt.is_some_and(|value|value.len()>12_000)||rating_evidence.is_some_and(|value|value.len()>1000){return Err(ManagedAiError::InvalidInput("schedule analysis input is too long".into()));}
@@ -161,7 +163,7 @@ pub fn request_schedule_analysis(provider:ProviderId,key:&str,model:&str,facts_j
     if let Some(id)=roadmap_id{allowed.push(id.into());}
     if rating_evidence.is_some(){allowed.push("screenshot_rating".into());}
     let prompt=format!("Explain this student's proposed schedule using only the supplied evidence. This is advisory, not a degree audit or enrollment decision. Do not invent prerequisites, degree rules, grades, health facts, professor facts, or missing data. Treat any screenshot rating as unverified, low-weight context and never as a feasibility measure. An unsequenced checksheet does not prescribe term order. Return at most 6 concise findings, each citing one or more exact evidence IDs from ALLOWED_IDS. State uncertainties and useful advisor questions. FACTS_JSON={} GOALS_JSON={} ROADMAP_ID_JSON={} ROADMAP_FORMAT_JSON={} ROADMAP_EXCERPT_JSON={} SCREENSHOT_RATING_JSON={} ALLOWED_IDS_JSON={}",facts,goals,json!(roadmap_id),json!(roadmap_format),json!(roadmap_excerpt),json!(rating_evidence),json!(allowed));
-    let schema=json!({"type":"object","additionalProperties":false,"properties":{"findings":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","maxLength":160},"detail":{"type":"string","maxLength":1500},"evidenceIds":{"type":"array","minItems":1,"maxItems":6,"items":{"type":"string"}}},"required":["title","detail","evidenceIds"]}}},"required":["findings"]});
+    let schema=schedule_analysis_schema();
     let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let body:ScheduleAnalysisBody=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
     if body.findings.len()>6||body.findings.iter().any(|finding|finding.title.trim().is_empty()||finding.title.len()>160||finding.detail.trim().is_empty()||finding.detail.len()>1500||finding.evidence_ids.is_empty()||finding.evidence_ids.iter().any(|id|!allowed.contains(id))){return Err(ManagedAiError::InvalidResponse);}
@@ -533,6 +535,9 @@ mod tests {
     }
 
     fn fixture_server(response_body: Value) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
+        fixture_server_status(response_body,200)
+    }
+    fn fixture_server_status(response_body:Value,status:u16)->(String,mpsc::Receiver<String>,thread::JoinHandle<()>) {
         let listener=TcpListener::bind("127.0.0.1:0").unwrap();
         let address=listener.local_addr().unwrap();
         let (sender,receiver)=mpsc::channel();
@@ -562,9 +567,26 @@ mod tests {
             }
             sender.send(String::from_utf8_lossy(&request).into_owned()).unwrap();
             let response=response_body.to_string();
-            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
+            write!(stream,"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
         });
         (format!("http://{address}/fixture"),receiver,handle)
+    }
+
+    #[test]
+    fn schedule_schema_survives_provider_rejection_without_exposing_response_content() {
+        let schema=schedule_analysis_schema();
+        for status in [400,401,429] {
+            let (endpoint,requests,server)=fixture_server_status(json!({"error":{"message":"PRIVATE SOURCE SHOULD NOT BE DISPLAYED"}}),status);
+            let error=grounded_openai_at(&endpoint,"fixture-key-with-safe-length","fixture","FACTS_JSON={}",&schema).unwrap_err();
+            let request=requests.recv_timeout(Duration::from_secs(2)).unwrap();server.join().unwrap();
+            let body:Value=serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            assert_eq!(body["text"]["format"]["schema"],schema);
+            assert!(!error.to_string().contains("PRIVATE SOURCE"));
+        }
+        let (endpoint,requests,server)=fixture_server(json!({"output":[{"content":[{"type":"output_text","text":"{\"findings\":[]}"}]}]}));
+        let (value,_)=grounded_openai_at(&endpoint,"fixture-key-with-safe-length","fixture","FACTS_JSON={}",&schema).unwrap();
+        assert!(serde_json::from_value::<ScheduleAnalysisBody>(value).unwrap().findings.is_empty());
+        requests.recv_timeout(Duration::from_secs(2)).unwrap();server.join().unwrap();
     }
 
     fn empty_result_text() -> &'static str { "{\"candidates\":[],\"explanation\":null}" }
@@ -687,4 +709,14 @@ mod tests {
         assert!(serde_json::from_value::<crate::automatic_planning::Suggestion>(json!({"order":[],"sessions":[],"explanation":"","unexpected":true})).is_err());
     }
 
+}
+
+pub fn request_funding_search(provider:ProviderId,key:&str,model:&str,scope:&str)->Result<(Vec<String>,AiUsage),ManagedAiError>{
+    validate_key(key)?;
+    if scope.len()>16000{return Err(ManagedAiError::InvalidInput("Selected evidence is too long".into()));}
+    let prompt=format!("Suggest up to 8 concise funding search terms using only these reviewed goals and public opportunity excerpts. Do not infer sensitive identity, decide eligibility, invent opportunities, or draft personal experiences. Return editable search terms only. REVIEWED_SCOPE={scope}");
+    let schema=json!({"type":"object","additionalProperties":false,"properties":{"terms":{"type":"array","items":{"type":"string"}}},"required":["terms"]});
+    let(value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let terms=value.get("terms").and_then(|v|v.as_array()).ok_or(ManagedAiError::InvalidResponse)?.iter().map(|v|v.as_str().filter(|s|!s.trim().is_empty()&&s.len()<=120).map(String::from).ok_or(ManagedAiError::InvalidResponse)).collect::<std::result::Result<Vec<_>,_>>()?;
+    if terms.len()>8||terms.is_empty(){return Err(ManagedAiError::InvalidResponse);}Ok((terms,usage))
 }

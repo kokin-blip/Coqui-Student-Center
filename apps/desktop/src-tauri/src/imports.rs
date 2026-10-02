@@ -619,6 +619,17 @@ impl DocumentSource<'_> {
     }
 }
 
+/// OCR text and geometry only: grade screenshots never enter schedule extraction.
+pub fn extract_grade_segments(bytes:&[u8],name:&str,runtime:&OcrRuntime)->Result<Vec<Segment>,ImportError>{
+    let kind=detect_document(bytes,name)?;
+    if !matches!(kind,DocumentKind::Image(_)){return Err(ImportError::Unsupported("Use a gradebook image".into()));}
+    let mut file=tempfile::Builder::new().prefix("coqui-grade-").suffix(".png").tempfile()?;
+    std::io::Write::write_all(&mut file,bytes)?;
+    let mut segment=ocr_image(file.path(),"gradebook image",runtime)?;
+    if let Some(inverted)=invert_if_dark(bytes){let mut light=tempfile::Builder::new().prefix("coqui-grade-light-").suffix(".png").tempfile()?;std::io::Write::write_all(&mut light,&inverted)?;if let Ok(next)=ocr_image(light.path(),"gradebook image",runtime){if next.tokens.len()>segment.tokens.len(){segment=next;}}}
+    Ok(vec![segment])
+}
+
 pub fn extract_document(
     source: DocumentSource<'_>,
     bytes: &[u8],

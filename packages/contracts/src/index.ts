@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FundingCriterion } from "./student-workflows.js";
 export { TaskDetails, TaskDetailsInput, TaskSubtask, TaskAttachment, TaskActivity, TaskActivityPage } from "./task-details.js";
 
 const opaqueBase64Url = z
@@ -529,6 +530,7 @@ export const ScholarshipOpportunity = z.object({
   studyLevels: z.array(z.string()).default([]),
   fieldsOfStudy: z.array(z.string()).default([]),
   locations: z.array(z.string()).default([]),
+  eligibilityCriteria: z.array(FundingCriterion).max(25).default([]),
   citizenship: z.array(z.string()).default([]),
   residency: z.array(z.string()).default([]),
   minimumGpa: z.number().min(0).max(5).optional(),
@@ -600,6 +602,10 @@ export const ScholarshipSearchQuery = z.object({
 export type ScholarshipSearchQuery = z.infer<typeof ScholarshipSearchQuery>;
 
 export const ScholarshipProfile = z.object({
+  culturalBackground: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
+  religion: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
+  affiliations: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
+  preferNotToSay: z.array(z.enum(["culturalBackground", "religion", "affiliations"])).default([]),
   studyLevel: z.string().max(100).default(""),
   fieldsOfStudy: z.array(z.string().max(120)).max(25).default([]),
   locations: z.array(z.string().max(120)).max(25).default([]),

@@ -1,3 +1,5 @@
+import { SensitiveEligibilityFields } from "../features/scholarships/SensitiveEligibilityFields";
+import { FundingSearchAssistant } from "../features/scholarships/FundingSearchAssistant";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -37,7 +39,7 @@ import { SavedSection } from "../features/scholarships/ScholarshipSaved";
 import { ApplicationsSection } from "../features/scholarships/ScholarshipApplications";
 import { WritingSection } from "../features/scholarships/ScholarshipWriting";
 
-type Section = "discover" | "saved" | "applications" | "writing";
+type Section = "search" | "discover" | "saved" | "applications" | "writing";
 type AutosaveState = "idle" | "saving" | "saved" | "error";
 
 export function ScholarshipsView() {
@@ -341,6 +343,10 @@ export function ScholarshipsView() {
           locations: list("locations"),
           citizenship: list("citizenship"),
           residency: list("residency"),
+          culturalBackground: list("culturalBackground"),
+          religion: list("religion"),
+          affiliations: list("affiliations"),
+          preferNotToSay: data.getAll("preferNotToSay").map(String),
           gpa: gpa ? Number(gpa) : null,
           school: hasField("school") ? String(data.get("school") ?? "").trim() : current?.school ?? "",
           degree: hasField("degree") ? String(data.get("degree") ?? "").trim() : current?.degree ?? "",
@@ -461,6 +467,7 @@ export function ScholarshipsView() {
           <div className="form-grid"><label className="field">School<input name="school" placeholder="Arizona State University" /></label><label className="field">Degree or program<input name="degree" placeholder="BS, Certificate, Graduate program" /></label><label className="field">Major or fields of study<input name="fieldsOfStudy" placeholder="Computer science, Design" required /></label><label className="field">Year in school<input name="academicYear" placeholder="Sophomore" /></label><label className="field">Study level<select name="studyLevel" defaultValue="undergraduate"><option value="undergraduate">Undergraduate</option><option value="graduate">Graduate</option><option value="certificate">Certificate</option><option value="other">Other</option></select></label><label className="field">GPA (optional)<input name="gpa" type="number" min="0" max="5" step="0.01" /></label><label className="field">Location or residency region<input name="locations" placeholder="Arizona, United States" /></label><label className="field">Interests<input name="interests" placeholder="Accessibility, climate, public service" /></label><label className="field">Minimum award<input name="awardMinimum" type="number" min="0" step="100" placeholder="500" /></label><label className="field">Minimum preparation time (days)<input name="deadlineToleranceDays" type="number" min="1" max="365" placeholder="e.g. 30" /></label></div>
           <p className="field-help">Interests and preparation time affect Best Match order only. Opportunities with shorter deadlines remain visible.</p>
           <fieldset className="setup-fieldset"><legend>Opportunity types</legend><div className="course-chip-list">{["Scholarships","Grants","Fellowships","Stipends","Awards","Emergency funds","Tuition assistance","Research funding","Internship stipends","Competitions"].map((label) => <label key={label}><input type="checkbox" name="opportunityTypes" value={label.toLowerCase().replaceAll(" ", "_")} defaultChecked={label === "Scholarships" || label === "Grants"} />{label}</label>)}</div></fieldset>
+          <SensitiveEligibilityFields profile={workspace.profile} />
           <details><summary>Optional sensitive eligibility details</summary><p className="field-help">Citizenship, residency, and financial-need details can improve eligibility checks, but only add what you are comfortable storing locally.</p><div className="form-grid"><label className="field">Citizenship<input name="citizenship" /></label><label className="field">Residency<input name="residency" /></label></div></details>
           <label className="confirm-row"><input type="checkbox" name="notificationsEnabled" /><span><strong>Notify me about strong matches and deadlines</strong><small>Notifications are device-local and can be changed later.</small></span></label>
           <button className="solid" disabled={busy}><Search /> Start finding funding</button>
@@ -492,6 +499,7 @@ export function ScholarshipsView() {
         {(
           [
             ["discover", "Discover", Search],
+            ["search", "Search assistant", Search],
             ["saved", "Saved", LibraryBig],
             ["applications", "Applications", Award],
             ["writing", "Writing", FilePenLine],
@@ -567,6 +575,7 @@ export function ScholarshipsView() {
             run={run}
           />
         )}
+        {section === "search" && workspace && <FundingSearchAssistant workspace={workspace} busy={busy} run={run} onWrite={id=>{setSelected(id);setSection("writing");}} />}
         {section === "saved" && (
           <SavedSection
             workspace={workspace}

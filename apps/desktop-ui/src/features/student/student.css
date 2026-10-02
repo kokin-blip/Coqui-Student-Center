@@ -48,3 +48,17 @@
 .daily-checkin > .record-actions { grid-column:1 / -1; }
 
 .daily-checkin > h2,.daily-checkin > p { margin:0; }
+
+.student-daily-review h2,.semester-analysis .section-head h2 { font:700 var(--text-section-title)/var(--leading-tight) var(--font-ui); }
+.daily-checkin { gap:var(--space-3); padding:var(--space-4); border-radius:var(--radius-lg); }
+.checkin-item { padding:var(--space-3) 0; min-width:0; }
+.checkin-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-3); }
+.checkin-row > strong { flex:1 1 16rem; overflow-wrap:anywhere; }
+.checkin-options,.checkin-earlier { display:grid; gap:var(--space-3); padding:var(--space-3) 0; }
+.checkin-options button { justify-self:start; }
+.checkin-earlier { max-width:36rem; }
+.assignment-streak { margin:var(--space-3) 0; padding:var(--space-2) 0; border:0; gap:var(--space-2); }
+.assignment-streak .section-head { margin:0; gap:var(--space-3); }
+.assignment-streak p { max-width:70ch; }
+.assignment-streak ul { padding-left:var(--space-5); font-size:var(--text-secondary-size); }
+@media(max-width:600px){ .checkin-row > .record-actions { width:100%; } .checkin-earlier .form-grid { grid-template-columns:minmax(0,1fr); } }

@@ -125,7 +125,7 @@ test("a dropped schedule screenshot becomes an unsaved, correctable scenario", a
   vi.spyOn(native, "getLocalWorkspace").mockResolvedValue(workspace);
   vi.spyOn(native, "getSemesterScenarios").mockResolvedValue([]);
   vi.spyOn(native, "getDashboard").mockResolvedValue(original);
-  const imported = vi.spyOn(native, "importDocumentBytes").mockResolvedValue({ ...original, candidates:[...original.candidates, { id:"shot-class", documentId:"shot-doc", kind:"class_meeting", title:"Biology lecture", course:"BIO 181", weekdays:[1,3], startsAtLocal:"09:00", endsAtLocal:"10:15", location:"Campus", modality:"in-person", evidence:"BIO 181 MW 9:00", sourceLocator:"screenshot", sourceType:"screenshot", confidence:.9, warnings:[], status:"pending" }] });
+  const imported = vi.spyOn(native, "previewScheduleImport").mockResolvedValue({ documentId:"shot-doc",extractionStatus:"complete",extractionError:null,ocr:original.ocr,candidates:[ { id:"shot-class", documentId:"shot-doc", kind:"class_meeting", title:"Biology lecture", course:"BIO 181", weekdays:[1,3], startsAtLocal:"09:00", endsAtLocal:"10:15", location:"Campus", modality:"in-person", evidence:"BIO 181 MW 9:00", sourceLocator:"screenshot", sourceType:"screenshot", confidence:.9, warnings:[], status:"pending" }] });
   const saved = vi.spyOn(native, "upsertSemesterScenario");
   const user = userEvent.setup();
   render(<main><SemesterPlannerView /></main>);

@@ -48,6 +48,7 @@ pub enum AiCapability {
     PracticeTest,
     StudyRerank,
     FundingProfile,
+    FundingSearch,
     ScholarshipWriting,
 }
 
@@ -69,6 +70,7 @@ impl AiCapability {
             Self::PracticeTest => "practice_test",
             Self::StudyRerank => "study_rerank",
             Self::FundingProfile => "funding_profile",
+            Self::FundingSearch => "funding_search",
             Self::ScholarshipWriting => "scholarship_writing",
         }
     }

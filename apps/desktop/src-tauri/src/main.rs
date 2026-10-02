@@ -31,6 +31,9 @@ mod sync_transport;
 mod task_details;
 mod student_workflows;
 mod study_notes;
+mod grade_import;
+mod course_difficulty;
+mod funding_search;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use canvas::{CanvasCandidate, CanvasClient, CanvasPull};
@@ -64,7 +67,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 31;
+const CURRENT_SCHEMA_VERSION: i64 = 32;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -1257,6 +1260,8 @@ fn open_database(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     conn.execute("UPDATE tasks SET task_kind='task',completed_at=CASE WHEN completed=0 THEN NULL ELSE completed_at END WHERE source_uid LIKE 'study-review:%' AND task_kind!='task'",[])?;
     student_workflows::migrate(&conn)?;
     study_notes::migrate(&conn)?;
+    grade_import::migrate(&conn)?;
+    course_difficulty::migrate(&conn)?;
     conn.execute_batch(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))?;
     Ok(conn)
 }
@@ -1279,6 +1284,16 @@ fn scholarship_match(opportunity:&serde_json::Value,profile:&serde_json::Value)-
     if required.is_empty(){unknown.push("Provider did not publish study-level criteria".to_string());}else if scalar.is_empty(){unknown.push("Your study level is not set".to_string());}else if required.iter().any(|value|value==&scalar){matched.push(serde_json::json!({"attribute":"Study level","profileValue":scalar,"requirement":required.join(", ")}));}else{ineligible.push(format!("Study level requires {}",required.join(", ")));}
     for (field,profile_field,label) in [("fieldsOfStudy","fieldsOfStudy","Field of study"),("locations","locations","Location"),("citizenship","citizenship","Citizenship"),("residency","residency","Residency")]{let required=json_strings(opportunity,field);let supplied=json_strings(profile,profile_field);if required.is_empty(){unknown.push(format!("Provider did not publish {} criteria",label.to_ascii_lowercase()));}else if supplied.is_empty(){unknown.push(format!("Your {} is not set",label.to_ascii_lowercase()));}else if let Some(value)=supplied.iter().find(|value|required.contains(value)){matched.push(serde_json::json!({"attribute":label,"profileValue":value,"requirement":required.join(", ")}));}else{ineligible.push(format!("{label} requires {}",required.join(", ")));}}
     let minimum=opportunity.get("minimumGpa").and_then(|value|value.as_f64());let gpa=profile.get("gpa").and_then(|value|value.as_f64());match(minimum,gpa){(None,_)=>unknown.push("Provider did not publish a GPA criterion".into()),(Some(_),None)=>unknown.push("Your GPA is not set".into()),(Some(required),Some(value))if value>=required=>matched.push(serde_json::json!({"attribute":"GPA","profileValue":format!("{value:.2}"),"requirement":format!("At least {required:.2}")})),(Some(required),Some(_))=>ineligible.push(format!("GPA requires at least {required:.2}")),};
+    if let Some(criteria)=opportunity.get("eligibilityCriteria").and_then(|v|v.as_array()) {for criterion in criteria {
+        let attribute=criterion.get("attribute").and_then(|v|v.as_str()).unwrap_or_default();
+        if !matches!(attribute,"culturalBackground"|"religion"|"affiliations"){continue;}
+        let quote=criterion.get("sourceQuote").and_then(|v|v.as_str()).unwrap_or_default();let url=criterion.get("sourceUrl").and_then(|v|v.as_str()).unwrap_or_default();
+        let required=json_strings(criterion,"values");let supplied=json_strings(profile,attribute);
+        let supported=!quote.trim().is_empty()&&url.starts_with("https://")&&!required.is_empty()&&required.iter().all(|v|quote.to_lowercase().contains(v));
+        let private=json_strings(profile,"preferNotToSay").contains(&attribute.to_lowercase());
+        if supported&&!private&&criterion.get("ambiguous").and_then(|v|v.as_bool())==Some(false){if let Some(value)=supplied.iter().find(|v|required.contains(v)){matched.push(serde_json::json!({"attribute":attribute,"profileValue":value,"requirement":quote,"sourceQuote":quote,"sourceUrl":url,"capturedAt":criterion.get("capturedAt")}));continue;}}
+        unknown.push(format!("Review the published {attribute} criterion yourself: {quote}"));
+    }}
     let total=matched.len()+unknown.len()+ineligible.len();let score=if total==0{0.0}else{matched.len() as f64/total as f64};
     serde_json::json!({"opportunityId":opportunity.get("id").and_then(|value|value.as_str()).unwrap_or_default(),"matched":matched,"unknown":unknown,"ineligible":ineligible,"score":score})
 }
@@ -1403,6 +1418,8 @@ fn resolve_scholarship_diff(state:tauri::State<AppState>,diff_id:String)->Result
 fn save_scholarship_profile(app:tauri::AppHandle,state:tauri::State<AppState>,mut profile:serde_json::Value)->Result<serde_json::Value>{
     state.require_unlocked()?;let study_level=profile.get("studyLevel").and_then(|value|value.as_str()).unwrap_or_default();if study_level.len()>100{return Err(AppError::Invalid("Study level is too long".into()));}
     for field in ["fieldsOfStudy","locations","citizenship","residency"]{let Some(values)=profile.get(field).and_then(|value|value.as_array())else{return Err(AppError::Invalid("Scholarship profile fields must be lists".into()));};if values.len()>25||values.iter().any(|value|value.as_str().is_none_or(|value|value.trim().is_empty()||value.len()>120)){return Err(AppError::Invalid("Scholarship profile contains an invalid value".into()));}}
+    for field in ["culturalBackground","religion","affiliations","preferNotToSay"] {if let Some(values)=profile.get(field){let values=values.as_array().ok_or_else(||AppError::Invalid("Optional eligibility details must be lists".into()))?;if values.len()>25||values.iter().any(|v|v.as_str().is_none_or(|s|s.trim().is_empty()||s.len()>120)){return Err(AppError::Invalid("Optional eligibility details are too long".into()));}}}
+    for field in json_strings(&profile,"preferNotToSay"){let original=match field.as_str(){"culturalbackground"=>"culturalBackground","religion"=>"religion","affiliations"=>"affiliations",_=>return Err(AppError::Invalid("Unknown private eligibility field".into()))};profile[original]=serde_json::json!([]);}
     if profile.get("gpa").is_some_and(|value|!value.is_null()&&value.as_f64().is_none_or(|value|!(0.0..=5.0).contains(&value))){return Err(AppError::Invalid("GPA must be between 0 and 5".into()));}
     if profile.get("notificationsEnabled").and_then(|value|value.as_bool())==Some(true) && !matches!(app.notification().request_permission().map_err(|error|AppError::Background(error.to_string()))?,PermissionState::Granted){return Err(AppError::Invalid("notification permission was not granted by the operating system".into()));}
     let db=state.db.lock().unwrap();
@@ -1436,7 +1453,7 @@ fn plan_scholarship_deadline(state:tauri::State<AppState>,opportunity_id:String)
 
 fn scholarship_profile_snippets(profile:&serde_json::Value)->Vec<String>{
     let mut snippets=Vec::new();if let Some(value)=profile.get("studyLevel").and_then(|value|value.as_str()).filter(|value|!value.trim().is_empty()){snippets.push(format!("Study level: {}",value.trim()));}
-    for (field,label) in [("fieldsOfStudy","Field of study"),("locations","Location"),("citizenship","Citizenship"),("residency","Residency")]{for value in json_strings(profile,field){snippets.push(format!("{label}: {value}"));}}
+    for (field,label) in [("fieldsOfStudy","Field of study"),("locations","Location")]{for value in json_strings(profile,field){snippets.push(format!("{label}: {value}"));}}
     if let Some(value)=profile.get("gpa").and_then(|value|value.as_f64()){snippets.push(format!("GPA: {value:.2}"));}snippets
 }
 
@@ -1550,6 +1567,7 @@ fn save_scholarship_opportunity(state: tauri::State<AppState>, opportunity: serd
     let title = opportunity.get("title").and_then(|value| value.as_str()).unwrap_or_default().trim();
     let url = opportunity.get("canonicalUrl").and_then(|value| value.as_str()).unwrap_or_default();
     if title.is_empty() || canvas_calendar::validate_url(url).is_err() { return Err(AppError::Invalid("Scholarship title and a public HTTPS source URL are required".into())); }
+    if let Some(criteria)=opportunity.get("eligibilityCriteria"){funding_search::validate_criteria(criteria)?;}
     let now = Utc::now().to_rfc3339();
     let db = state.db.lock().unwrap();
     db.execute("INSERT INTO scholarship_opportunities(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at", params![id, opportunity.to_string(), now])?;
@@ -5086,7 +5104,8 @@ fn get_academic_cleanup_preview(state:tauri::State<AppState>)->Result<AcademicCl
 fn merge_duplicate_courses_in(conn:&Connection)->Result<usize>{
     let preview=academic_cleanup_preview_in(conn)?;let tx=conn.unchecked_transaction()?;let mut merged=0;
     for ids in preview.duplicate_course_groups{let keep=&ids[0];for duplicate in ids.iter().skip(1){
-        for table in ["tasks","instructors","class_meeting_series","study_materials","grade_categories","grade_items"]{tx.execute(&format!("UPDATE {table} SET course_id=?1 WHERE course_id=?2"),params![keep,duplicate])?;}
+        for table in ["tasks","instructors","class_meeting_series","study_materials","grade_categories","grade_items","grade_imports_local","course_difficulties_local"]{tx.execute(&format!("UPDATE {table} SET course_id=?1 WHERE course_id=?2"),params![keep,duplicate])?;}
+        tx.execute("UPDATE grade_imports_local SET payload=json_set(payload,'$.courseId',?1,'$.baseline','course merged; refresh duplicate checks','$.revision',COALESCE(json_extract(payload,'$.revision'),0)+1) WHERE course_id=?1",[keep])?;
         tx.execute("DELETE FROM course_grading_scales WHERE course_id=?1 AND EXISTS(SELECT 1 FROM course_grading_scales WHERE course_id=?2)",params![duplicate,keep])?;
         tx.execute("UPDATE course_grading_scales SET course_id=?1 WHERE course_id=?2",params![keep,duplicate])?;
         tx.execute("UPDATE provenance_links SET entity_id=?1 WHERE entity_type='course' AND entity_id=?2",params![keep,duplicate])?;
@@ -5231,6 +5250,9 @@ fn reset_local_database(state: &AppState) -> Result<()> {
         "study_material_metadata",
         "study_materials",
         "document_segments",
+        "course_difficulties_local",
+        "grade_import_evidence_local",
+        "grade_imports_local",
         "grade_items",
         "grade_categories",
         "course_grading_scales",
@@ -8297,7 +8319,7 @@ fn study_workspace_in(conn: &Connection) -> Result<StudyWorkspace> {
 }
 
 fn grade_percent(categories:&[&GradeCategorySummary],items:&[&GradeItemSummary],include_missing:bool)->Option<f64>{
-    let included=items.iter().copied().filter(|item|item.status=="graded"||(include_missing&&item.status=="missing")).collect::<Vec<_>>();
+    let included=items.iter().copied().filter(|item|(item.status=="graded"&&item.score.is_some())||(include_missing&&item.status=="missing")).collect::<Vec<_>>();
     if included.is_empty(){return None;}
     if categories.is_empty(){let possible=included.iter().map(|item|item.points_possible).sum::<f64>();return (possible>0.0).then(||included.iter().map(|item|item.score.unwrap_or(0.0)).sum::<f64>()/possible*100.0);}
     let mut weighted=0.0;let mut used_weight=0.0;
@@ -8391,6 +8413,7 @@ fn ai_error_category(error: &managed_ai::ManagedAiError) -> &'static str {
         managed_ai::ManagedAiError::Network => "network",
         managed_ai::ManagedAiError::Quota => "quota",
         managed_ai::ManagedAiError::Timeout => "timeout",
+        managed_ai::ManagedAiError::Rejected(400) => "rejected_400",
         managed_ai::ManagedAiError::Rejected(_) => "rejected",
         managed_ai::ManagedAiError::InvalidResponse => "invalid_response",
     }
@@ -8402,7 +8425,7 @@ async fn request_managed_ai(
     input: ManagedAiInput,
 ) -> Result<ManagedAiResult> {
     state.require_unlocked()?;
-    if matches!(input.capability, managed_ai::AiCapability::StudyRerank | managed_ai::AiCapability::FundingProfile) {
+    if matches!(input.capability, managed_ai::AiCapability::StudyRerank | managed_ai::AiCapability::FundingProfile | managed_ai::AiCapability::FundingSearch) {
         return Err(AppError::Invalid("this AI capability requires its dedicated review flow".into()));
     }
     if !input.consent {
@@ -8590,7 +8613,7 @@ async fn request_weekly_rhythm_proposal(state:tauri::State<'_,AppState>,intervie
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
-struct SemesterScheduleAiInput { facts_json:String, roadmap_id:Option<String>, include_ratings:bool, rating_evidence:String, consent:bool, expected_provider:String }
+struct SemesterScheduleAiInput { facts_json:String, roadmap_id:Option<String>, include_ratings:bool, rating_evidence:String, consent:bool, expected_provider:String, expected_model:String, expected_profile_version:u32, expected_roadmap_version:Option<u32> }
 
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -8607,10 +8630,12 @@ async fn request_semester_schedule_analysis(state:tauri::State<'_,AppState>,inpu
         let (provider,key,model,goals_json,roadmap)={
             let db=state.db.lock().unwrap();require_onboarded(&db)?;
             let resolved=resolve_ai_provider(&db,managed_ai::AiCapability::ScheduleAnalysis)?;
-            if resolved.0.as_str()!=input.expected_provider{return Err(AppError::Invalid("The active AI provider changed; review its disclosure and consent again".into()));}
+            if resolved.0.as_str()!=input.expected_provider || resolved.2!=input.expected_model{return Err(AppError::Invalid("The active AI provider changed; review its disclosure and consent again".into()));}
             let profile=semester_analysis::profile(&db)?;
+            if profile.version!=input.expected_profile_version{return Err(AppError::Invalid("Planner goals changed. Review the exact scope and consent again.".into()));}
             let goals_json=serde_json::to_string(&profile).map_err(|_|AppError::Invalid("Planner goals could not be read".into()))?;
             let roadmap=if let Some(id)=&input.roadmap_id{Some(semester_analysis::roadmaps(&db)?.into_iter().find(|item|&item.id==id).ok_or_else(||AppError::Invalid("Selected roadmap is no longer available".into()))?)}else{None};
+            if roadmap.as_ref().map(|item|item.version)!=input.expected_roadmap_version{return Err(AppError::Invalid("Roadmap evidence changed. Review the exact scope and consent again.".into()));}
             if roadmap.as_ref().is_some_and(|item| item.program.trim().to_ascii_lowercase()!=profile.program.trim().to_ascii_lowercase() || item.catalog_year!=profile.catalog_year){return Err(AppError::Invalid("Selected roadmap does not match your saved program and catalog year".into()));}
             (resolved.0,resolved.1,resolved.2,goals_json,roadmap)
         };
@@ -8755,6 +8780,31 @@ fn import_document_bytes(
     // working directory, so an unrelated file with the same name could be read
     // while different bytes were encrypted and hashed.
     ingest_document(&state, imports::DocumentSource::Bytes, bytes, name)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+struct ScheduleImportPreview { document_id:String, candidates:Vec<Candidate>, extraction_status:String, extraction_error:Option<String>, ocr:OcrStatus }
+
+#[tauri::command]
+fn preview_schedule_import(state:tauri::State<AppState>,path:Option<String>,file_name:Option<String>,bytes:Option<Vec<u8>>)->Result<ScheduleImportPreview>{
+    state.require_unlocked()?;
+    let (name,content)=if let Some(path)=path {
+        let source=PathBuf::from(path);
+        if !source.is_file() || source.metadata()?.len()>MAX_IMPORT_BYTES{return Err(AppError::Invalid("Choose a file of 25 MB or smaller".into()));}
+        (source.file_name().and_then(|v|v.to_str()).unwrap_or("schedule").to_string(),fs::read(source)?)
+    }else{(file_name.unwrap_or_else(||"schedule.png".into()),bytes.unwrap_or_default())};
+    if content.is_empty() || content.len() as u64>MAX_IMPORT_BYTES{return Err(AppError::Invalid("Choose a non-empty file of 25 MB or smaller".into()));}
+    let kind=imports::detect_document(&content,&name).map_err(|e|AppError::Extract(e.to_string()))?;
+    if !matches!(kind,imports::DocumentKind::Pdf|imports::DocumentKind::Image("image/png")|imports::DocumentKind::Image("image/jpeg")){return Err(AppError::Invalid("Choose a PNG, JPEG, or PDF schedule".into()));}
+    // Materialise bytes for scanned PDFs too; their renderer requires a local path.
+    let mut scratch=tempfile::Builder::new().prefix("coqui-schedule-").suffix(if matches!(kind,imports::DocumentKind::Pdf){".pdf"}else{".image"}).tempfile()?;
+    std::io::Write::write_all(&mut scratch,&content)?;
+    let result=ingest_document_with_source(&state,imports::DocumentSource::File(scratch.path()),content,name,false)?;
+    let db=state.db.lock().unwrap();
+    let (extraction_status,extraction_error)=db.query_row("SELECT extraction_status,extraction_error FROM documents WHERE id=?1",[&result.document_id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+    let candidates=document_evidence_in(&db,&result.document_id)?.into_iter().filter(|c|c.kind=="class_meeting"&&c.status!="rejected").collect();
+    Ok(ScheduleImportPreview{document_id:result.document_id,candidates,extraction_status,extraction_error,ocr:state.ocr.status()})
 }
 
 /// Encrypt a document into the vault, extract from it, and file every candidate
@@ -11094,6 +11144,8 @@ fn main() {
             request_weekly_rhythm_proposal,
             request_semester_schedule_analysis,
             request_funding_profile_proposal,
+            funding_search::prepare_funding_search,
+            funding_search::request_funding_search,
             list_quick_notes,
             save_quick_note,
             delete_quick_note,
@@ -11139,6 +11191,17 @@ fn main() {
             import_document,
             import_brightspace_document,
             import_document_bytes,
+            preview_schedule_import,
+            grade_import::preview_grade_import, grade_import::retry_grade_import,
+            grade_import::list_grade_imports,
+            grade_import::save_grade_import_review,
+            grade_import::refresh_grade_import,
+            grade_import::discard_grade_import,
+            grade_import::apply_grade_import,
+            grade_import::get_grade_import_evidence,
+            course_difficulty::list_course_difficulties,
+            course_difficulty::save_course_difficulty,
+            course_difficulty::delete_course_difficulties,
             launch_schedule_capture,
             settle_schedule_source,
             read_schedule_with_ai,
@@ -11218,7 +11281,7 @@ mod tests {
         let listing = offered.iter().find(|item| item.course_id == "cse240" && item.section.line_number == "66923").unwrap();
         assert_eq!(listing.professor_record_id.as_deref(), Some(professor.id.as_str()));
         assert!(semester_catalog_sections_in(&conn, "other-term").unwrap().is_empty());
-        let scenario = semester_scenarios::SemesterScenario { id: Uuid::new_v4().to_string(), term_id: "asu-fall-2026-c".into(), name: "Candidate".into(), version: 0, sections: vec![semester_scenarios::SemesterScenarioSection { id: Uuid::new_v4().to_string(), course_id: "cse240".into(), imported_course_label: None, instructor_id: None, professor_record_id: Some(professor.id.clone()), catalog_section_line_number: Some("66923".into()), weekdays: vec![1,3], starts_at_local: "13:30".into(), ends_at_local: "14:45".into(), location: "Tempe".into(), modality: "in_person".into(), rotation_interval_weeks: 1, rotation_offset_weeks: 0, source_meeting_id: None }] };
+        let scenario = semester_scenarios::SemesterScenario { id: Uuid::new_v4().to_string(), term_id: "asu-fall-2026-c".into(), name: "Candidate".into(), version: 0, sections: vec![semester_scenarios::SemesterScenarioSection { id: Uuid::new_v4().to_string(), course_id: "cse240".into(), imported_course_label: None, instructor_id: None, professor_record_id: Some(professor.id.clone()), catalog_section_line_number: Some("66923".into()), weekdays: vec![1,3], starts_at_local: "13:30".into(), ends_at_local: "14:45".into(), location: "Tempe".into(), modality: "in_person".into(), rotation_interval_weeks: 1, rotation_offset_weeks: 0, source_meeting_id: None, source_evidence: None }] };
         let sections = std::collections::HashMap::from([("cse240|66923".into(), "cse240".into())]);
         assert_eq!(semester_scenarios::upsert(&conn, scenario.clone(), &allowed, &sections).unwrap()[0].sections[0].professor_record_id.as_deref(), Some(professor.id.as_str()));
         assert_eq!(semester_scenarios::load(&conn).unwrap()[0].sections[0].professor_record_id.as_deref(), Some(professor.id.as_str()));
@@ -12954,7 +13017,7 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 31);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 32);
         for table in ["quick_notes_local","day_checkins_local","checkin_items_local","assignment_streak_local","assignment_history_local","study_requests_local","study_previews_local","study_note_history_local"] { assert!(table_columns(&conn,table).is_ok(),"missing {table}"); }
         assert!(table_columns(&conn,"weekly_rhythm_rules").is_ok());
         assert!(table_columns(&conn,"study_material_metadata").is_ok());
@@ -13004,7 +13067,7 @@ mod tests {
             .unwrap(),
             1
         );
-        for table in ["document_segments","study_materials","study_material_metadata","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales","scholarship_opportunities","funding_alert_deliveries","scholarship_applications","scholarship_drafts","scholarship_draft_versions","scholarship_story_examples","scholarship_crawler_runs","scholarship_sources","scholarship_opportunity_diffs","scholarship_profiles","scholarship_writing_suggestions","scholarship_requirement_documents"] {
+        for table in ["grade_imports_local","grade_import_evidence_local","course_difficulties_local","document_segments","study_materials","study_material_metadata","study_artifacts","study_reviews","grade_categories","grade_items","course_grading_scales","scholarship_opportunities","funding_alert_deliveries","scholarship_applications","scholarship_drafts","scholarship_draft_versions","scholarship_story_examples","scholarship_crawler_runs","scholarship_sources","scholarship_opportunity_diffs","scholarship_profiles","scholarship_writing_suggestions","scholarship_requirement_documents"] {
             assert_eq!(conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",params![table],|row|row.get::<_,i64>(0)).unwrap(),1,"missing {table}");
         }
         drop(conn);
@@ -13814,6 +13877,11 @@ mod tests {
         student_workflows::save_settings(&source_db,student_workflows::CheckinSettings{enabled:true,time:"21:15".into(),..Default::default()}).unwrap();
         source_db.execute("INSERT INTO courses(id,title,source_uid) VALUES('portable-notes-course','Notes course','portable-notes-course')",[]).unwrap();
         study_notes::save(&source_db,study_notes::NoteInput{id:None,expected_revision:0,course_id:"portable-notes-course".into(),kind:"slides".into(),title:"Editable presentation draft".into(),content:"# Slide 1\nPrivate speaker notes".into(),tags:vec!["review".into()],pinned:true,source_ids:vec![],preview_id:None}).unwrap();
+        course_difficulty::save(&source_db,course_difficulty::Input{id:None,course_id:"portable-notes-course".into(),concept:"Recursion".into(),note:"Private authored difficulty".into(),confidence:Some(2),easier:false,expected_revision:0}).unwrap();
+        source_db.execute("INSERT INTO grade_imports_local(id,course_id,source,payload) VALUES('portable-grade-import','portable-notes-course',?1,'{}')",[b"Private gradebook source".as_slice()]).unwrap();
+        source_db.execute("INSERT INTO grade_items(id,course_id,title,score,points_possible,status) VALUES('portable-grade','portable-notes-course','Quiz',0,10,'graded')",[]).unwrap();
+        source_db.execute("INSERT INTO grade_import_evidence_local(id,grade_id,import_id,evidence,locator,confidence,reviewed_row) VALUES('portable-evidence','portable-grade','portable-grade-import','Quiz 0/10','CSV row 2',1,'{}')",[]).unwrap();
+        source_db.execute("INSERT INTO scholarship_profiles(id,payload,updated_at) VALUES('local','{\"religion\":[\"Private identity\"]}',?1)",[Utc::now().to_rfc3339()]).unwrap();
         source_db.execute("INSERT INTO day_checkins_local(day,timezone,due_at,status,offered_at) VALUES('2026-09-28','America/Phoenix','2026-09-29T03:00:00Z','dismissed','2026-09-29T03:10:00Z')",[]).unwrap();
         source_db.execute("INSERT INTO assignment_streak_local(task_id,title,kind,due_at,completed,completed_at,frozen) VALUES('old-scored','History','assignment','2026-09-28T03:00:00Z',1,'2026-09-28T02:00:00Z',1)",[]).unwrap();
         let saved_interface = interface_preferences::InterfacePreferences {
@@ -13930,6 +13998,10 @@ mod tests {
         let restored = state.db.lock().unwrap();
         assert_eq!(student_workflows::notes(&restored,"").unwrap()[0].id,portable_notes[0].id);
         assert_eq!(student_workflows::settings(&restored).unwrap().time,"21:15");
+        assert_eq!(course_difficulty::list(&restored,"portable-notes-course").unwrap()[0].note,"Private authored difficulty");
+        assert_eq!(restored.query_row("SELECT source FROM grade_imports_local WHERE id='portable-grade-import'",[],|r|r.get::<_,Vec<u8>>(0)).unwrap(),b"Private gradebook source");
+        assert_eq!(restored.query_row("SELECT evidence FROM grade_import_evidence_local WHERE id='portable-evidence'",[],|r|r.get::<_,String>(0)).unwrap(),"Quiz 0/10");
+        assert_eq!(scholarship_profile_in(&restored).unwrap()["religion"][0],"Private identity");
         assert_eq!(restored.query_row("SELECT status FROM day_checkins_local WHERE day='2026-09-28'",[],|r|r.get::<_,String>(0)).unwrap(),"dismissed");
         assert!(student_workflows::streak(&restored,Utc::now()).unwrap().entries.iter().any(|e|e.task_id=="old-scored"));
         assert!(study_workspace_in(&restored).unwrap().artifacts.iter().any(|a|a.title=="Editable presentation draft"&&a.pinned&&a.tags==vec!["review"]));

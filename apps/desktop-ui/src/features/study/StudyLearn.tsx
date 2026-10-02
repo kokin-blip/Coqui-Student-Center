@@ -1,3 +1,5 @@
+import { CourseDifficultyEditor } from "./CourseDifficultyEditor";
+import type { CourseDifficulty } from "../../native";
 import { GroundedComposer } from "./GroundedComposer";
 import { ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -45,6 +47,7 @@ export function StudyLearn({
     study,
     tasks,
   } = vm;
+  const [difficulties,setDifficulties] = useState<CourseDifficulty[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState("");
   const [rerankConsent, setRerankConsent] = useState(false);
   const [reranking, setReranking] = useState(false);
@@ -53,7 +56,7 @@ export function StudyLearn({
   const recommendationCourseId = selectedCourses[0] ?? "";
   const targets = studyTargets(tasks, recommendationCourseId);
   const target = targets.find((item) => item.id === selectedTargetId) ?? targets[0];
-  const recommendations = recommendStudyMaterials(study?.materials ?? [], recommendationCourseId, target).slice(0, 5);
+  const recommendations = recommendStudyMaterials(study?.materials ?? [], recommendationCourseId, target, new Date(), difficulties.filter(d=>d.courseId===recommendationCourseId&&!d.easier).map(d=>d.concept)).slice(0, 5);
   const candidateIds = aiRerankCandidateIds(recommendations);
   const rerankKey = JSON.stringify([recommendationCourseId, target?.id, recommendations.map((item) => [item.materialId, item.score])]);
   const rerankScope = JSON.stringify({targetTitle:target?.title??"",materials:candidateIds.map(id=>{const m=study?.materials.find(m=>m.id===id);return {id,title:m?.title||m?.fileName||"",materialType:m?.materialType||"other",topics:m?.topics??[]};})});
@@ -63,8 +66,11 @@ export function StudyLearn({
   return (
     <div className="study-grid study-learn-grid">
       <section className="workspace-panel study-builder-panel">
+        <label className="field study-course-picker">Course<select value={selectedCourses[0]??""} onChange={e=>{setSelectedCourses(e.target.value?[e.target.value]:[]);setSelectedMaterials([]);setSelectedTargetId("");setDifficulties([]);}}><option value="">Choose a course</option>{courses.map(course=><option key={course.id} value={course.id}>{course.code||course.title}</option>)}</select></label>
+        {!courses.length&&<p>Add a course in Courses to start studying.</p>}
+        <CourseDifficultyEditor key={recommendationCourseId} courseId={recommendationCourseId} onChange={setDifficulties} onPractice={record=>{setCapability("practice_questions");setPrompt(`Help me practice ${record.concept}. My note: ${record.note || "No additional note"}. Use only the selected materials.`);setNotice("Practice request prepared. Select materials, review the exact AI scope, and consent before sending.");}} />
         <div className="study-recommendations">
-          <div className="section-head"><div><h2>Recommended for you</h2><p>Materials for your next assessment, ranked with visible reasons.</p></div></div>
+          <div className="section-head"><div><h2>What to study next</h2><p>Choose a target, then the materials that support it.</p></div></div>
           {recommendationCourseId && targets.length > 0 && <label className="field recommendation-target">Study target
             <select value={target?.id ?? ""} onChange={(event) => setSelectedTargetId(event.target.value)}>
               {targets.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.dueAt ? new Date(item.dueAt).toLocaleDateString() : "No due date"}</option>)}
@@ -74,8 +80,8 @@ export function StudyLearn({
             const material = study?.materials.find((item) => item.id === recommendation.materialId);
             if (!material) return null;
             return <button type="button" aria-pressed={selectedMaterials.includes(material.id)} className={selectedMaterials.includes(material.id) ? "mode-pill active" : "mode-pill"} key={material.id} onClick={() => setSelectedMaterials((current) => current.includes(material.id) ? current.filter((id) => id !== material.id) : [...current, material.id])}><strong>{material.title ?? material.fileName}</strong><small>{(material.materialType ?? "other").replaceAll("_", " ")} · {recommendation.reasonCodes.map((code) => recommendationReasonLabels[code]).join(" · ")}</small></button>;
-          })}</div> : <p className="field-help">{recommendationCourseId ? "No materials are assigned to this course yet. Add them in Materials to get recommendations." : "Choose a course to see scoped recommendations. Coqui never recommends material from another course."}</p>}
-          {target && candidateIds.length >= 2 && <div className="recommendation-refine">
+          })}</div> : <div className="field-help">{recommendationCourseId ? <><p>No materials for this course yet.</p><button className="outline" onClick={()=>vm.setTab("materials")}>Add materials</button></> : <p>Choose a course to see its materials.</p>}</div>}
+          {target && candidateIds.length >= 2 && <details className="recommendation-refine"><summary>Refine uncertain matches with AI</summary>
             <p>Optional AI tie-break: only this target title and the titles, types, and topics of {candidateIds.length} uncertain materials are sent to {provider ? `${provider.provider} · ${provider.model}` : "your connected provider"}. Document text and other courses stay on this device. Strong matches keep their place.</p>
             <details><summary>Exact metadata sent</summary><pre className="source-text">{rerankScope}</pre></details>
             <label><input type="checkbox" checked={rerankConsent} onChange={(event) => setRerankConsent(event.target.checked)} /> I approve sending this metadata for AI refinement.</label>
@@ -95,13 +101,14 @@ export function StudyLearn({
             {!provider && <button type="button" className="outline" onClick={onOpenAssistant}>Connect AI provider</button>}
             {aiOrder?.key === rerankKey && <small>Uncertain matches refined by {aiOrder.provider}; course scope and strong matches unchanged.</small>}
             {rerankError && <p role="alert">{rerankError}</p>}
-          </div>}
+          </details>}
         </div>
+        {eligibleMaterials.length > 0 && <>
         <div className="section-head">
           <div>
             <h2>Ask selected materials</h2>
             <p>
-              Citations are required and checked against the stored source text.
+              Choose practice or a question. Citations are checked against the stored source text.
             </p>
           </div>
           <span>
@@ -111,7 +118,7 @@ export function StudyLearn({
           </span>
         </div>
         <div className="grounded-builder">
-          <label className="field">
+          <details className="progressive-form"><summary>Include more courses in this question</summary><label className="field">
             Courses
             <select
               multiple
@@ -137,7 +144,7 @@ export function StudyLearn({
               ))}
             </select>
           </label>
-          <fieldset>
+          </details><fieldset>
             <legend>Materials sent for this request</legend>
             {eligibleMaterials.length ? (
               eligibleMaterials.map((material) => (
@@ -200,7 +207,8 @@ export function StudyLearn({
           <GroundedComposer vm={vm} />
           <button className="outline" onClick={onOpenAssistant}>Provider settings</button>
         </div>
-        <div className="artifact-list" aria-label="Saved study artifacts">
+        </>}
+        <details className="progressive-form"><summary>Saved study tools</summary><div className="artifact-list" aria-label="Saved study artifacts">
           {study?.artifacts.length ? (
             study.artifacts.map((artifact) => (
               <button
@@ -229,9 +237,9 @@ export function StudyLearn({
               <p>Select a course and source material to create one.</p>
             </div>
           )}
-        </div>
+        </div></details>
       </section>
-      <aside className="side-stack study-artifact-inspector">
+      <details className="study-artifact-inspector"><summary>{selectedArtifact ? "Review and edit selected study tool" : "Spaced revision"}</summary>
         {selectedArtifact ? (
           <section className="small-card artifact-editor">
             <div className="inspector-kicker">Selected artifact</div>
@@ -310,7 +318,7 @@ export function StudyLearn({
             ))}
           </section>
         )}
-      </aside>
+      </details>
     </div>
   );
 }

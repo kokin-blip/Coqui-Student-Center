@@ -167,7 +167,9 @@ export type ScholarshipSource = {
   lastFetchedAt?: string;
   lastError?: string;
 };
+export type FundingCriterion = { attribute:"culturalBackground"|"religion"|"affiliations"; values:string[]; sourceQuote:string; sourceUrl:string; capturedAt:string; ambiguous:boolean };
 export type ScholarshipOpportunity = {
+  eligibilityCriteria?: FundingCriterion[];
   id: string;
   sourceId: string;
   canonicalUrl: string;
@@ -282,6 +284,10 @@ export type ScholarshipDiff = {
   after?: ScholarshipOpportunity;
 };
 export type ScholarshipProfile = {
+  culturalBackground?: string[];
+  religion?: string[];
+  affiliations?: string[];
+  preferNotToSay?: string[];
   studyLevel: string;
   fieldsOfStudy: string[];
   locations: string[];
@@ -302,7 +308,7 @@ export type FundingProfileProposal = {
 };
 export type ScholarshipMatchExplanation = {
   opportunityId: string;
-  matched: { attribute: string; profileValue: string; requirement: string }[];
+  matched: { attribute: string; profileValue: string; requirement: string; sourceQuote?:string; sourceUrl?:string; capturedAt?:string }[];
   unknown: string[];
   ineligible: string[];
   score: number;
@@ -887,6 +893,7 @@ export type ClassMeetingSeriesRecord = {
   version: number;
 };
 export type SemesterScenarioSection = {
+  sourceEvidence?: { candidateId:string;documentId:string;quote:string;locator:string;confidence:number };
   id: string;
   courseId: string;
   importedCourseLabel?: string;
@@ -1830,7 +1837,7 @@ export async function saveSemesterAnalysisReport(report: AnalysisReport): Promis
   if (isDesktop()) return call<AnalysisReport[]>("save_semester_analysis_report", { report });
   browserAnalysisReports = [{ ...report, id: report.id || crypto.randomUUID(), version: report.version + 1 }, ...browserAnalysisReports.filter((item) => item.id !== report.id)]; return structuredClone(browserAnalysisReports);
 }
-export async function requestSemesterScheduleAnalysis(input: { factsJson: string; roadmapId?: string; includeRatings: boolean; ratingEvidence: string; consent: boolean; expectedProvider: AiProviderId }): Promise<SemesterScheduleAiResponse> {
+export async function requestSemesterScheduleAnalysis(input: { factsJson: string; roadmapId?: string; includeRatings: boolean; ratingEvidence: string; consent: boolean; expectedProvider: AiProviderId; expectedModel: string; expectedProfileVersion:number; expectedRoadmapVersion?:number }): Promise<SemesterScheduleAiResponse> {
   return call<SemesterScheduleAiResponse>("request_semester_schedule_analysis", { input });
 }
 export async function updateStudentProfile(input: StudentProfileInput) {
@@ -3551,3 +3558,56 @@ export async function applyScholarshipRequirementsReview(
     promptIds,
   });
 }
+
+export type ScheduleImportPreview = { documentId: string; candidates: ImportCandidate[]; extractionStatus: string; extractionError: string | null; ocr: OcrStatus };
+export async function previewScheduleImport(file: File | string): Promise<ScheduleImportPreview> {
+  if (!isDesktop()) throw new Error("Schedule extraction needs the desktop app. Add sections manually in this preview.");
+  if (typeof file === "string") return invoke("preview_schedule_import", { path: file, fileName: null, bytes: null });
+  if (!file.size || file.size > 25 * 1024 * 1024) throw new Error("Choose a non-empty schedule of 25 MB or smaller.");
+  return invoke("preview_schedule_import", { path: null, fileName: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+}
+
+export type GradeImportRow = { id:string; title:string; score:number|null; pointsPossible:number|null; categoryId:string|null; status:"graded"|"missing"; selected:boolean; action:"add"|"replace"|"skip"; replaceId:string|null; sourceId:string|null; evidence:string; locator:string; confidence:number; warnings:string[] };
+export type GradeImportMapping = { title:number; score:number|null; possible:number|null; category:number|null };
+export type GradeImportPreview = { id:string; courseId:string; fileName:string; rows:GradeImportRow[]; headers:string[]; records:string[][]; studentRow:number|null; layout:string; mapping:GradeImportMapping|null; baseline:string; revision:number; warnings:string[]; sourceImage:string|null };
+export async function previewGradeImport(courseId:string,file:File):Promise<GradeImportPreview> {
+  if (!isDesktop()) throw new Error("Grade extraction requires the desktop app. Your local gradebook remains available.");
+  if (!file.size || file.size>25*1024*1024) throw new Error("Choose a non-empty file of 25 MB or smaller.");
+  return invoke("preview_grade_import",{courseId,fileName:file.name,bytes:new Uint8Array(await file.arrayBuffer())});
+}
+export async function listGradeImports(courseId:string):Promise<GradeImportPreview[]> {return isDesktop()?invoke("list_grade_imports",{courseId}):[];}
+export async function saveGradeImportReview(preview:GradeImportPreview,reparse=false):Promise<GradeImportPreview>{return invoke("save_grade_import_review",{preview,reparse});}
+export async function refreshGradeImport(id:string):Promise<GradeImportPreview>{return invoke("refresh_grade_import",{id});}
+export async function discardGradeImport(id:string):Promise<void>{return invoke("discard_grade_import",{id});}
+export async function applyGradeImport(id:string,expectedRevision:number):Promise<StudyWorkspace>{return invoke("apply_grade_import",{id,expectedRevision});}
+
+export type CourseDifficulty = { id:string; courseId:string; concept:string; note:string; confidence:number|null; easier:boolean; createdAt:string; updatedAt:string; revision:number };
+export type CourseDifficultyInput = Pick<CourseDifficulty,"courseId"|"concept"|"note"|"confidence"|"easier"> & {id?:string;expectedRevision:number};
+let browserDifficulties:CourseDifficulty[]=[];
+export async function listCourseDifficulties(courseId:string):Promise<CourseDifficulty[]>{return isDesktop()?invoke("list_course_difficulties",{courseId}):structuredClone(browserDifficulties.filter(r=>r.courseId===courseId));}
+export async function saveCourseDifficulty(input:CourseDifficultyInput):Promise<CourseDifficulty[]>{
+  if(isDesktop())return invoke("save_course_difficulty",{input:{...input,id:input.id??null}});
+  if(!input.concept.trim()||input.concept.length>200||input.note.length>2000||input.confidence!==null&&(input.confidence<1||input.confidence>5))throw new Error("Enter a concept and optional confidence from 1 to 5.");
+  const previous=browserDifficulties.find(r=>r.id===input.id);
+  if(input.id&&(!previous||previous.courseId!==input.courseId||previous.revision!==input.expectedRevision))throw new Error("This concept changed. Reload before saving.");
+  const now=new Date().toISOString();const record:CourseDifficulty={...input,id:input.id??crypto.randomUUID(),concept:input.concept.trim(),createdAt:previous?.createdAt??now,updatedAt:now,revision:(previous?.revision??0)+1};
+  browserDifficulties=[record,...browserDifficulties.filter(r=>r.id!==record.id)];return listCourseDifficulties(input.courseId);
+}
+export async function deleteCourseDifficulties(courseId:string,records:[string,number][]):Promise<CourseDifficulty[]>{
+  if(isDesktop())return invoke("delete_course_difficulties",{courseId,records});
+  if(records.some(([id,revision])=>!browserDifficulties.some(r=>r.id===id&&r.courseId===courseId&&r.revision===revision)))throw new Error("A concept changed. Reload before clearing.");
+  browserDifficulties=browserDifficulties.filter(r=>!records.some(([id])=>r.id===id));return listCourseDifficulties(courseId);
+}
+export type FundingSearchScope = {goals:string;opportunities:{id:string;title:string;summary:string;sourceUrl:string;fetchedAt:string}[]};
+export async function prepareFundingSearch(goals:string,opportunityIds:string[]):Promise<FundingSearchScope>{
+ if(isDesktop())return invoke("prepare_funding_search",{goals,opportunityIds});
+ return {goals,opportunities:browserScholarships.opportunities.filter(o=>opportunityIds.includes(o.id)).map(o=>({id:o.id,title:o.title,summary:o.summary??"",sourceUrl:o.canonicalUrl,fetchedAt:o.fetchedAt}))};
+}
+export async function requestFundingSearch(input:{goals:string;opportunityIds:string[];sourceScope:string;expectedProvider:string;expectedModel:string;consent:boolean}):Promise<{terms:string[];provider:string;model:string}>{
+ if(!isDesktop())throw new Error("AI guidance needs the desktop app. Local search remains available.");
+ return invoke("request_funding_search",{input});
+}
+export type GradeImportEvidence={evidence:string;locator:string;confidence:number;reviewedRow:string;fileName:string;sourceImage:string|null};
+export async function getGradeImportEvidence(gradeId:string):Promise<GradeImportEvidence[]>{return isDesktop()?invoke("get_grade_import_evidence",{gradeId}):[];}
+
+export async function retryGradeImport(id:string,expectedRevision:number):Promise<GradeImportPreview> { return invoke("retry_grade_import",{id,expectedRevision}); }

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, FileUp, ImageUp, Sparkles } from "lucide-react";
 import {
-  discoverAsuRoadmaps, getDashboard, getPlannerProfile, getSemesterAnalysisReports, getSemesterRoadmaps, importDocumentBytes,
-  importDocumentPath, isDesktop, listenForFileDrops, listAiProviders, pastedScheduleImage,
+  discoverAsuRoadmaps, getPlannerProfile, getSemesterAnalysisReports, getSemesterRoadmaps, previewScheduleImport,
+  isDesktop, listenForFileDrops, listAiProviders, pastedScheduleImage,
   previewAsuRoadmap, previewRoadmapFile, requestSemesterScheduleAnalysis, savePlannerProfile,
   saveSemesterAnalysisReport, saveSemesterRoadmap,
   type AcademicTermRecord, type AiProviderStatus, type AnalysisReport, type Dashboard, type PlannerProfile,
@@ -10,17 +10,25 @@ import {
 } from "../../native";
 import { analyzeSemesterSchedule } from "./scheduleAnalysis";
 
+export function aiRecovery(reason: unknown): string {
+  const error = String(reason).toLowerCase();
+  if (/400|bad request|invalid input/.test(error)) return "The AI provider rejected this request. Check the selected model in AI settings, then review the data scope before retrying.";
+  if (/401|403|credential|api.key|unauthorized/.test(error)) return "The AI provider could not authenticate. Reconnect it in AI settings, then review the data scope before retrying.";
+  if (/429|quota|rate.limit/.test(error)) return "The AI provider is at its request limit. Wait before reviewing and retrying this request.";
+  if (/timeout|network|connect/.test(error)) return "The AI provider could not be reached. Check your connection, then review and retry.";
+  return "AI interpretation could not be completed. Review the provider and data scope before retrying.";
+}
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const hours = (value: number) => `${(value / 60).toFixed(1)} h`;
 const fingerprint = async (value: unknown) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const emptyProfile: PlannerProfile = { program: "", catalogYear: "", studyGoals: "", careerInterests: "", constraints: "", version: 0 };
 
-function importedSections(dashboard: Dashboard, before: Set<string>, workspace: WorkspaceSnapshot): SemesterScenarioSection[] {
+function importedSections(candidates: Dashboard["candidates"], workspace: WorkspaceSnapshot): SemesterScenarioSection[] {
   const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return dashboard.candidates.filter((candidate) => !before.has(candidate.id) && candidate.kind === "class_meeting" && candidate.status === "pending")
+  return candidates.filter((candidate) => candidate.kind === "class_meeting")
     .map((candidate) => {
       const course = workspace.courses.find((item) => normalize(item.code) === normalize(candidate.course) || normalize(item.title) === normalize(candidate.course));
-      return { id: crypto.randomUUID(), courseId: course?.id ?? "", importedCourseLabel: candidate.course || candidate.title,
+      return { sourceEvidence:{candidateId:candidate.id,documentId:candidate.documentId,quote:candidate.evidence,locator:candidate.sourceLocator,confidence:candidate.confidence}, id: crypto.randomUUID(), courseId: course?.id ?? "", importedCourseLabel: candidate.course || candidate.title,
         weekdays: candidate.weekdays ?? [], startsAtLocal: candidate.startsAtLocal || "", endsAtLocal: candidate.endsAtLocal || "",
         location: candidate.location ?? "", modality: candidate.modality === "in-person" ? "in_person" : candidate.modality === "online" || candidate.modality === "hybrid" ? candidate.modality : "unknown" };
     });
@@ -30,6 +38,7 @@ export function SemesterScheduleAnalysisView({ workspace, term, scenario, onScen
   workspace: WorkspaceSnapshot; term: AcademicTermRecord; scenario: SemesterScenario | null;
   onScenarioFromScreenshot: (scenario: SemesterScenario) => void;
 }) {
+  const [importEvidence, setImportEvidence] = useState<Dashboard["candidates"]>([]);
   const [profile, setProfile] = useState<PlannerProfile>(emptyProfile);
   const [savedProfile, setSavedProfile] = useState<PlannerProfile>(emptyProfile);
   const [roadmaps, setRoadmaps] = useState<RoadmapEvidence[]>([]);
@@ -57,19 +66,26 @@ export function SemesterScheduleAnalysisView({ workspace, term, scenario, onScen
       .catch((reason) => setError(`Planner analysis data could not be loaded: ${String(reason)}`));
   }, []);
 
+  const importing = useRef(false);
+  const [retryFile,setRetryFile] = useState<File|string|null>(null);
   const importScreenshot = async (file: File | string) => {
+    if(importing.current)return;
+    importing.current=true;setRetryFile(file);
     setBusy(true); setError(""); setNotice("");
     try {
       if (typeof file !== "string" && !["image/png", "image/jpeg", "application/pdf"].includes(file.type) && !/\.(png|jpe?g|pdf)$/i.test(file.name)) throw new Error("Use a PNG, JPEG, or PDF schedule.");
-      const before = new Set((await getDashboard()).candidates.map((candidate) => candidate.id));
-      const next = typeof file === "string" ? await importDocumentPath(file) : await importDocumentBytes(file.name || "schedule.png", new Uint8Array(await file.arrayBuffer()));
-      const sections = importedSections(next, before, workspace);
+      const next = await previewScheduleImport(file);
+      const sections = importedSections(next.candidates, workspace);
+      setImportEvidence(next.candidates);
+      if (!next.ocr.ready && !sections.length) { setError("Local OCR is not ready. Check OCR status in Settings, retry after it is ready, or add sections manually. Your source is kept locally."); return; }
+      if (next.extractionError && !sections.length) { setError("The file was read, but local extraction failed. Retry it, choose a clearer copy, or add sections manually. Your source is kept locally."); return; }
       if (!sections.length) { setError("No class times were found. Try a clearer schedule or add sections manually. The source remains pending for review."); return; }
       onScenarioFromScreenshot({ id: crypto.randomUUID(), termId: term.id, name: "Screenshot schedule idea", sections, version: 0 });
+      setRetryFile(null);
       setHasScreenshot(true); setIncludeRatings(false); setRatingEvidence(""); setConsent(false);
       setNotice(`${sections.length} class${sections.length === 1 ? "" : "es"} extracted into an unsaved idea. Review course matches, days, and times below before saving. Your enrolled schedule did not change.`);
-    } catch (reason) { setError(`Schedule could not be read: ${String(reason)}`); }
-    finally { setBusy(false); }
+    } catch { setError("Schedule could not be read. Use a PNG, JPEG, or PDF of 25 MB or smaller, retry the same file, or add sections manually. Your current idea is kept."); }
+    finally { importing.current=false;setBusy(false); }
   };
 
   useEffect(() => {
@@ -90,6 +106,9 @@ export function SemesterScheduleAnalysisView({ workspace, term, scenario, onScen
   useEffect(() => { let active = true; void fingerprint(inputJson).then((value) => { if (active) setCurrentFingerprint(value); }); return () => { active = false; }; }, [inputJson]);
   useEffect(() => { setActiveReport(reports.find((item) => item.scenarioKey === scenarioKey) ?? null); }, [scenarioKey, reports]);
   const selectedProvider = providers.find((provider) => provider.connected && provider.healthy);
+  useEffect(() => { setConsent(false); }, [inputJson, includeRatings, ratingEvidence, selectedProvider?.provider, selectedProvider?.model]);
+  const aiFacts = { schedule: meetings.map(({ courseId, importedCourseLabel, weekdays, startsAtLocal, endsAtLocal, modality }) => ({ courseId, courseCode: workspace.courses.find((course) => course.id === courseId)?.code ?? importedCourseLabel ?? "unmatched", weekdays, startsAtLocal, endsAtLocal, modality })), rhythm: workspace.rhythmRules.map(({ kind, weekday, startsAtLocal, endsAtLocal }) => ({ kind, weekday, startsAtLocal, endsAtLocal })), analysis };
+  const approvedRoadmap=roadmaps.find(item=>item.id===roadmapId);
   const savedFacts = useMemo(() => { try { return activeReport ? JSON.parse(activeReport.factsJson) as { analysis?: { warnings?: string[]; weeklyStudyMinutes?: number | null; weeklyKnownEffortMinutes?: number }; screenshotRating?: string } : null; } catch { return null; } }, [activeReport]);
   const saveProfile = async () => { setBusy(true); setError(""); try { const saved = await savePlannerProfile(profile); setProfile(saved); setSavedProfile(saved); setNotice("Planner goals saved locally."); } catch (reason) { setError(String(reason)); } finally { setBusy(false); } };
   const previewUrl = async () => { setBusy(true); setError(""); try {
@@ -104,37 +123,39 @@ export function SemesterScheduleAnalysisView({ workspace, term, scenario, onScen
     setBusy(true); setError(""); setNotice("");
     try {
       const inputFingerprint = await fingerprint(inputJson);
-      const aiFacts = { schedule: meetings.map(({ courseId, importedCourseLabel, weekdays, startsAtLocal, endsAtLocal, modality }) => ({ courseId, courseCode: workspace.courses.find((course) => course.id === courseId)?.code ?? importedCourseLabel ?? "unmatched", weekdays, startsAtLocal, endsAtLocal, modality })), rhythm: workspace.rhythmRules.map(({ kind, weekday, startsAtLocal, endsAtLocal }) => ({ kind, weekday, startsAtLocal, endsAtLocal })), analysis };
+
       const aiFactsJson = JSON.stringify(aiFacts);
       const factsJson = JSON.stringify({ ...aiFacts, screenshotRating: withAi && hasScreenshot && includeRatings ? ratingEvidence.trim() : undefined });
       let findings: AnalysisReport["aiFindings"] = []; let provider = ""; let model = "";
       if (withAi) {
         if (!selectedProvider || !consent) throw new Error("Connect an AI provider and consent to the displayed data scope first.");
         if (profileDirty) throw new Error("Save your planner goals before asking AI to use them.");
-        const response = await requestSemesterScheduleAnalysis({ factsJson: aiFactsJson, roadmapId: roadmapId || undefined, includeRatings: hasScreenshot && includeRatings, ratingEvidence: hasScreenshot && includeRatings ? ratingEvidence.trim() : "", consent, expectedProvider: selectedProvider.provider });
+        const response = await requestSemesterScheduleAnalysis({ factsJson: aiFactsJson, roadmapId: roadmapId || undefined, includeRatings: hasScreenshot && includeRatings, ratingEvidence: hasScreenshot && includeRatings ? ratingEvidence.trim() : "", consent, expectedProvider: selectedProvider.provider, expectedModel: selectedProvider.model, expectedProfileVersion:savedProfile.version, expectedRoadmapVersion:approvedRoadmap?.version });
         findings = response.findings; provider = response.provider; model = response.model;
         setConsent(false);
       }
       const report: AnalysisReport = { id: "", scenarioKey, inputFingerprint, generatedAt: new Date().toISOString(), factsJson, aiFindings: findings, provider, model, version: 0 };
       const next = await saveSemesterAnalysisReport(report); setReports(next); setActiveReport(next[0] ?? report);
       setNotice(withAi ? "Analysis saved locally. Your schedule was not changed." : "Offline analysis saved locally. Your schedule was not changed.");
-    } catch (reason) { setError(String(reason)); }
+    } catch (reason) { setError(withAi ? `${aiRecovery(reason)} Offline analysis and saved results are still available.` : "Analysis could not be saved. Your inputs are kept; try saving again."); if (withAi) setConsent(false); }
     finally { setBusy(false); }
   };
 
   return <section className="workspace-panel semester-analysis" aria-labelledby="semester-analysis-title">
     <div className="section-head"><div><h2 id="semester-analysis-title">Will this schedule work for your week?</h2><p>Analyze {scenario ? `“${scenario.name}”` : "your current schedule"} against your rhythm, commitments, and goals. Nothing here changes enrollment.</p></div></div>
-    <div className={`semester-analysis-drop ${dragging ? "dragging" : ""}`} onDragOver={(event) => event.preventDefault()} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file) void importScreenshot(file); }}>
-      <ImageUp aria-hidden="true"/><strong>Drop a schedule screenshot or PDF</strong><span>Or paste a screenshot with Ctrl/Cmd+V. Extracted classes become an unsaved idea for review.</span>
-      <label className="outline schedule-file-button">Choose a schedule<input type="file" accept="image/png,image/jpeg,application/pdf" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importScreenshot(file); }}/></label>
-    </div>
-    <div className="semester-analysis-facts"><h3>Week fit</h3>{!meetings.length ? <p>Add classes or drop a schedule to see a comparison.</p> : <>
+    <div className="semester-analysis-facts"><h3>{!meetings.length ? "Add a schedule to compare" : analysis.warnings.length ? "A few parts of this week need a closer look" : "No conflicts detected in the information available"}</h3>{!meetings.length ? <p>Add classes or drop a schedule to see a comparison.</p> : <>
       {analysis.warnings.length ? <ul>{analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : <p>No conflicts detected in the information available. This is not a guarantee that the week will feel manageable.</p>}
-      <div className="semester-analysis-metrics"><span>Preferred sleep window <strong>{analysis.preferredSleepMinutes === null ? "Unknown" : hours(analysis.preferredSleepMinutes)}</strong></span><span>Study capacity <strong>{analysis.weeklyStudyMinutes === null ? "Unknown" : `${hours(analysis.weeklyStudyMinutes)} / week`}</strong></span><span>Known assignment effort <strong>{hours(analysis.weeklyKnownEffortMinutes)} / week</strong></span><span>Potential overload <strong>{analysis.overloadMinutes === null ? "Unknown" : hours(analysis.overloadMinutes)}</strong></span></div>
+      <details className="semester-analysis-details"><summary>Capacity estimates and daily details</summary><p>These estimates use your saved rhythm, availability, commute preferences, and known assignment effort. Edit those inputs in Calendar and Settings.</p><div className="semester-analysis-metrics"><span>Preferred sleep window <strong>{analysis.preferredSleepMinutes === null ? "Unknown" : hours(analysis.preferredSleepMinutes)}</strong></span><span>Study capacity <strong>{analysis.weeklyStudyMinutes === null ? "Unknown" : `${hours(analysis.weeklyStudyMinutes)} / week`}</strong></span><span>Known assignment effort <strong>{hours(analysis.weeklyKnownEffortMinutes)} / week</strong></span><span>Potential overload <strong>{analysis.overloadMinutes === null ? "Unknown" : hours(analysis.overloadMinutes)}</strong></span></div>
       <div className="semester-analysis-days">{analysis.days.map((day) => <div key={day.weekday}><strong>{weekdays[day.weekday]}</strong><span>Class {hours(day.classMinutes)} · Commute {hours(day.commuteMinutes)} · Study {day.studyMinutes === null ? "?" : hours(day.studyMinutes)}</span>{day.classConflictMinutes + day.rhythmConflictMinutes + day.sleepConflictMinutes + day.commuteConflictMinutes > 0 && <small>Conflicts: class {hours(day.classConflictMinutes)}, rhythm {hours(day.rhythmConflictMinutes)}, sleep {hours(day.sleepConflictMinutes)}, commute {hours(day.commuteConflictMinutes)}</small>}{day.missingMealWindows > 0 && <small>Less than 30 minutes free in a usual lunch or dinner window</small>}</div>)}</div>
+      </details>
       {analysis.missingInputs.length > 0 && <p className="source-note">Missing information: {analysis.missingInputs.join(", ")}. Capacity may be underestimated.</p>}
       <button className="outline" disabled={busy} onClick={() => void runAnalysis(false)}>Save offline analysis</button>
     </>}</div>
+    <details className="semester-analysis-details"><summary>Import a schedule screenshot or PDF</summary>    <div className={`semester-analysis-drop ${dragging ? "dragging" : ""}`} onDragOver={(event) => event.preventDefault()} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file) void importScreenshot(file); }}>
+      <ImageUp aria-hidden="true"/><strong>PNG, JPEG, or PDF · read locally</strong><span>Or paste a screenshot with Ctrl/Cmd+V. Extracted classes become an unsaved idea for review.</span>
+      <label className="outline schedule-file-button">Choose a schedule<input type="file" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importScreenshot(file); }}/></label>
+    </div>
+{importEvidence.length > 0 && <details><summary>Extracted source evidence</summary><ul>{importEvidence.map(c => <li key={c.id}><strong>{c.course || c.title}</strong> · {c.sourceLocator} · {Math.round(c.confidence*100)}% extraction confidence<blockquote>{c.evidence}</blockquote>{c.warnings.join(" · ")}</li>)}</ul></details>}</details>
     <details className="semester-analysis-details"><summary>Degree roadmap and personal goals</summary><div className="semester-analysis-form">
       <label className="field">Degree program<input value={profile.program} maxLength={160} onChange={(event) => setProfile({ ...profile, program: event.target.value })}/></label>
       <label className="field">Catalog year<input value={profile.catalogYear} inputMode="numeric" maxLength={4} placeholder="2026" onChange={(event) => setProfile({ ...profile, catalogYear: event.target.value })}/></label>
@@ -153,11 +174,12 @@ export function SemesterScheduleAnalysisView({ workspace, term, scenario, onScen
       <p>AI can explain tradeoffs against your approved roadmap and goals. It cannot verify graduation requirements or change your schedule.</p>
       <p>{selectedProvider ? <>Provider: {selectedProvider.provider} · {selectedProvider.model}. <a href={selectedProvider.disclosureUrl} target="_blank" rel="noreferrer">Data policy <ExternalLink/></a></> : "Connect and test OpenAI, Anthropic, or Gemini in Settings first. Offline analysis remains available."}</p>{profileDirty && <p>Save your edited goals before AI interpretation.</p>}
       {hasScreenshot && <div className="semester-rating-choice"><label><input type="checkbox" checked={includeRatings} onChange={(event) => setIncludeRatings(event.target.checked)}/> Consider ProfessorView ratings visible in my screenshot</label>{includeRatings && <label className="field">Rating text I can verify in the screenshot<textarea value={ratingEvidence} maxLength={1000} onChange={(event) => setRatingEvidence(event.target.value)} placeholder="e.g. Instructor name, displayed rating, review count"/><small>Unverified screenshot context only; never used to calculate week feasibility.</small></label>}</div>}
+      <details><summary>Review exact AI data</summary><pre className="source-text">{JSON.stringify({facts:aiFacts,goals:savedProfile,roadmap:approvedRoadmap?{id:approvedRoadmap.id,format:approvedRoadmap.format,excerpt:approvedRoadmap.approvedExcerpt}:null,ratingEvidence:hasScreenshot&&includeRatings?ratingEvidence.trim():null},null,2)}</pre></details>
       <label className="check-row"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)}/><span>I consent to sending the reviewed schedule facts, rhythm and workload summary, saved planner goals, and selected roadmap excerpt to the provider above{hasScreenshot && includeRatings ? ", plus the rating text I entered" : ""}.</span></label>
       <button className="solid" disabled={busy || profileDirty || !selectedProvider || !consent || !meetings.length || hasScreenshot && includeRatings && !ratingEvidence.trim()} onClick={() => void runAnalysis(true)}><Sparkles/> Interpret with AI</button>
     </div></details>
     {activeReport && <div className="semester-report" role="status"><h3>Saved analysis · {new Date(activeReport.generatedAt).toLocaleString()}</h3>{currentFingerprint && currentFingerprint !== activeReport.inputFingerprint && <strong>This report is stale; its inputs changed. Run the analysis again.</strong>}{savedFacts?.analysis && <p>At the time: {savedFacts.analysis.weeklyStudyMinutes === null ? "study capacity unknown" : `${hours(savedFacts.analysis.weeklyStudyMinutes ?? 0)} of preferred study time per week`}; {hours(savedFacts.analysis.weeklyKnownEffortMinutes ?? 0)} of known assignment effort per week. {savedFacts.analysis.warnings?.join(" · ") || "No detected conflicts in known inputs."}</p>}{savedFacts?.screenshotRating && <small>Included unverified ProfessorView screenshot text: {savedFacts.screenshotRating}</small>}{activeReport.aiFindings.map((finding, index) => <article key={index}><strong>{finding.title}</strong><p>{finding.detail}</p><small>Evidence: {finding.evidenceIds.map((id, evidenceIndex) => { const roadmap = roadmaps.find((item) => item.id === id); return <span key={`${id}-${evidenceIndex}`}>{evidenceIndex > 0 ? ", " : ""}{roadmap ? roadmap.sourceUrl ? <a href={roadmap.sourceUrl} target="_blank" rel="noreferrer">{roadmap.program} roadmap</a> : `${roadmap.program} approved upload` : id.replaceAll("_", " ")}</span>; })}</small></article>)}<small>Based on the inputs saved at that time. Rerun after changing classes, rhythm, goals, or roadmap.</small></div>}
     {reports.length > 0 && <div className="semester-report-history"><strong>Earlier analyses</strong>{reports.filter((item) => item.scenarioKey === scenarioKey).slice(0, 5).map((item) => <button className="text-button" key={item.id} onClick={() => setActiveReport(item)}>{new Date(item.generatedAt).toLocaleString()} · {item.aiFindings.length ? "AI and offline" : "Offline"}</button>)}</div>}
-    {notice && <p role="status" className="source-note">{notice}</p>}{error && <p role="alert" className="form-error">{error}</p>}
+    {notice && <p role="status" className="source-note">{notice}</p>}{error && <p role="alert" className="form-error">{error}{retryFile&&<button className="text-button" disabled={busy} onClick={()=>void importScreenshot(retryFile)}>Retry selected schedule file</button>}</p>}
   </section>;
 }

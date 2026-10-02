@@ -51,3 +51,11 @@ test("ranking favors exact links and topics but never leaks across courses", () 
   expect(results[1].reasonCodes).toContain("assessment_practice");
   expect(recommendStudyMaterials([material("other", "chemistry")], "biology", task("wrong", "chemistry", "quiz", "2026-09-24T12:00:00Z"), now)).toEqual([]);
 });
+
+test("student-authored difficult concepts boost only matching materials in that course",()=>{
+ const materials=[material("topic","biology",{topics:["Recursion"]}),material("other","chemistry",{topics:["Recursion"]}),material("general","biology",{teacherProvided:true})];
+ const result=recommendStudyMaterials(materials,"biology",undefined,now,["recursion"]);
+ expect(result.map(r=>r.materialId)).toEqual(["topic","general"]);
+ expect(result[0].reasonCodes).toContain("student_difficulty");
+ expect(recommendStudyMaterials(materials,"biology",undefined,now,[])[0].materialId).toBe("general");
+});
