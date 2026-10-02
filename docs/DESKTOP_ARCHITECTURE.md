@@ -64,7 +64,7 @@ Revocation is enforced by the service and the database, not cryptographically. A
 
 Any authorized computer can read all of the account's synchronized data; the account key is shared by design, and signatures establish authorship rather than read access.
 
-## Student workflow persistence (schema 31)
+## Student workflow persistence (schema 32)
 
 `student_workflows.rs` owns quick-note revision checks, daily check-in settings/membership/delivery/responses, and assignment scoring snapshots/history. Task SQL triggers observe every task mutation path so imports, local edits, and received edits cannot silently remove a frozen outcome. Planning captures check-in membership before replacing plan blocks. Native wrappers remain lock guarded; the existing reminder worker handles optional privacy-safe background notifications. Device-local records are excluded from canonical sync and included in the full encrypted backup/rekey/reset lifecycle.
 

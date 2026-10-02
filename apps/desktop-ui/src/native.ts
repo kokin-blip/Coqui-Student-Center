@@ -1315,7 +1315,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 31,
+      schemaVersion: 32,
       onboarding: onboardingMode
         ? structuredClone(browserOnboardingState)
         : null,
@@ -1689,7 +1689,7 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 31,
+      schemaVersion: 32,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
