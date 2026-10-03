@@ -10,7 +10,7 @@ const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 pub enum ManagedAiError {
     #[error("an AI provider is not configured in this build")]
     NotConfigured,
-    #[error("AI credential storage is unavailable")]
+    #[error("Coqui could not save or read the API key in the OS credential vault. Unlock the vault or allow Coqui access, then reconnect the provider")]
     Credential,
     #[error("AI provider rejected the API key")]
     Unauthorized,

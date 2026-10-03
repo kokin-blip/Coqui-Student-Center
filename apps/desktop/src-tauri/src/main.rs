@@ -8140,16 +8140,7 @@ fn all_ai_capabilities() -> Vec<String> {
 #[tauri::command]
 fn list_ai_providers(state: tauri::State<AppState>) -> Result<Vec<AiProviderStatus>> {
     state.require_unlocked()?;
-    let db = state.db.lock().unwrap();
-    Ok(ai_provider_order(&db).into_iter().map(|provider| {
-        let key = ai_providers::load_key(provider).ok();
-        let suffix = key.as_ref().map(|value| value.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>());
-        let healthy = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_healthy_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok().as_deref() == Some("true");
-        let last_checked_at = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok();
-        AiProviderStatus { provider:provider.as_str().into(), connected:key.is_some(), healthy:key.is_some() && healthy,
-            model:ai_model(&db, provider), masked_key:suffix.map(|value| format!("••••{value}")), capabilities:all_ai_capabilities(),
-            last_checked_at, disclosure_url:provider.disclosure_url().into() }
-    }).collect())
+    list_ai_provider_statuses(state.inner())
 }
 
 fn persist_ai_health(conn: &Connection, provider: ai_providers::ProviderId, healthy: bool) -> Result<()> {
@@ -8165,14 +8156,15 @@ async fn save_ai_provider_key(state: tauri::State<'_, AppState>, provider: Strin
     state.require_unlocked()?;
     if !age_confirmed { return Err(AppError::Invalid("Confirm that you are 18 or older before connecting an AI provider".into())); }
     let provider: ai_providers::ProviderId = provider.parse()?;
+    let model = model.filter(|value| !value.trim().is_empty()).map(|value| value.trim().to_owned());
+    if model.as_ref().is_some_and(|value| value.len() > 200) { return Err(AppError::Invalid("model is too long".into())); }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let key = Zeroizing::new(key);
         ai_providers::test_connection(provider, &key)?;
         ai_providers::save_key(provider, key)?;
         let db = state.db.lock().unwrap();
-        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
-            if model.len() > 200 { return Err(AppError::Invalid("model is too long".into())); }
+        if let Some(model) = model {
             db.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("ai_model_{}", provider.as_str()), model.trim()])?;
         }
         persist_ai_health(&db, provider, true)?;
@@ -8184,13 +8176,13 @@ async fn save_ai_provider_key(state: tauri::State<'_, AppState>, provider: Strin
 fn list_ai_provider_statuses(state: &AppState) -> Result<Vec<AiProviderStatus>> {
     let db = state.db.lock().unwrap();
     Ok(ai_provider_order(&db).into_iter().map(|provider| {
-        let key = ai_providers::load_key(provider).ok();
+        let key = ai_providers::optional_key(provider)?;
         let suffix = key.as_ref().map(|value| value.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>());
         let healthy = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_healthy_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok().as_deref() == Some("true");
-        AiProviderStatus { provider:provider.as_str().into(), connected:key.is_some(), healthy:key.is_some() && healthy, model:ai_model(&db,provider),
+        Ok(AiProviderStatus { provider:provider.as_str().into(), connected:key.is_some(), healthy:key.is_some() && healthy, model:ai_model(&db,provider),
             masked_key:suffix.map(|value| format!("••••{value}")), capabilities:all_ai_capabilities(),
-            last_checked_at:db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}",provider.as_str())], |row| row.get(0)).ok(), disclosure_url:provider.disclosure_url().into() }
-    }).collect())
+            last_checked_at:db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}",provider.as_str())], |row| row.get(0)).ok(), disclosure_url:provider.disclosure_url().into() })
+    }).collect::<Result<Vec<_>>>()?)
 }
 
 #[tauri::command]

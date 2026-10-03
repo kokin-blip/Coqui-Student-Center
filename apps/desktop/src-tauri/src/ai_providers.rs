@@ -38,14 +38,33 @@ pub fn credential_entry(provider: ProviderId) -> Result<keyring::Entry, keyring:
 
 pub fn save_key(provider: ProviderId, key: Zeroizing<String>) -> Result<(), ManagedAiError> {
     validate_key(&key)?;
-    credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.set_password(&key).map_err(|_| ManagedAiError::Credential)
+    credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.set_password(&key).map_err(|_| ManagedAiError::Credential)?;
+    // Use a new entry: reporting success requires a read from the OS vault,
+    // not merely a successful write or an in-memory copy.
+    verify_saved_key(&key, credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.get_password())
+}
+
+fn verify_saved_key(expected: &str, stored: Result<String, keyring::Error>) -> Result<(), ManagedAiError> {
+    let stored = Zeroizing::new(stored.map_err(|_| ManagedAiError::Credential)?);
+    if stored.as_str() != expected { return Err(ManagedAiError::Credential); }
+    Ok(())
 }
 
 pub fn load_key(provider: ProviderId) -> Result<Zeroizing<String>, ManagedAiError> {
-    credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.get_password().map(Zeroizing::new).map_err(|error| match error {
+    let key = credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.get_password().map(Zeroizing::new).map_err(|error| match error {
         keyring::Error::NoEntry => ManagedAiError::NotConfigured,
         _ => ManagedAiError::Credential,
-    })
+    })?;
+    validate_key(&key).map_err(|_| ManagedAiError::Credential)?;
+    Ok(key)
+}
+
+pub fn optional_key(provider: ProviderId) -> Result<Option<Zeroizing<String>>, ManagedAiError> {
+    match load_key(provider) {
+        Ok(key) => Ok(Some(key)),
+        Err(ManagedAiError::NotConfigured) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub fn remove_key(provider: ProviderId) -> Result<(), ManagedAiError> {
@@ -360,7 +379,7 @@ fn grounded_gemini(key:&str,model:&str,prompt:&str,schema:&Value)->Result<(Value
 
 fn grounded_gemini_at(endpoint:&str,key:&str,model:&str,prompt:&str,schema:&Value)->Result<(Value,AiUsage),ManagedAiError>{
     if !model.chars().all(|value|value.is_ascii_alphanumeric()||matches!(value,'-'|'_'|'.')){return Err(ManagedAiError::InvalidInput("Gemini model is invalid".into()));}
-    let body=json!({"contents":[{"role":"user","parts":[{"text":prompt}]}],"generationConfig":{"responseMimeType":"application/json","responseSchema":schema}});
+    let body=json!({"contents":[{"role":"user","parts":[{"text":prompt}]}],"generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}});
     let value=read_json(client()?.post(endpoint).header("x-goog-api-key",key).json(&body).send().map_err(map_network)?)?;
     let (text,usage)=provider_text_and_usage(ProviderId::Gemini,&value)?;
     let parsed=serde_json::from_str(text).map_err(|_|ManagedAiError::InvalidResponse)?;
@@ -442,7 +461,7 @@ fn request_gemini_at(endpoint: &str, key: &str, model: &str, prompt: &str, image
     if let Some(image) = image { parts.push(json!({"inline_data":{"mime_type":image.mime_type(),"data":image.data()}})); }
     let body = json!({
         "contents":[{"role":"user","parts":parts}],
-        "generationConfig":{"responseMimeType":"application/json","responseSchema":schema}
+        "generationConfig":{"responseMimeType":"application/json","responseJsonSchema":schema}
     });
     let response = client()?.post(endpoint).header("x-goog-api-key", key).json(&body).send().map_err(map_network)?;
     let value = read_json(response)?;
@@ -538,6 +557,9 @@ mod tests {
         fixture_server_status(response_body,200)
     }
     fn fixture_server_status(response_body:Value,status:u16)->(String,mpsc::Receiver<String>,thread::JoinHandle<()>) {
+        fixture_server_checked(move |_| (response_body, status))
+    }
+    fn fixture_server_checked(respond: impl FnOnce(&str) -> (Value, u16) + Send + 'static) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
         let listener=TcpListener::bind("127.0.0.1:0").unwrap();
         let address=listener.local_addr().unwrap();
         let (sender,receiver)=mpsc::channel();
@@ -565,11 +587,99 @@ mod tests {
                     Err(error)=>panic!("fixture request failed: {error}"),
                 }
             }
-            sender.send(String::from_utf8_lossy(&request).into_owned()).unwrap();
+            let request = String::from_utf8_lossy(&request).into_owned();
+            let (response_body, status) = respond(&request);
+            sender.send(request).unwrap();
             let response=response_body.to_string();
             write!(stream,"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
         });
         (format!("http://{address}/fixture"),receiver,handle)
+    }
+
+    #[test]
+    fn gemini_replanning_and_extraction_use_json_schema_not_openapi_schema() {
+        for extraction in [false, true] {
+            let schema = if extraction { response_schema() } else { automatic_planning_schema() };
+            let expected_schema = schema.clone();
+            let text = if extraction { empty_result_text().to_owned() } else {
+                json!({"order":[],"sessions":[],"explanation":"No available work"}).to_string()
+            };
+            let (endpoint, request, server) = fixture_server_checked(move |request| {
+                let body: Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+                let config = &body["generationConfig"];
+                // Gemini's responseSchema is a typed OpenAPI Schema, not a JSON
+                // Schema. Our strict schemas include additionalProperties and
+                // nullable type arrays, which belong in responseJsonSchema.
+                if config.get("responseSchema").is_some() || config["responseJsonSchema"] != expected_schema {
+                    return (json!({"error":{"message":"Invalid schema format"}}), 400);
+                }
+                (json!({"candidates":[{"content":{"parts":[{"text":text}]}}]}), 200)
+            });
+            if extraction {
+                assert!(request_gemini_at(&endpoint,"fixture-key-with-safe-length","gemini-fixture","SOURCE",None,&schema).unwrap().candidates.is_empty());
+            } else {
+                let (value, _) = grounded_gemini_at(&endpoint,"fixture-key-with-safe-length","gemini-fixture","FACTS={}",&schema).unwrap();
+                let proposal: crate::automatic_planning::Suggestion = serde_json::from_value(value).unwrap();
+                assert!(proposal.sessions.is_empty());
+            }
+            request.recv_timeout(Duration::from_secs(2)).unwrap();
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn gemini_replanning_failures_remain_redacted_and_do_not_retry() {
+        for status in [400, 401, 429, 504] {
+            let (endpoint, request, server) = fixture_server_status(json!({"error":{"message":"PRIVATE PLANNING FACTS AND KEY"}}), status);
+            let error = grounded_gemini_at(&endpoint,"fixture-key-with-safe-length","gemini-fixture","FACTS={}",&automatic_planning_schema()).unwrap_err();
+            request.recv_timeout(Duration::from_secs(2)).unwrap();
+            server.join().unwrap();
+            assert!(!error.to_string().contains("PRIVATE"));
+            match status {
+                400 => assert!(matches!(error, ManagedAiError::Rejected(400))),
+                401 => assert!(matches!(error, ManagedAiError::Unauthorized)),
+                429 => assert!(matches!(error, ManagedAiError::Quota)),
+                504 => assert!(matches!(error, ManagedAiError::Timeout)),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn saved_credentials_require_an_exact_readback_without_exposing_secrets() {
+        let key = "synthetic-provider-key-for-test";
+        assert!(verify_saved_key(key, Ok(key.into())).is_ok());
+        for stored in [Ok("different-synthetic-key".into()), Ok(String::new()), Err(keyring::Error::NoEntry)] {
+            let error = verify_saved_key(key, stored).unwrap_err();
+            assert!(matches!(error, ManagedAiError::Credential));
+            assert!(!error.to_string().contains(key));
+            assert!(error.to_string().contains("OS credential vault"));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "writes a disposable synthetic key to the real macOS Keychain"]
+    fn macos_keychain_persists_across_entries_and_processes() {
+        let service = format!("Coqui AI persistence test {}", uuid::Uuid::new_v4());
+        let key = "synthetic-provider-key-for-test";
+        let entry = keyring::Entry::new(&service, "gemini").unwrap();
+        entry.set_password(key).unwrap();
+        let result = || {
+            let fresh = keyring::Entry::new(&service, "gemini").unwrap();
+            verify_saved_key(key, fresh.get_password()).unwrap();
+            // A separate OS process must see the same persisted entry.
+            let output = std::process::Command::new("/usr/bin/security")
+                .args(["find-generic-password", "-s", &service, "-a", "gemini", "-w"])
+                .output().unwrap();
+            assert!(output.status.success(), "separate process could not read the synthetic Keychain item");
+            let stored = Zeroizing::new(String::from_utf8(output.stdout).unwrap());
+            assert!(stored.trim() == key, "synthetic Keychain readback did not match");
+        };
+        // Even if the check fails, remove only this unique test item.
+        let checked = std::panic::catch_unwind(result);
+        entry.delete_credential().unwrap();
+        if let Err(error) = checked { std::panic::resume_unwind(error); }
     }
 
     #[test]
@@ -637,7 +747,8 @@ mod tests {
         server.join().unwrap();
         assert!(request.to_ascii_lowercase().contains("x-goog-api-key: fixture-key-with-safe-length"));
         assert!(request.contains("\"responseMimeType\":\"application/json\""));
-        assert!(request.contains("\"responseSchema\""));
+        assert!(request.contains("\"responseJsonSchema\""));
+        assert!(!request.contains("\"responseSchema\""));
     }
     #[test] fn grounded_study_adapters_use_the_same_mocked_structured_output_gate() {
         let schema=grounded_schema();
