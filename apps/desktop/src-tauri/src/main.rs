@@ -67,7 +67,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const MAX_IMPORT_BYTES: u64 = 25 * 1024 * 1024;
-const CURRENT_SCHEMA_VERSION: i64 = 32;
+const CURRENT_SCHEMA_VERSION: i64 = 33;
 const TODAY_PLAN_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000001";
 const NOTIFICATION_PREFERENCES_ENTITY_ID: &str = "00000000-0000-4000-8000-000000000002";
 
@@ -2692,7 +2692,7 @@ fn planner_snapshot(
         .collect::<Result<Vec<_>>>()?;
     let existing_blocks = {
         let mut query = conn.prepare(
-            "SELECT p.id,p.task_id,p.starts_at,p.ends_at,p.completed,p.locked,p.location,t.course_id
+            "SELECT p.id,p.task_id,p.starts_at,p.ends_at,p.completed,p.locked,p.location,t.course_id,p.started_at
              FROM plan_blocks p JOIN tasks t ON t.id=p.task_id
              WHERE p.task_id IS NOT NULL ORDER BY datetime(p.starts_at),p.id",
         )?;
@@ -2709,12 +2709,13 @@ fn planner_snapshot(
                     row.get::<_, i64>(5)? != 0,
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?.is_some(),
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows.into_iter()
             .map(
-                |(id, task_id, starts_at, ends_at, completed, locked, location, course_id)| {
+                |(id, task_id, starts_at, ends_at, completed, locked, location, course_id, started)| {
                     Ok(planner::ExistingBlock {
                         id,
                         task_id,
@@ -2726,6 +2727,7 @@ fn planner_snapshot(
                         })?,
                         completed,
                         locked,
+                        started,
                         location,
                         course_id,
                     })
@@ -2739,6 +2741,7 @@ fn planner_snapshot(
         horizon_days: 14,
         timezone: profile.timezone,
         preferences: planner::PlannerPreferences {
+            scheduling_style: preferences.scheduling_style.unwrap_or_default(),
             sleep_start: preferences.sleep_start,
             sleep_end: preferences.sleep_end,
             max_session_minutes: preferences.max_session_minutes,
@@ -2851,9 +2854,8 @@ fn regenerate_plan_for_trigger(
     )?;
     tx.execute(
         "DELETE FROM plan_blocks
-         WHERE task_id IS NOT NULL AND locked=0 AND completed=0
-           AND datetime(starts_at)>=datetime(?1)",
-        params![snapshot.effective_time.to_rfc3339()],
+         WHERE task_id IS NOT NULL AND locked=0 AND completed=0 AND started_at IS NULL",
+        [],
     )?;
     tx.execute(
         "DELETE FROM plan_blocks
@@ -2933,6 +2935,12 @@ fn regenerate_plan_for_trigger(
         params![serde_json::to_string(&outcome.capacity)
             .map_err(|error| AppError::Background(error.to_string()))?],
     )?;
+    for (key, value) in [
+        ("local_plan_generated_at", effective.to_rfc3339()),
+        ("local_plan_conflicts", serde_json::to_string(&outcome.overload_conflicts).map_err(|error| AppError::Background(error.to_string()))?),
+    ] {
+        tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])?;
+    }
     if let Some(before_blocks) = before_blocks {
         let after_blocks = all_plan_blocks(&tx)?;
         let token = Uuid::new_v4().to_string();
@@ -3005,6 +3013,20 @@ fn regenerate_plan(conn: &Connection, effective: Option<DateTime<Local>>) -> Res
     regenerate_plan_for_trigger(conn, effective, planner::PlannerTrigger::Initial).map(|_| ())
 }
 
+fn ensure_fresh_local_plan(conn: &Connection, now: DateTime<Utc>) -> Result<()> {
+    if profile::onboarding_state(conn)?.required { return Ok(()); }
+    let last = db_setting(conn, "local_plan_generated_at", "");
+    let last = parse_utc(&last);
+    let timezone: Tz = db_setting(conn, "timezone", "UTC").parse().map_err(|_| AppError::Invalid("stored timezone is invalid".into()))?;
+    let expired = if let Some(last) = last {
+        conn.query_row("SELECT EXISTS(SELECT 1 FROM plan_blocks WHERE task_id IS NOT NULL AND completed=0 AND locked=0 AND started_at IS NULL AND datetime(starts_at)>=datetime(?1) AND datetime(starts_at)<datetime(?2))", params![last.to_rfc3339(), now.to_rfc3339()], |row| row.get::<_,bool>(0))?
+    } else { true };
+    if last.is_none_or(|time| time.with_timezone(&timezone).date_naive() != now.with_timezone(&timezone).date_naive()) || expired {
+        regenerate_plan_for_trigger(conn, Some(now.with_timezone(&Local)), planner::PlannerTrigger::Initial)?;
+    }
+    Ok(())
+}
+
 fn dashboard(conn: &Connection, ocr: &OcrRuntime) -> Result<Dashboard> {
     dashboard_with_notice(conn, ocr, None)
 }
@@ -3014,6 +3036,7 @@ fn dashboard_with_notice(
     ocr: &OcrRuntime,
     import_notice: Option<String>,
 ) -> Result<Dashboard> {
+    ensure_fresh_local_plan(conn, Utc::now())?;
     let setting = |key: &str| {
         conn.query_row(
             "SELECT value FROM settings WHERE key=?1",
@@ -3558,7 +3581,40 @@ fn get_calendar_agenda(
     start_date: Option<String>,
 ) -> Result<CalendarAgenda> {
     state.require_unlocked()?;
-    calendar_agenda(&state.db.lock().unwrap(), start_date.as_deref())
+    let conn = state.db.lock().unwrap();
+    ensure_fresh_local_plan(&conn, Utc::now())?;
+    calendar_agenda(&conn, start_date.as_deref())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskPlan {
+    sessions: Vec<PlanBlock>,
+    unscheduled_minutes: i64,
+    reason_codes: Vec<String>,
+}
+
+#[tauri::command]
+fn get_task_plan(state: tauri::State<AppState>, task_id: String) -> Result<TaskPlan> {
+    state.require_unlocked()?;
+    let conn = state.db.lock().unwrap();
+    require_onboarded(&conn)?;
+    ensure_fresh_local_plan(&conn, Utc::now())?;
+    task_plan_in(&conn, &task_id, Utc::now())
+}
+
+fn task_plan_in(conn: &Connection, task_id: &str, now: DateTime<Utc>) -> Result<TaskPlan> {
+    let (minutes, completed): (i64, bool) = conn.query_row("SELECT minutes,completed FROM tasks WHERE id=?1", params![task_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or_else(|| AppError::Invalid("task not found".into()))?;
+    let all = all_plan_blocks(conn)?;
+    let accounted: i64 = all.iter().filter(|block| block.task_id.as_deref() == Some(task_id) && (block.completed || block.started_at.is_some() || parse_utc(&block.ends_at).is_some_and(|end| end > now)))
+        .map(|block| match (parse_utc(&block.starts_at), parse_utc(&block.ends_at)) { (Some(start),Some(end)) => (end-start).num_minutes().max(0), _ => 0 }).sum();
+    let unscheduled_minutes = if completed { 0 } else { (minutes-accounted).max(0) };
+    let mut sessions: Vec<_> = all.into_iter().filter(|block| block.task_id.as_deref() == Some(task_id) && !block.completed && (block.started_at.is_some() || parse_utc(&block.ends_at).is_some_and(|end| end > now))).collect();
+    sessions.sort_by_key(|block| parse_utc(&block.starts_at));
+    let conflicts: Vec<planner::OverloadConflict> = serde_json::from_str(&db_setting(conn, "local_plan_conflicts", "[]")).map_err(|error| AppError::Background(error.to_string()))?;
+    let conflict = conflicts.iter().find(|conflict| conflict.task_id == task_id);
+    let reason_codes = if unscheduled_minutes == 0 { Vec::new() } else { conflict.map_or_else(|| vec!["insufficient_capacity".into()], |item| item.reason_codes.clone()) };
+    Ok(TaskPlan { sessions, unscheduled_minutes, reason_codes })
 }
 
 #[tauri::command]
@@ -7238,6 +7294,7 @@ fn toggle_task(state: tauri::State<AppState>, id: String) -> Result<Dashboard> {
     )?;
     invalidate_generated_plan_undo(&db)?;
     mutation(&db, "task", &id, "completion_changed", "{}")?;
+    regenerate_plan(&db, None)?;
     dashboard(&db, &state.ocr)
 }
 
@@ -11011,6 +11068,7 @@ fn main() {
             lock_app,
             get_dashboard,
             get_calendar_agenda,
+            get_task_plan,
             set_plan_block_lock,
             move_plan_block,
             undo_calendar_change,
@@ -11505,6 +11563,7 @@ mod tests {
         for command in [
             "get_dashboard",
             "get_calendar_agenda",
+            "get_task_plan",
             "set_plan_block_lock",
             "move_plan_block",
             "undo_calendar_change",
@@ -12171,6 +12230,7 @@ mod tests {
         profile::complete_onboarding(
             conn,
             &profile::OnboardingDraft {
+                scheduling_style: None,
                 name: "Planner Test".into(),
                 timezone: "Etc/UTC".into(),
                 term_name: "Fall 2026".into(),
@@ -12682,6 +12742,7 @@ mod tests {
         profile::complete_onboarding(
             &mut conn,
             &profile::OnboardingDraft {
+                scheduling_style: None,
                 name: "Holiday Test".into(),
                 timezone: "America/Phoenix".into(),
                 term_name: "Fall 2026 — Session C".into(),
@@ -12996,6 +13057,82 @@ mod tests {
     }
 
     #[test]
+    fn local_plan_refresh_is_idempotent_and_rolls_missed_sessions_forward() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut conn = open_database(&directory.path().join("fresh-plan.db"), &random_key()).unwrap();
+        complete_test_onboarding(&mut conn);
+        insert_task(&conn, "Paper", 120, None, None).unwrap();
+        let now: DateTime<Utc> = "2026-10-05T07:00:00Z".parse().unwrap();
+        ensure_fresh_local_plan(&conn, now).unwrap();
+        let before = all_plan_blocks(&conn).unwrap();
+        assert!(!before.is_empty());
+        let stamp = db_setting(&conn, "local_plan_generated_at", "");
+        ensure_fresh_local_plan(&conn, now + Duration::minutes(1)).unwrap();
+        assert_eq!(all_plan_blocks(&conn).unwrap(), before);
+        assert_eq!(db_setting(&conn, "local_plan_generated_at", ""), stamp);
+        let task_id = before.iter().find_map(|block| block.task_id.clone()).unwrap();
+        let miss = before.iter().filter(|block| block.task_id.is_some()).filter_map(|block| parse_utc(&block.starts_at)).min().unwrap() + Duration::minutes(5);
+        ensure_fresh_local_plan(&conn, miss).unwrap();
+        let after = all_plan_blocks(&conn).unwrap();
+        assert!(after.iter().filter(|block| block.task_id.is_some()).all(|block| parse_utc(&block.starts_at).unwrap() >= miss));
+        assert_eq!(task_plan_in(&conn, &task_id, miss).unwrap().unscheduled_minutes, 0);
+        let tomorrow = now + Duration::days(1);
+        ensure_fresh_local_plan(&conn, tomorrow).unwrap();
+        assert_eq!(parse_utc(&db_setting(&conn, "local_plan_generated_at", "")).unwrap(), tomorrow);
+    }
+
+    #[test]
+    fn scheduling_style_migration_accepts_existing_profiles_and_old_preference_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("legacy-style.db");
+        let key = random_key();
+        let mut conn = open_database(&path, &key).unwrap();
+        complete_test_onboarding(&mut conn);
+        conn.execute_batch("ALTER TABLE planning_preferences DROP COLUMN scheduling_style; PRAGMA user_version=32;").unwrap();
+        drop(conn);
+        let mut conn = open_database(&path, &key).unwrap();
+        let workspace = profile::workspace(&conn).unwrap();
+        let prefs = workspace.preferences.unwrap();
+        assert!(prefs.scheduling_style.is_none());
+        conn.execute("UPDATE planning_preferences SET scheduling_style='earliest'", []).unwrap();
+        profile::update_preferences(&mut conn, &profile::PreferenceInput {
+            scheduling_style:None, sleep_start:prefs.sleep_start, sleep_end:prefs.sleep_end,
+            max_session_minutes:prefs.max_session_minutes, break_minutes:prefs.break_minutes,
+            transition_minutes:prefs.transition_minutes, default_commute_minutes:prefs.default_commute_minutes,
+            expected_version:prefs.version, availability:workspace.availability,
+        }).unwrap();
+        assert_eq!(profile::workspace(&conn).unwrap().preferences.unwrap().scheduling_style,Some(planner::SchedulingStyle::Earliest));
+    }
+
+    #[test]
+    fn scheduling_style_and_sessions_survive_reopening_and_started_work_is_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved-plan.db");
+        let key = random_key();
+        let mut conn = open_database(&path, &key).unwrap();
+        complete_test_onboarding(&mut conn);
+        assert!(profile::workspace(&conn).unwrap().preferences.unwrap().scheduling_style.is_none());
+        conn.execute("UPDATE planning_preferences SET scheduling_style='balanced'", []).unwrap();
+        insert_task(&conn, "Paper", 180, None, None).unwrap();
+        let now: DateTime<Utc> = "2026-10-05T14:00:00Z".parse().unwrap();
+        ensure_fresh_local_plan(&conn, now).unwrap();
+        let before = all_plan_blocks(&conn).unwrap();
+        let first = before.iter().find(|block| block.task_id.is_some()).unwrap();
+        let first_id = first.id.clone();
+        let task_id = first.task_id.clone().unwrap();
+        conn.execute("UPDATE plan_blocks SET started_at=?2 WHERE id=?1", params![first_id,now.to_rfc3339()]).unwrap();
+        regenerate_plan_for_trigger(&conn, Some(now.with_timezone(&Local)), planner::PlannerTrigger::PreferenceChanged).unwrap();
+        let persisted = all_plan_blocks(&conn).unwrap();
+        assert_eq!(persisted.iter().find(|block| block.id==first_id).unwrap().starts_at, first.starts_at);
+        assert_eq!(task_plan_in(&conn, &task_id, now).unwrap().unscheduled_minutes, 0);
+        drop(conn);
+        let conn = open_database(&path, &key).unwrap();
+        assert_eq!(profile::workspace(&conn).unwrap().preferences.unwrap().scheduling_style, Some(planner::SchedulingStyle::Balanced));
+        assert_eq!(all_plan_blocks(&conn).unwrap(), persisted);
+        assert_eq!(task_plan_in(&conn, &task_id, now).unwrap().sessions.len(), 3);
+    }
+
+    #[test]
     fn planner_ai_and_sync_schema_migrations_are_additive_and_versioned() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("planner-schema.db");
@@ -13009,7 +13146,8 @@ mod tests {
         let columns = table_columns(&conn, "plan_blocks").unwrap();
         assert!(columns.contains("session_index"));
         assert!(columns.contains("location"));
-        assert_eq!(CURRENT_SCHEMA_VERSION, 32);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 33);
+        assert!(table_columns(&conn,"planning_preferences").unwrap().contains("scheduling_style"));
         for table in ["quick_notes_local","day_checkins_local","checkin_items_local","assignment_streak_local","assignment_history_local","study_requests_local","study_previews_local","study_note_history_local"] { assert!(table_columns(&conn,table).is_ok(),"missing {table}"); }
         assert!(table_columns(&conn,"weekly_rhythm_rules").is_ok());
         assert!(table_columns(&conn,"study_material_metadata").is_ok());

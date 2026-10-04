@@ -1104,3 +1104,8 @@
 }
 
 .today-workspace .deep-link-target { outline:3px solid var(--accent); outline-offset:3px; }
+
+.recommended-sessions { margin: 0; padding-inline-start: 1.2rem; }
+.recommended-sessions li + li { margin-block-start: 1rem; }
+.recommended-sessions p { margin-block: .35rem; }
+.recommended-sessions strong { font-variant-numeric: tabular-nums; }

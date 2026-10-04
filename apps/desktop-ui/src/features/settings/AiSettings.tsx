@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PlanningSettings } from "../planning/PlanningSettings";
-import { Brain } from "lucide-react";
+import { BookOpen, Brain } from "lucide-react";
+import { AiProviderTutorial, providerGuides } from "./AiProviderTutorial";
 import { SettingsDetail } from "../../components/SettingsDetail";
 import {
   listAiProviders,
@@ -33,6 +34,7 @@ export function AiSettings({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [tutorialProvider, setTutorialProvider] = useState<AiProviderId | null>(null);
   const providersCallback = useRef(setAiProviders);
   providersCallback.current = setAiProviders;
   useEffect(() => {
@@ -122,6 +124,7 @@ export function AiSettings({
                   </b>
                 </div>
                 <p>Priority {index + 1}. Usage never changes this order.</p>
+                <p className="field-help">{providerGuides[provider.provider].availability}</p>
                 <div className="connection-actions">
                   <button
                     className="outline"
@@ -173,6 +176,13 @@ export function AiSettings({
                   >
                     Configure
                   </button>
+                  <button
+                    className="outline"
+                    aria-label={`${providerGuides[provider.provider].name} setup tutorial`}
+                    onClick={() => setTutorialProvider(provider.provider)}
+                  >
+                    <BookOpen aria-hidden="true" /> Setup tutorial
+                  </button>
                 </div>
               </article>
             ))}
@@ -186,6 +196,9 @@ export function AiSettings({
                   ? "Anthropic"
                   : "Gemini"}
           </h2>
+            <button className="outline ai-tutorial-trigger" onClick={() => setTutorialProvider(aiProvider)}>
+              <BookOpen aria-hidden="true" /> How to get an API key
+            </button>
             <label className="field">
               API key
               <input
@@ -283,6 +296,7 @@ export function AiSettings({
           </section>
         </fieldset>
       )}
+      {tutorialProvider && <AiProviderTutorial provider={tutorialProvider} close={() => setTutorialProvider(null)} />}
     </SettingsDetail>
   );
 }

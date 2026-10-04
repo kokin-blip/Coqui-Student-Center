@@ -1,3 +1,4 @@
+import { LocalScheduling } from "./features/planning/LocalScheduling";
 import { revealPlanBlock } from "./features/shell/revealPlanBlock";
 import { workflowApi } from "./features/student/workflowApi";
 import { QuickNotes } from "./features/student/QuickNotes";
@@ -1167,6 +1168,7 @@ export function StudentCenter() {
               </button>
             </div>
           </header>
+          <LocalScheduling dashboard={data} showChoice={view === "today" || view === "calendar"} blocked={modal !== null || busy} onDashboard={setData} />
           <AutomaticPlanning refreshKey={data} blocked={modal !== null} onDashboard={setData} onLocalPlanning={() => setModal("replan")} />
           <WorkspaceBoundary key={`${view}:${settingsSection ?? ""}`} onRecover={() => { setSettingsSection(null); setView("today"); }}>
           <Suspense

@@ -97,6 +97,14 @@ test("Study loading has a visible state and rejected local data can be retried",
 
 
 test("plan-block deep links leave Work, reset a browsed Today date, and close quick notes",async()=>{
+ // Navigation uses a fixed persisted block; automatic scheduling has its own tests.
+ const bootstrap=await native.initialize(),dashboard=await native.getDashboard();
+ const assignment=(await native.getLocalWorkspace()).tasks[0];
+ dashboard.blocks=[{id:"read-6",taskId:assignment.id,title:assignment.title,startsAt:`${dashboard.planDate}T09:00:00-07:00`,endsAt:`${dashboard.planDate}T09:35:00-07:00`,kind:"study",completed:false,locked:false,sessionIndex:0,location:"",reasonCodes:["feasible_window"]}];
+ vi.spyOn(native,"initialize").mockResolvedValue({...bootstrap,dashboard});
+ vi.spyOn(native,"getDashboard").mockResolvedValue(dashboard);
+ vi.spyOn(native,"getCalendarAgenda").mockResolvedValue({timezone:dashboard.timezone,startsAt:dashboard.blocks[0].startsAt,endsAt:dashboard.blocks[0].endsAt,blocks:dashboard.blocks,deadlines:[],overloadConflicts:[]});
+
  let notify!:()=>void;let target:native.NavigationTarget|null=null;
  vi.spyOn(native,"isDesktop").mockReturnValue(true);vi.spyOn(native,"takePendingNavigation").mockImplementation(async()=>target);vi.spyOn(native,"listenForNavigation").mockImplementation(async(handler)=>{notify=handler;return ()=>{};});vi.spyOn(workflowApi,"state").mockResolvedValue({settings:{...defaultCheckinSettings,offerDismissed:true},checkin:null,streak:{count:0,entries:[]}});
  const user=userEvent.setup();render(<StudentCenter/>);const nav=await screen.findByRole("navigation",{name:"Primary navigation"},{timeout:8000});await waitFor(()=>expect(notify).toBeDefined());await user.click(within(nav).getByRole("button",{name:"Work",exact:true}));await screen.findByRole("heading",{name:"Assignments & exams"});

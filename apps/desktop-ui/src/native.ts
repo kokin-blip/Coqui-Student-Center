@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { generateLocalSchedule, type SchedulingConflict } from "./features/planning/localScheduler";
 import { localToIso } from "./features/calendar/calendarDate";
 import { dayKey, shiftDay } from "./features/today/todayModel";
 
@@ -586,6 +587,7 @@ export type CommitmentInput = {
   travelAfterMinutes: number;
 };
 export type OnboardingDraft = {
+  schedulingStyle?: SchedulingStyle | null;
   name: string;
   timezone: string;
   termName: string;
@@ -947,7 +949,9 @@ export type CommitmentRecord = {
   version: number;
   recordOrigin: string;
 };
+export type SchedulingStyle = "mixed" | "balanced" | "earliest";
 export type PlanningPreferenceRecord = {
+  schedulingStyle?: SchedulingStyle | null;
   sleepStart: string;
   sleepEnd: string;
   maxSessionMinutes: number;
@@ -1315,7 +1319,7 @@ export async function initialize(): Promise<AppBootstrap> {
     const onboardingMode = !demoMode;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 32,
+      schemaVersion: 33,
       onboarding: onboardingMode
         ? structuredClone(browserOnboardingState)
         : null,
@@ -1326,6 +1330,7 @@ export async function initialize(): Promise<AppBootstrap> {
 }
 export async function getDashboard(): Promise<Dashboard> {
   if (!isDesktop()) {
+    refreshBrowserPlan();
     return structuredClone(browserSeed);
   }
   return call<Dashboard>("get_dashboard");
@@ -1683,13 +1688,18 @@ export async function completeOnboarding(draft: OnboardingDraft) {
     browserWorkspace.instructors = [];
     browserWorkspace.classMeetings = [];
     browserWorkspace.academicEvents = [];
+    browserWorkspace.preferences = { sleepStart:draft.sleepStart, sleepEnd:draft.sleepEnd, maxSessionMinutes:draft.maxSessionMinutes, breakMinutes:draft.breakMinutes, transitionMinutes:draft.transitionMinutes, defaultCommuteMinutes:draft.defaultCommuteMinutes, schedulingStyle:draft.schedulingStyle, version:1 };
+    browserWorkspace.availability = structuredClone(draft.availability);
+    browserWorkspace.rhythmRules = draft.rhythmRules.map(rule => ({ ...rule, id:crypto.randomUUID(), version:1 }));
+    browserWorkspace.commitments = draft.commitments.map(item => ({ ...item, id:crypto.randomUUID(), location:item.location ?? "", travelBeforeMinutes:item.travelBeforeMinutes ?? 0, travelAfterMinutes:item.travelAfterMinutes ?? 0, protected:true, version:1, recordOrigin:"user", kind:item.kind as CommitmentRecord["kind"] }));
+    browserPlanFingerprint = "";
     browserSeed.blocks = [];
     browserSeed.candidates = [];
     browserSeed.conflicts = [];
     browserSeed.nextAction = undefined;
     return {
       security: { pinEnabled: false, locked: false, retryAfterSeconds: 0 },
-      schemaVersion: 32,
+      schemaVersion: 33,
       onboarding: structuredClone(browserOnboardingState),
       dashboard: structuredClone(browserSeed),
     };
@@ -1777,6 +1787,51 @@ const browserWorkspace: WorkspaceSnapshot = {
   })),
   rhythmRules: [],
 };
+// Every preview study block has a real assignment so edits and scheduling share one source of truth.
+for (const block of browserSeed.blocks) {
+  if (block.taskId && !browserWorkspace.tasks.some(task => task.id === block.taskId)) {
+    browserWorkspace.tasks.push({ ...browserWorkspace.tasks[0], id:block.taskId, title:block.title, minutes:Math.round((Date.parse(block.endsAt)-Date.parse(block.startsAt))/60000), completed:block.completed });
+  }
+}
+
+let browserPlanFingerprint = "";
+let browserPlanGeneratedAt = 0;
+let browserSchedulingConflicts: SchedulingConflict[] = [];
+function refreshBrowserPlan(force = false) {
+  const now = new Date();
+  const fingerprint = JSON.stringify([browserWorkspace.profile, browserWorkspace.tasks, browserWorkspace.preferences, browserWorkspace.availability, browserWorkspace.commitments, browserWorkspace.classMeetings, browserWorkspace.academicEvents, browserWorkspace.rhythmRules]);
+  const expired = browserSeed.blocks.some(block => block.taskId && !block.completed && !block.locked && !block.startedAt && Date.parse(block.startsAt) >= browserPlanGeneratedAt && Date.parse(block.startsAt) < now.getTime());
+  const dayChanged = browserPlanGeneratedAt && dayKey(new Date(browserPlanGeneratedAt), browserSeed.timezone) !== dayKey(now, browserSeed.timezone);
+  // Committed reference captures keep their authored fixture until an input changes.
+  if (!force && !browserPlanFingerprint && new URLSearchParams(location.search).has("reference")) {
+    browserPlanFingerprint = fingerprint; browserPlanGeneratedAt = now.getTime(); return;
+  }
+  if (!force && fingerprint === browserPlanFingerprint && !expired && !dayChanged) return;
+  const styleChanged = browserPlanFingerprint && JSON.parse(browserPlanFingerprint)[2]?.schedulingStyle !== browserWorkspace.preferences?.schedulingStyle;
+  const outcome = generateLocalSchedule(browserWorkspace, browserSeed.blocks, now, Boolean(styleChanged));
+  browserSeed.blocks = outcome.blocks;
+  browserSchedulingConflicts = outcome.conflicts;
+  browserSeed.conflicts = [...browserSeed.conflicts.filter(item => item.kind !== "overload"), ...outcome.conflicts.map(item => ({ id:`overload-${item.taskId}`, kind:"overload", entityType:"task", entityId:item.taskId, description:`${item.title} has ${item.unscheduledMinutes} unscheduled minutes (${item.reasonCodes.join(", ")})` }))];
+  browserSeed.planDate = dayKey(now, browserSeed.timezone);
+  const next = outcome.blocks.find(block => block.taskId && !block.completed && Date.parse(block.endsAt) > now.getTime());
+  browserSeed.nextAction = next?.taskId ? { blockId:next.id, taskId:next.taskId, title:next.title, durationMinutes:Math.round((Date.parse(next.endsAt)-Date.parse(next.startsAt))/60000), explanation:"Fits around your classes and protected time.", reasonCodes:next.reasonCodes, alternatives:[], validFrom:next.startsAt, validUntil:next.endsAt } : undefined;
+  browserPlanFingerprint = fingerprint;
+  browserPlanGeneratedAt = now.getTime();
+}
+
+export type TaskPlan = { sessions: PlanBlock[]; unscheduledMinutes: number; reasonCodes: string[] };
+export async function getTaskPlan(taskId: string): Promise<TaskPlan> {
+  if (isDesktop()) return call<TaskPlan>("get_task_plan", { taskId });
+  refreshBrowserPlan();
+  const task = browserWorkspace.tasks.find(item => item.id === taskId);
+  if (!task) throw new Error("Task not found");
+  const relevant = browserSeed.blocks.filter(block => block.taskId === taskId && (block.completed || block.startedAt || Date.parse(block.endsAt) > Date.now()));
+  const accounted = relevant.reduce((sum, block) => sum + Math.max(0, (Date.parse(block.endsAt)-Date.parse(block.startsAt))/60000), 0);
+  const unscheduledMinutes = task.completed ? 0 : Math.max(0, task.minutes-accounted);
+  const conflict = browserSchedulingConflicts.find(item => item.taskId === taskId);
+  return { sessions:structuredClone(relevant.filter(block => !block.completed)), unscheduledMinutes, reasonCodes:unscheduledMinutes ? conflict?.reasonCodes ?? ["insufficient_capacity"] : [] };
+}
+
 export async function getLocalWorkspace() {
   return isDesktop()
     ? call<WorkspaceSnapshot>("get_local_workspace")
@@ -1851,6 +1906,7 @@ export async function updateStudentProfile(input: StudentProfileInput) {
       browserSeed.studentName = input.name.trim();
       browserSeed.timezone = input.timezone;
     }
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("update_student_profile", { input });
@@ -1860,7 +1916,8 @@ export async function getCalendarAgenda(
 ): Promise<CalendarAgenda> {
   if (isDesktop())
     return call<CalendarAgenda>("get_calendar_agenda", { startDate });
-  const firstDay = startDate || dayKey(browserDayStart, browserSeed.timezone);
+  refreshBrowserPlan();
+  const firstDay = startDate || dayKey(new Date(), browserSeed.timezone);
   const startsAt = localToIso(firstDay, 0, browserSeed.timezone);
   const endsAt = localToIso(shiftDay(firstDay, 7), 0, browserSeed.timezone);
   return {
@@ -1979,6 +2036,7 @@ export async function createLocalTask(input: TaskInput) {
       priorityReasonCodes: ["student_selected"],
       effortSource: "student",
     });
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("create_local_task", { input });
@@ -1988,6 +2046,7 @@ export async function updateLocalTask(id: string, input: TaskInput) {
     browserWorkspace.tasks = browserWorkspace.tasks.map((task) =>
       task.id === id ? { ...task, ...input, version: task.version + 1 } : task,
     );
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("update_local_task", { id, input });
@@ -2002,6 +2061,7 @@ export async function deleteLocalTask(id: string, expectedVersion: number) {
           (dependency) => dependency !== id,
         ),
       }));
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("delete_local_task", { id, expectedVersion });
@@ -2014,6 +2074,7 @@ export async function createCommitment(input: CommitmentEditorInput) {
       version: 1,
       recordOrigin: "user",
     });
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("create_commitment", { input });
@@ -2026,6 +2087,7 @@ export async function updateCommitment(
     browserWorkspace.commitments = browserWorkspace.commitments.map((item) =>
       item.id === id ? { ...item, ...input, version: item.version + 1 } : item,
     );
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("update_commitment", { id, input });
@@ -2035,6 +2097,7 @@ export async function deleteCommitment(id: string, expectedVersion: number) {
     browserWorkspace.commitments = browserWorkspace.commitments.filter(
       (item) => item.id !== id,
     );
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("delete_commitment", { id, expectedVersion });
@@ -2042,6 +2105,7 @@ export async function deleteCommitment(id: string, expectedVersion: number) {
 export async function updatePlanningPreferences(input: PreferenceInput) {
   if (!isDesktop()) {
     browserWorkspace.preferences = {
+      schedulingStyle: input.schedulingStyle,
       sleepStart: input.sleepStart,
       sleepEnd: input.sleepEnd,
       maxSessionMinutes: input.maxSessionMinutes,
@@ -2051,6 +2115,7 @@ export async function updatePlanningPreferences(input: PreferenceInput) {
       version: (browserWorkspace.preferences?.version ?? 0) + 1,
     };
     browserWorkspace.availability = structuredClone(input.availability);
+    refreshBrowserPlan();
     return structuredClone(browserWorkspace);
   }
   return call<WorkspaceSnapshot>("update_planning_preferences", { input });
@@ -2092,6 +2157,11 @@ export async function deleteInstructor(id: string, expectedVersion: number) {
   return call<WorkspaceSnapshot>("delete_instructor", { id, expectedVersion });
 }
 export async function createClassMeeting(input: ClassMeetingSeriesInput) {
+  if (!isDesktop()) {
+    browserWorkspace.classMeetings.push({ ...input, id:crypto.randomUUID(), version:1 } as ClassMeetingSeriesRecord);
+    refreshBrowserPlan();
+    return structuredClone(browserWorkspace);
+  }
   return call<WorkspaceSnapshot>("create_class_meeting", { input });
 }
 export async function getAcademicCleanupPreview() {
@@ -2112,24 +2182,49 @@ export async function updateClassMeeting(
   id: string,
   input: ClassMeetingSeriesInput,
 ) {
+  if (!isDesktop()) {
+    browserWorkspace.classMeetings = browserWorkspace.classMeetings.map(item => item.id === id ? { ...item, ...input, version:item.version+1 } : item);
+    refreshBrowserPlan();
+    return structuredClone(browserWorkspace);
+  }
   return call<WorkspaceSnapshot>("update_class_meeting", { id, input });
 }
 export async function deleteClassMeeting(id: string, expectedVersion: number) {
+  if (!isDesktop()) {
+    browserWorkspace.classMeetings = browserWorkspace.classMeetings.filter(item => item.id !== id);
+    refreshBrowserPlan();
+    return structuredClone(browserWorkspace);
+  }
   return call<WorkspaceSnapshot>("delete_class_meeting", {
     id,
     expectedVersion,
   });
 }
 export async function createAcademicEvent(input: AcademicCalendarEventInput) {
+  if (!isDesktop()) {
+    browserWorkspace.academicEvents.push({ ...input, id:crypto.randomUUID(), version:1 } as AcademicCalendarEventRecord);
+    refreshBrowserPlan();
+    return structuredClone(browserWorkspace);
+  }
   return call<WorkspaceSnapshot>("create_academic_event", { input });
 }
 export async function updateAcademicEvent(
   id: string,
   input: AcademicCalendarEventInput,
 ) {
+  if (!isDesktop()) {
+    browserWorkspace.academicEvents = browserWorkspace.academicEvents.map(item => item.id === id ? { ...item, ...input, version:item.version+1 } : item);
+    refreshBrowserPlan();
+    return structuredClone(browserWorkspace);
+  }
   return call<WorkspaceSnapshot>("update_academic_event", { id, input });
 }
 export async function deleteAcademicEvent(id: string, expectedVersion: number) {
+  if (!isDesktop()) {
+    browserWorkspace.academicEvents = browserWorkspace.academicEvents.filter(item => item.id !== id);
+    refreshBrowserPlan();
+    return structuredClone(browserWorkspace);
+  }
   return call<WorkspaceSnapshot>("delete_academic_event", {
     id,
     expectedVersion,
@@ -2452,32 +2547,10 @@ export async function downloadSyncedDocument(documentId: string) {
     ? call<boolean>("download_synced_document", { documentId })
     : Boolean(documentId);
 }
-export async function addTask(
-  title: string,
-  minutes: number,
-  dueAt?: string,
-  courseId?: string,
-) {
+export async function addTask(title: string, minutes: number, dueAt?: string, courseId?: string) {
   if (!isDesktop()) {
-    const id = crypto.randomUUID();
-    const startsAt = browserAt(19);
-    const endsAt = new Date(
-      new Date(startsAt).getTime() + minutes * 60_000,
-    ).toISOString();
-    browserSeed.blocks.push({
-      id,
-      taskId: id,
-      startsAt,
-      endsAt,
-      title,
-      kind: "study",
-      completed: false,
-      locked: false,
-      sessionIndex: 0,
-      location: "",
-      reasonCodes: [dueAt ? "deadline_soon" : "feasible_window"],
-    });
-    return structuredClone(browserSeed);
+    await createLocalTask({ title, minutes, dueAt, courseId, priority:3, academicRisk:0, energyDemand:"medium", location:"", splittable:true, minSessionMinutes:20, maxSessionMinutes:60, dependencies:[], kind:"assignment" });
+    return getDashboard();
   }
   return call<Dashboard>("add_task", { title, minutes, dueAt, courseId });
 }
@@ -2489,27 +2562,14 @@ export async function toggleTask(id: string) {
     browserSeed.blocks = browserSeed.blocks.map((block) =>
       block.taskId === id ? { ...block, completed } : block,
     );
+    refreshBrowserPlan();
     return structuredClone(browserSeed);
   }
   return call<Dashboard>("toggle_task", { id });
 }
 export async function replan(effectiveTime: string, reason: string) {
   if (!isDesktop()) {
-    browserSeed.blocks = browserSeed.blocks.map((block) =>
-      block.taskId && !block.completed && !block.locked
-        ? {
-            ...block,
-            reasonCodes: [
-              ...block.reasonCodes.filter(
-                (code) => code !== "low_energy_adjustment",
-              ),
-              ...(reason.toLowerCase().includes("energy")
-                ? ["low_energy_adjustment"]
-                : []),
-            ],
-          }
-        : block,
-    );
+    refreshBrowserPlan(true);
     return structuredClone(browserSeed);
   }
   return call<Dashboard>("replan", { effectiveTime, reason });

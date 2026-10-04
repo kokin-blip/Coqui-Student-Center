@@ -1,5 +1,6 @@
 import { workflowApi, defaultCheckinSettings } from "../src/features/student/workflowApi";
-import { render, screen, waitFor } from "@testing-library/react";
+import axe from "axe-core";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as native from "../src/native";
@@ -130,6 +131,60 @@ test("Canvas exposes pending review and opens it after a manual refresh", async 
   await waitFor(() =>
     expect(callbacks.onReview).toHaveBeenCalledWith(connection.id),
   );
+});
+
+test.each([
+  ["Google Gemini", /Free tier available/, "https://aistudio.google.com/api-keys", /keep your project on the free tier/],
+  ["OpenAI", /Free credits only if available/, "https://platform.openai.com/api-keys", /Creating a key does not include free API usage/],
+  ["Anthropic", /Paid API usage through Claude Console credits/, "https://platform.claude.com/settings/keys", /generally requires prepaid credits/],
+] as const)("%s tutorial explains access and returns keyboard focus without changing a draft", async (name, availability, keyUrl, billing) => {
+  const providers = await native.listAiProviders();
+  vi.spyOn(native, "listAiProviders").mockResolvedValue(providers);
+  vi.spyOn(native, "getAiUsage").mockResolvedValue([]);
+  const save = vi.spyOn(native, "saveAiProviderKey");
+  const testProvider = vi.spyOn(native, "testAiProvider");
+  const close = vi.fn();
+  const user = userEvent.setup();
+  render(<AiSettings aiProviders={providers} setAiProviders={vi.fn()} close={close} setToast={vi.fn()} />);
+  await user.type(await screen.findByLabelText("API key"), "synthetic-draft-key");
+  const model = screen.getByLabelText("Model");
+  const initialModel = (model as HTMLInputElement).value;
+  const trigger = screen.getByRole("button", { name: `${name} setup tutorial` });
+  await user.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: `${name} setup tutorial` });
+  expect(within(dialog).getByText(availability)).toBeInTheDocument();
+  expect(within(dialog).getByText(billing)).toBeInTheDocument();
+  expect(within(dialog).getAllByRole("listitem")).toHaveLength(4);
+  expect(within(dialog).getByRole("link", { name: /Open .* \(opens in a new tab\)/ })).toHaveAttribute("href", keyUrl);
+  expect((await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  await user.keyboard("{Shift>}{Tab}{/Shift}");
+  expect(within(dialog).getByRole("button", { name: "Back to provider settings" })).toHaveFocus();
+  await user.keyboard("{Tab}");
+  expect(within(dialog).getByRole("button", { name: "Close", exact: true })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("API key")).toHaveValue("synthetic-draft-key");
+  expect(model).toHaveValue(initialModel);
+  expect(save).not.toHaveBeenCalled();
+  expect(testProvider).not.toHaveBeenCalled();
+});
+
+test("the key field tutorial follows the configured provider and closes with its back button", async () => {
+  const providers = await native.listAiProviders();
+  vi.spyOn(native, "listAiProviders").mockResolvedValue(providers);
+  vi.spyOn(native, "getAiUsage").mockResolvedValue([]);
+  const user = userEvent.setup();
+  render(<AiSettings aiProviders={providers} setAiProviders={vi.fn()} close={vi.fn()} setToast={vi.fn()} />);
+  const anthropic = (await screen.findByText("Anthropic", { exact: true })).closest("article")!;
+  await user.click(within(anthropic).getByRole("button", { name: "Configure" }));
+  const trigger = screen.getByRole("button", { name: "How to get an API key" });
+  await user.click(trigger);
+  expect(screen.getByRole("dialog", { name: "Anthropic setup tutorial" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Back to provider settings" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
 });
 
 test("AI settings require age/billing consent and clear the submitted secret even on failure", async () => {

@@ -1,3 +1,4 @@
+import { SchedulingStyleField } from "../features/planning/SchedulingStyleField";
 import { useEffect, useState } from "react";
 import { CalendarDays, CircleAlert, HardDrive, X } from "lucide-react";
 import {
@@ -241,7 +242,7 @@ export function AcademicSettingsView({
             setPreferences={setPreferences}
             toggleDay={toggleDay}
             updateDay={updateDay}
-            save={() => void act(() => updatePlanningPreferences(preferences))}
+            save={() => void act(() => updatePlanningPreferences({ ...preferences, schedulingStyle: preferences.schedulingStyle ?? "mixed" }))}
           />
         )}
         <section className="workspace-panel preference-editor cleanup-panel">
@@ -497,6 +498,7 @@ function PlanningPreferences({
   return (
     <section className="workspace-panel preference-editor planning-preferences">
       <h2>Planning preferences</h2>
+      <SchedulingStyleField value={preferences.schedulingStyle ?? "mixed"} disabled={busy} onChange={schedulingStyle => setPreferences(current => current ? { ...current, schedulingStyle } : current)} />
       <div className="form-grid compact">
         <label className="field">
           Sleep begins

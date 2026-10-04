@@ -11,6 +11,21 @@ use uuid::Uuid;
 
 const GRANULARITY_MINUTES: i64 = 5;
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SchedulingStyle {
+    #[default]
+    Mixed,
+    Balanced,
+    Earliest,
+}
+impl SchedulingStyle {
+    pub fn as_str(self) -> &'static str {
+        match self { Self::Mixed => "mixed", Self::Balanced => "balanced", Self::Earliest => "earliest" }
+    }
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailabilityRule {
@@ -22,6 +37,8 @@ pub struct AvailabilityRule {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlannerPreferences {
+    #[serde(default)]
+    pub scheduling_style: SchedulingStyle,
     pub sleep_start: String,
     pub sleep_end: String,
     pub max_session_minutes: i64,
@@ -77,6 +94,8 @@ pub struct ExistingBlock {
     pub ends_at: DateTime<Utc>,
     pub completed: bool,
     pub locked: bool,
+    #[serde(default)]
+    pub started: bool,
     pub location: String,
     pub course_id: Option<String>,
 }
@@ -247,14 +266,14 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
             block.starts_at,
             block.ends_at,
         ));
-        if block.completed || block.locked || block.starts_at < floor {
+        if block.completed || block.locked || block.started {
             occupied.push(Occupied {
-                start: block.starts_at,
-                end: block.ends_at + Duration::minutes(snapshot.preferences.transition_minutes),
+                start: block.starts_at - Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),
+                end: block.ends_at + Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),
                 location: block.location.clone(),
                 course_id: block.course_id.clone(),
             });
-            if block.completed || (block.locked && block.ends_at > floor) {
+            if block.completed || block.started || (block.locked && block.ends_at > floor) {
                 *preserved_minutes.entry(block.task_id.clone()).or_default() +=
                     (block.ends_at - block.starts_at).num_minutes().max(0);
             }
@@ -313,7 +332,8 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
         let already = preserved_minutes.get(&task.id).copied().unwrap_or(0);
         let remaining = (task.duration_minutes - already).max(0);
         if remaining == 0 {
-            task_completion.insert(task.id.clone(), floor);
+            let finish = snapshot.existing_blocks.iter().filter(|block| block.task_id == task.id && (block.completed || block.locked || block.started)).map(|block| block.ends_at).max().unwrap_or(floor);
+            task_completion.insert(task.id.clone(), finish.max(floor));
             continue;
         }
         let sessions = match split_sessions(task, remaining, &snapshot.preferences) {
@@ -341,7 +361,7 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
         let mut scheduled = 0;
         let stable = stability.get(&task.id).cloned().unwrap_or_default();
         for (index, minutes) in sessions.iter().copied().enumerate() {
-            let candidates = candidate_slots(
+            let mut candidates = candidate_slots(
                 task,
                 minutes,
                 task_floor,
@@ -353,6 +373,38 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
                 timezone,
                 matches!(snapshot.trigger, PlannerTrigger::LowEnergy),
             );
+            // Keep valid existing times except when the user changes scheduling style.
+            let stable_times = if snapshot.trigger == PlannerTrigger::PreferenceChanged { &[][..] } else { &stable[..] };
+            let balanced = task.splittable && (snapshot.preferences.scheduling_style == SchedulingStyle::Balanced
+                || (snapshot.preferences.scheduling_style == SchedulingStyle::Mixed && index > 0));
+            candidates.sort_by_key(|(start, end, _)| {
+                let day = start.with_timezone(&timezone).date_naive();
+                let daily_minutes: i64 = blocks.iter().filter(|b: &&PlannedBlock| b.starts_at.with_timezone(&timezone).date_naive() == day)
+                    .map(|b| (b.ends_at - b.starts_at).num_minutes()).sum::<i64>()
+                    + snapshot.existing_blocks.iter().filter(|b| (b.locked || b.started) && !b.completed && b.starts_at.with_timezone(&timezone).date_naive() == day)
+                        .map(|b| (b.ends_at - b.starts_at).num_minutes()).sum::<i64>();
+                let stable_rank = if stable_times.iter().any(|(_, old_start, old_end)| old_start == start && old_end == end) { 0 } else { 1 };
+                (stable_rank, if balanced { daily_minutes } else { 0 }, *start)
+            });
+            // A balanced placement must leave room for the remaining sessions. Otherwise
+            // compress into the earliest openings rather than making a deadline infeasible.
+            if balanced && index + 1 < sessions.len() {
+                if let Some((start, end, _)) = candidates.first() {
+                    let gap = Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes));
+                    let mut trial = occupied.clone();
+                    trial.push(Occupied { start:*start, end:*end + gap, location:task.location.clone(), course_id:task.course_id.clone() });
+                    let mut cursor = *end + gap;
+                    let fits = sessions[index+1..].iter().all(|duration| {
+                        let slots = candidate_slots(task, *duration, cursor, horizon_end, &availability, &trial, &[], 0, timezone, false);
+                        if let Some((next_start, next_end, _)) = slots.iter().min_by_key(|(s, _, _)| *s) {
+                            trial.push(Occupied { start:*next_start, end:*next_end + gap, location:task.location.clone(), course_id:task.course_id.clone() });
+                            cursor = *next_end + gap;
+                            true
+                        } else { false }
+                    });
+                    if !fits { candidates.sort_by_key(|(start, _, _)| *start); }
+                }
+            }
             let Some((start, end, reasons)) = candidates.first().cloned() else {
                 conflicts.push(OverloadConflict {
                     task_id: task.id.clone(),
@@ -372,6 +424,7 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
                 .map(|(id, _, _)| id.clone())
                 .unwrap_or_else(|| stable_session_id(&task.id, index, start));
             let mut reasons = reasons;
+            reasons.push(snapshot.preferences.scheduling_style.as_str().to_string());
             if task.overdue {
                 reasons.push("overdue_recovery".into());
             }
@@ -386,7 +439,7 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
                 reason_codes: reasons,
             });
             occupied.push(Occupied {
-                start,
+                start: start - Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),
                 end: end
                     + Duration::minutes(
                         snapshot
@@ -548,8 +601,8 @@ pub fn validate_proposed(snapshot: &PlannerSnapshot, blocks: &[PlannedBlock]) ->
         if task.completed { completion.insert(task.id.clone(), floor); }
     }
     for block in &snapshot.existing_blocks {
-        if block.completed || block.locked || block.starts_at < floor {
-            occupied.push(Occupied { start:block.starts_at, end:block.ends_at + Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)), location:block.location.clone(), course_id:block.course_id.clone() });
+        if block.completed || block.locked || block.started || block.starts_at < floor {
+            occupied.push(Occupied { start:block.starts_at - Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)), end:block.ends_at + Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)), location:block.location.clone(), course_id:block.course_id.clone() });
             if block.completed || block.ends_at > floor {
                 *minutes.entry(block.task_id.clone()).or_default() += (block.ends_at-block.starts_at).num_minutes();
                 completion.entry(block.task_id.clone()).and_modify(|time| *time=(*time).max(block.ends_at)).or_insert(block.ends_at);
@@ -562,7 +615,7 @@ pub fn validate_proposed(snapshot: &PlannerSnapshot, blocks: &[PlannedBlock]) ->
     let mut ids = BTreeSet::new();
     for block in &sorted {
         let task = snapshot.tasks.iter().find(|task| task.id==block.task_id && !task.completed).ok_or("Proposal references an ineligible task")?;
-        if !ids.insert(&block.id) || snapshot.existing_blocks.iter().any(|old| old.id==block.id && (old.locked || old.completed || old.starts_at<floor)) {
+        if !ids.insert(&block.id) || snapshot.existing_blocks.iter().any(|old| old.id==block.id && (old.locked || old.started || old.completed || old.starts_at<floor)) {
             return Err("Proposal modifies protected work or repeats a session".into());
         }
         let duration = (block.ends_at-block.starts_at).num_minutes();
@@ -586,7 +639,7 @@ pub fn validate_proposed(snapshot: &PlannerSnapshot, blocks: &[PlannedBlock]) ->
         }
         *minutes.entry(task.id.clone()).or_default() += duration;
         completion.entry(task.id.clone()).and_modify(|time| *time=(*time).max(block.ends_at)).or_insert(block.ends_at);
-        occupied.push(Occupied { start:block.starts_at,end:block.ends_at+Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),location:task.location.clone(),course_id:task.course_id.clone() });
+        occupied.push(Occupied { start:block.starts_at-Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),end:block.ends_at+Duration::minutes(snapshot.preferences.break_minutes.max(snapshot.preferences.transition_minutes)),location:task.location.clone(),course_id:task.course_id.clone() });
         occupied.sort_by_key(|item| (item.start,item.end));
     }
     let overload_conflicts = snapshot.tasks.iter().filter(|task| !task.completed).filter_map(|task| {
@@ -923,6 +976,7 @@ mod tests {
             horizon_days: 14,
             timezone: "America/Phoenix".into(),
             preferences: PlannerPreferences {
+                scheduling_style: SchedulingStyle::Mixed,
                 sleep_start: "23:00".into(),
                 sleep_end: "07:00".into(),
                 max_session_minutes: 60,
@@ -973,6 +1027,40 @@ mod tests {
     }
 
     #[test]
+    fn scheduling_styles_spread_work_or_finish_early() {
+        let mut input = snapshot();
+        input.tasks[0].due_at = Some("2026-08-23T06:59:00Z".parse().unwrap());
+        let timezone: Tz = input.timezone.parse().unwrap();
+        for style in [SchedulingStyle::Mixed, SchedulingStyle::Balanced, SchedulingStyle::Earliest] {
+            input.preferences.scheduling_style = style;
+            let outcome = generate(&input).unwrap();
+            assert!(outcome.overload_conflicts.is_empty());
+            assert_eq!(outcome.blocks.len(), 2);
+            let days: BTreeSet<_> = outcome.blocks.iter().map(|block| block.starts_at.with_timezone(&timezone).date_naive()).collect();
+            assert_eq!(days.len(), if style == SchedulingStyle::Earliest { 1 } else { 2 });
+            assert!(outcome.blocks.iter().all(|block| block.reason_codes.contains(&style.as_str().to_string())));
+        }
+    }
+
+    #[test]
+    fn balancing_compresses_when_needed_and_preserves_started_sessions() {
+        let mut input = snapshot();
+        input.preferences.scheduling_style = SchedulingStyle::Balanced;
+        input.tasks[0].duration_minutes = 180;
+        input.tasks[0].due_at = Some("2026-08-18T17:00:00Z".parse().unwrap());
+        input.preferences.availability.iter_mut().for_each(|rule| rule.ends_at_local = "10:30".into());
+        input.fixed_constraints.clear();
+        let outcome = generate(&input).unwrap();
+        assert!(outcome.overload_conflicts.is_empty());
+        assert_eq!(outcome.blocks.len(), 3);
+        assert_eq!(outcome.blocks.iter().map(|block| (block.ends_at-block.starts_at).num_minutes()).sum::<i64>(), 180);
+        input.existing_blocks.push(ExistingBlock { id:"started-session".into(), task_id:input.tasks[0].id.clone(), starts_at:outcome.blocks[0].starts_at, ends_at:outcome.blocks[0].ends_at, completed:false, locked:false, started:true, location:String::new(), course_id:None });
+        let next = generate(&input).unwrap();
+        assert_eq!(next.blocks.len(), 2);
+        assert!(next.blocks.iter().all(|block| block.starts_at >= outcome.blocks[0].ends_at));
+    }
+
+    #[test]
     fn identical_snapshots_are_byte_equivalent_and_non_overlapping() {
         let input = snapshot();
         let first = generate(&input).unwrap();
@@ -1014,6 +1102,7 @@ mod tests {
             ends_at: locked_end,
             completed: false,
             locked: true,
+                started: false,
             location: "home".into(),
             course_id: None,
         });
@@ -1074,6 +1163,7 @@ mod tests {
                 ends_at: start + Duration::minutes(30),
                 completed,
                 locked,
+                started: false,
                 location: "".into(),
                 course_id: None,
             });

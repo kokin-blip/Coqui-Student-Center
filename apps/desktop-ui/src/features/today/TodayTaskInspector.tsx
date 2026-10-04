@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { getTaskPlan, type TaskPlan } from "../../native";
 import { CalendarDays, Clock3, Flag, MapPin, X } from "lucide-react";
 import type { PlanBlock, TaskRecord, WorkspaceSnapshot } from "../../native";
 import { dueLabel, priorityLabel, riskLabel } from "./todayModel";
@@ -30,7 +32,24 @@ export function TodayTaskInspector({
   onStart: (id: string) => void;
 }) {
   const course = workspace.courses.find((c) => c.id === task.courseId);
-  const block = blocks.find((b) => b.taskId === task.id && !b.completed);
+  const [planning, setPlanning] = useState<{ taskId: string; value: TaskPlan } | null>(null);
+  const [planningError, setPlanningError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setPlanningError("");
+    void getTaskPlan(task.id).then(value => { if (active) setPlanning({ taskId:task.id, value }); }).catch(reason => { if (active) setPlanningError(String(reason)); });
+    return () => { active = false; };
+  }, [task.id, task.version, blocks]);
+  const plan = planning?.taskId === task.id ? planning.value : null;
+  const block = plan?.sessions.find(b => !b.completed) ?? blocks.find((b) => b.taskId === task.id && !b.completed);
+  const format = (value: string) => new Intl.DateTimeFormat([], { timeZone:timezone, dateStyle:"medium", timeStyle:"short" }).format(new Date(value));
+  const time = (value: string) => new Intl.DateTimeFormat([], { timeZone:timezone, hour:"numeric", minute:"2-digit" }).format(new Date(value));
+  const explanation = (codes: string[]) => [
+    codes.includes("mixed") ? "Starts early and spreads remaining sessions across available days." : codes.includes("balanced") ? "Balances work across available days." : codes.includes("earliest") ? "Uses the earliest available opening." : "Fits your available study time.",
+    "Classes, travel, breaks, sleep, and protected time are reserved.",
+    ...(codes.includes("overdue_recovery") ? ["Recovery time for overdue work; the original deadline remains above."] : []),
+    ...(codes.includes("plan_stability") ? ["Keeps an existing suitable time."] : []),
+  ].join(" ");
   return (
     <aside className="today-task-inspector" aria-label="Selected task">
       {!embedded && (
@@ -79,6 +98,18 @@ export function TodayTaskInspector({
             </div>
           )}
         </dl>
+        <section aria-label="Recommended timeframe">
+          <h3>Recommended timeframe</h3>
+          {task.completed ? <p>This assignment is complete.</p> : planningError ? <p role="alert">Recommended times could not be loaded: {planningError}</p> : !plan ? <p role="status">Loading recommended times…</p> : <>
+            {plan.sessions.length > 0 ? <ul className="recommended-sessions">{plan.sessions.map(session => <li key={session.id}>
+              <strong>{format(session.startsAt)} – {time(session.endsAt)}</strong>
+              <p>{Math.round((Date.parse(session.endsAt) - Date.parse(session.startsAt)) / 60000)} min · {session.startedAt ? "Started" : session.locked ? "Locked" : "Recommended"}</p>
+              <p className="field-help">{explanation(session.reasonCodes)}</p>
+            </li>)}</ul> : <p>No recommended session is available in the next 14 days.</p>}
+            {plan.unscheduledMinutes > 0 && <p role="status">{plan.sessions.length ? "Partially scheduled: " : "Unscheduled: "}{plan.unscheduledMinutes} min remain. {plan.reasonCodes.includes("blocked_dependency") ? "Finish or resolve prerequisite work first." : plan.reasonCodes.includes("session_limits_infeasible") ? "Adjust the effort estimate or session length in task details." : "There is not enough available time. Adjust your availability, effort estimate, or deadline."}</p>}
+            <p className="field-help">All times in {timezone}. Recommendations use local scheduling, without AI.</p>
+          </>}
+        </section>
         {task.priorityReasonCodes.length > 0 && (
           <div className="priority-explanation">
             <h3>Why this priority</h3>

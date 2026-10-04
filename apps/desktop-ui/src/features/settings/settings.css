@@ -132,6 +132,23 @@
 .settings-detail-content .connection-head span small {
   white-space: normal;
 }
+.ai-tutorial-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+}
+.ai-tutorial-trigger svg { width: 16px; height: 16px; }
+.ai-tutorial-steps {
+  margin: 0 0 20px;
+  padding-left: 24px;
+}
+.ai-tutorial-steps li { padding-left: 4px; margin-bottom: 20px; }
+.ai-tutorial-steps li::marker { color: var(--accent); font-weight: 700; }
+.ai-tutorial-steps h3 { margin: 0 0 6px; font-size: 15px; }
+.ai-tutorial-steps p { margin: 0 0 8px; color: var(--text-secondary); line-height: 1.55; font-size: 14px; }
+.ai-provider-tutorial a { color: var(--accent); text-underline-offset: 3px; font-size: 13px; overflow-wrap: anywhere; }
+.ai-provider-tutorial .modal { box-sizing: border-box; }
 .canvas-guide {
   padding-bottom: 24px;
   border-bottom: 1px solid var(--border-subtle);

@@ -24,6 +24,8 @@ pub type Result<T> = std::result::Result<T, ProfileError>;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct OnboardingDraft {
+    #[serde(default)]
+    pub scheduling_style: Option<crate::planner::SchedulingStyle>,
     pub name: String,
     pub timezone: String,
     pub term_name: String,
@@ -371,6 +373,8 @@ pub struct CommitmentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanningPreferenceRecord {
+    #[serde(default)]
+    pub scheduling_style: Option<crate::planner::SchedulingStyle>,
     pub sleep_start: String,
     pub sleep_end: String,
     pub max_session_minutes: i64,
@@ -500,6 +504,8 @@ pub struct AcademicTermInput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreferenceInput {
+    #[serde(default)]
+    pub scheduling_style: Option<crate::planner::SchedulingStyle>,
     pub sleep_start: String,
     pub sleep_end: String,
     pub max_session_minutes: i64,
@@ -637,6 +643,7 @@ fn migrate_inner(conn: &Connection, previous_schema_version: i64) -> Result<()> 
     )?;
     rebuild_legacy_courses_table(conn)?;
     for (table, column, definition) in [
+        ("planning_preferences", "scheduling_style", "TEXT"),
         ("courses", "term_id", "TEXT"),
         ("courses", "record_origin", "TEXT NOT NULL DEFAULT 'user'"),
         ("courses", "color", "TEXT NOT NULL DEFAULT '#3155B7'"),
@@ -906,13 +913,13 @@ pub fn complete_onboarding(
         }
     }
     transaction.execute(
-        "INSERT INTO planning_preferences(profile_id,sleep_start,sleep_end,max_session_minutes,break_minutes,transition_minutes,default_commute_minutes)
-         VALUES(?1,?2,?3,?4,?5,?6,?7)
+        "INSERT INTO planning_preferences(profile_id,sleep_start,sleep_end,max_session_minutes,break_minutes,transition_minutes,default_commute_minutes,scheduling_style)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
          ON CONFLICT(profile_id) DO UPDATE SET sleep_start=excluded.sleep_start,sleep_end=excluded.sleep_end,
            max_session_minutes=excluded.max_session_minutes,break_minutes=excluded.break_minutes,
            transition_minutes=excluded.transition_minutes,default_commute_minutes=excluded.default_commute_minutes,
-           version=planning_preferences.version+1",
-        params![PROFILE_ID, input.sleep_start, input.sleep_end, input.max_session_minutes, input.break_minutes, input.transition_minutes, input.default_commute_minutes],
+           scheduling_style=excluded.scheduling_style,version=planning_preferences.version+1",
+        params![PROFILE_ID, input.sleep_start, input.sleep_end, input.max_session_minutes, input.break_minutes, input.transition_minutes, input.default_commute_minutes, input.scheduling_style.map(|style| style.as_str())],
     )?;
     if input.sleep_start!="23:00" || input.sleep_end!="07:00" || !input.rhythm_rules.is_empty() || !input.days_off.is_empty() || !input.protected_time_notes.trim().is_empty() {
         transaction.execute("INSERT INTO settings(key,value) VALUES('student_rhythm_confirmed','true') ON CONFLICT(key) DO UPDATE SET value=excluded.value",[])?;
@@ -1020,7 +1027,7 @@ pub fn workspace(conn: &Connection) -> Result<WorkspaceSnapshot> {
         Ok(ClassMeetingSeriesRecord { id: row.get(0)?, course_id: row.get(1)?, term_id: row.get(2)?, timezone: row.get(3)?, weekdays: serde_json::from_str(&weekdays_json).unwrap_or_default(), starts_at_local: row.get(5)?, ends_at_local: row.get(6)?, component: row.get(7)?, location: row.get(8)?, modality:row.get(9)?, instructor_id: row.get(10)?,rotation_interval_weeks:row.get(11)?,rotation_offset_weeks:row.get(12)?, version: row.get(13)? })
     })?;
     let academic_events = query_records(conn, "SELECT id,term_id,title,starts_on,ends_on,all_day,no_class,source,version FROM academic_calendar_events ORDER BY starts_on,title,id", |row| Ok(AcademicCalendarEventRecord { id: row.get(0)?, term_id: row.get(1)?, title: row.get(2)?, starts_on: row.get(3)?, ends_on: row.get(4)?, all_day: row.get::<_, i64>(5)? != 0, no_class: row.get::<_, i64>(6)? != 0, source: row.get(7)?, version: row.get(8)? }))?;
-    let preferences = conn.query_row("SELECT sleep_start,sleep_end,max_session_minutes,break_minutes,transition_minutes,default_commute_minutes,version FROM planning_preferences WHERE profile_id=?1", params![PROFILE_ID], |row| Ok(PlanningPreferenceRecord { sleep_start: row.get(0)?, sleep_end: row.get(1)?, max_session_minutes: row.get(2)?, break_minutes: row.get(3)?, transition_minutes: row.get(4)?, default_commute_minutes: row.get(5)?, version: row.get(6)? })).optional()?;
+    let preferences = conn.query_row("SELECT sleep_start,sleep_end,max_session_minutes,break_minutes,transition_minutes,default_commute_minutes,version,scheduling_style FROM planning_preferences WHERE profile_id=?1", params![PROFILE_ID], |row| Ok(PlanningPreferenceRecord { sleep_start: row.get(0)?, sleep_end: row.get(1)?, max_session_minutes: row.get(2)?, break_minutes: row.get(3)?, transition_minutes: row.get(4)?, default_commute_minutes: row.get(5)?, version: row.get(6)?, scheduling_style: row.get::<_, Option<String>>(7)?.map(|value| serde_json::from_value(serde_json::Value::String(value)).map_err(|error| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error)))).transpose()? })).optional()?;
     let availability = query_records(conn, "SELECT weekday,starts_at_local,ends_at_local FROM availability_rules WHERE profile_id='00000000-0000-4000-8000-000000000010' ORDER BY weekday,starts_at_local", |row| Ok(AvailabilityInput { weekday: row.get(0)?, starts_at_local: row.get(1)?, ends_at_local: row.get(2)? }))?;
     let rhythm_rules = query_records(conn, "SELECT id,kind,weekday,starts_at_local,ends_at_local,label FROM weekly_rhythm_rules WHERE profile_id='00000000-0000-4000-8000-000000000010' ORDER BY weekday,starts_at_local,id", |row| Ok(RhythmRuleRecord { id: row.get(0)?, kind: row.get(1)?, weekday: row.get(2)?, starts_at_local: row.get(3)?, ends_at_local: row.get(4)?, label: row.get(5)? }))?;
     Ok(WorkspaceSnapshot {
@@ -1287,7 +1294,7 @@ pub fn delete_academic_event(conn: &Connection, id: &str, expected_version: i64)
 pub fn update_preferences(conn: &mut Connection, input: &PreferenceInput) -> Result<()> {
     validate_preference_values(input)?;
     let tx = conn.transaction()?;
-    require_changed(tx.execute("UPDATE planning_preferences SET sleep_start=?2,sleep_end=?3,max_session_minutes=?4,break_minutes=?5,transition_minutes=?6,default_commute_minutes=?7,version=version+1 WHERE profile_id=?1 AND version=?8",params![PROFILE_ID,input.sleep_start,input.sleep_end,input.max_session_minutes,input.break_minutes,input.transition_minutes,input.default_commute_minutes,input.expected_version])?)?;
+    require_changed(tx.execute("UPDATE planning_preferences SET sleep_start=?2,sleep_end=?3,max_session_minutes=?4,break_minutes=?5,transition_minutes=?6,default_commute_minutes=?7,scheduling_style=COALESCE(?9,scheduling_style),version=version+1 WHERE profile_id=?1 AND version=?8",params![PROFILE_ID,input.sleep_start,input.sleep_end,input.max_session_minutes,input.break_minutes,input.transition_minutes,input.default_commute_minutes,input.expected_version,input.scheduling_style.map(|style| style.as_str())])?)?;
     tx.execute("INSERT INTO settings(key,value) VALUES('student_rhythm_confirmed','true') ON CONFLICT(key) DO UPDATE SET value=excluded.value",[])?;
     tx.execute(
         "DELETE FROM availability_rules WHERE profile_id=?1",
@@ -1685,6 +1692,7 @@ fn default_draft(profile: Option<(String, String, i64)>) -> OnboardingDraft {
     let (name, timezone, _) = profile.unwrap_or_else(|| (String::new(), detected_timezone(), 0));
     let year = Utc::now().date_naive().year();
     OnboardingDraft {
+        scheduling_style: None,
         name,
         timezone,
         term_name: "Current term".into(),

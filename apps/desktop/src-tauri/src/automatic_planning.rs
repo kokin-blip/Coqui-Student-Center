@@ -97,7 +97,7 @@ fn facts(snapshot:&planner::PlannerSnapshot,identifying:bool,goals:&semester_ana
     let labels=tasks.iter().enumerate().map(|(index,task)|TaskLabel{ reference:format!("work-{}",index+1),title:task.title.clone(),task_id:task.id.clone() }).collect();
     let floor=snapshot.effective_time;
     let work=tasks.iter().enumerate().map(|(index,task)| {
-        let protected=snapshot.existing_blocks.iter().filter(|block|block.task_id==task.id && (block.completed || block.locked || block.starts_at<floor)).map(|block|(block.ends_at-block.starts_at).num_minutes()).sum::<i64>();
+        let protected=snapshot.existing_blocks.iter().filter(|block|block.task_id==task.id && (block.completed || block.locked || block.started || block.starts_at<floor)).map(|block|(block.ends_at-block.starts_at).num_minutes()).sum::<i64>();
         let mut value=json!({"reference":format!("work-{}",index+1),"remainingMinutes":(task.duration_minutes-protected).max(0),"dueAt":task.due_at,"earliestStart":task.earliest_start,"priority":task.priority,"academicRisk":task.academic_risk,"splittable":task.splittable,"minSessionMinutes":task.min_session_minutes.max(snapshot.preferences.min_session_minutes).min(task.max_session_minutes.min(snapshot.preferences.max_session_minutes)),"maxSessionMinutes":task.max_session_minutes.min(snapshot.preferences.max_session_minutes),"dependencies":task.dependencies.iter().filter_map(|id|reference(id)).collect::<Vec<_>>()});
         if identifying { value["title"]=json!(task.title); }
         value
@@ -107,7 +107,7 @@ fn facts(snapshot:&planner::PlannerSnapshot,identifying:bool,goals:&semester_ana
         let mut value=json!({"startsAt":block.starts_at-Duration::minutes(block.travel_before_minutes+block.transition_before_minutes),"endsAt":block.ends_at+Duration::minutes(block.travel_after_minutes+block.transition_after_minutes)});
         if identifying {value["title"]=json!(block.title);}
         value
-    }).chain(snapshot.existing_blocks.iter().filter(|block|(block.locked||block.completed||block.starts_at<floor) && block.ends_at>floor && block.starts_at<horizon).map(|block|json!({"startsAt":block.starts_at,"endsAt":block.ends_at,"reference":reference(&block.task_id)}))).collect::<Vec<_>>();
+    }).chain(snapshot.existing_blocks.iter().filter(|block|(block.locked||block.started||block.completed||block.starts_at<floor) && block.ends_at>floor && block.starts_at<horizon).map(|block|json!({"startsAt":block.starts_at,"endsAt":block.ends_at,"reference":reference(&block.task_id)}))).collect::<Vec<_>>();
     let mut value=json!({"effectiveTime":floor,"horizonDays":snapshot.horizon_days,"timezone":snapshot.timezone,"preferences":snapshot.preferences,"tasks":work,"occupied":occupied});
     if identifying { value["writtenGoals"]=json!({"studyGoals":goals.study_goals,"careerInterests":goals.career_interests,"constraints":goals.constraints}); }
     (value,labels,refs)
@@ -178,7 +178,7 @@ fn task_id<'a>(value:&'a Prepared,reference:&str)->Result<&'a String> {
     Ok(&value.refs[index])
 }
 fn protected(block:&PlanBlock,snapshot:&planner::PlannerSnapshot)->bool {
-    block.task_id.is_none() || block.completed || block.locked || snapshot.existing_blocks.iter().any(|old|old.id==block.id && old.locked) || parse_utc(&block.starts_at).is_some_and(|time|time<snapshot.effective_time) || block.reason_codes.iter().any(|reason|reason=="manual_calendar_move")
+    block.task_id.is_none() || block.completed || block.locked || block.started_at.is_some() || snapshot.existing_blocks.iter().any(|old|old.id==block.id && old.locked) || parse_utc(&block.starts_at).is_some_and(|time|time<snapshot.effective_time) || block.reason_codes.iter().any(|reason|reason=="manual_calendar_move")
 }
 fn build_preview(conn:&Connection,value:&Prepared,suggestion:Suggestion,excluded:Vec<String>)->Result<Preview> {
     if suggestion.sessions.len()>512 {return Err(AppError::Invalid("Too many proposed sessions".into()));}
@@ -255,7 +255,7 @@ pub fn get_automatic_planning_status(state:tauri::State<AppState>)->Result<Statu
     let ready=resolve_ai_provider(&conn,managed_ai::AiCapability::AutomaticPlanning).is_ok();
     let fingerprint=if !profile::onboarding_state(&conn)?.required {
         let mut snapshot=ai_snapshot(&conn,Utc::now().date_naive().and_hms_opt(0,0,0).unwrap().and_utc())?;
-        snapshot.existing_blocks.retain(|block|block.locked||block.completed);
+        snapshot.existing_blocks.retain(|block|block.locked||block.started||block.completed);
         Some(hash(&snapshot)?)
     }else{None};
     Ok(Status {prompt:prefs.choice==Choice::Undecided && ready,preferences:prefs,fingerprint,pending:read(&conn,PREVIEW)?})
@@ -439,7 +439,7 @@ mod tests {
         value.fingerprint=fingerprint(&conn,value.snapshot.effective_time).unwrap();
         assert!(check_prepared(&conn,&value).is_err());
         let mut value=prepared_fixture(&conn);
-        value.snapshot.existing_blocks.push(planner::ExistingBlock {id:"just-started".into(),task_id:"private-task-id".into(),starts_at:Utc::now()-Duration::seconds(1),ends_at:Utc::now()+Duration::minutes(30),completed:false,locked:false,location:String::new(),course_id:None});
+        value.snapshot.existing_blocks.push(planner::ExistingBlock {started:false,id:"just-started".into(),task_id:"private-task-id".into(),starts_at:Utc::now()-Duration::seconds(1),ends_at:Utc::now()+Duration::minutes(30),completed:false,locked:false,location:String::new(),course_id:None});
         value.snapshot.effective_time=Utc::now()-Duration::seconds(2);
         assert!(check_prepared(&conn,&value).is_err());
     }

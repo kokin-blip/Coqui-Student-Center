@@ -167,6 +167,12 @@ export function CalendarView({
     };
   }, [weekStart, reload]);
 
+  useEffect(() => {
+    const updated = () => setReload(value => value + 1);
+    window.addEventListener("coqui-local-plan-updated", updated);
+    return () => window.removeEventListener("coqui-local-plan-updated", updated);
+  }, []);
+
   const refresh = async (nextWorkspace?: WorkspaceSnapshot) => {
     if (nextWorkspace) setWorkspace(nextWorkspace);
     setAgenda(await getCalendarAgenda(weekStart || undefined));
@@ -250,7 +256,7 @@ export function CalendarView({
     workspace?.tasks.filter(
       (task) =>
         !task.completed &&
-        !agenda?.blocks.some((block) => block.taskId === task.id),
+        Boolean(agenda?.overloadConflicts.some(conflict => conflict.entityId === task.id)),
     ) ?? [];
 
   const moveBlock = (blockId: string, startsAt: string, endsAt: string) =>
@@ -466,7 +472,7 @@ export function CalendarView({
                     key={task.id}
                     onClick={() => selectTask(task.id)}
                   >
-                    {task.title} · {task.minutes} min
+                    {task.title} · Needs scheduling
                   </button>
                 ))}
               </div>
