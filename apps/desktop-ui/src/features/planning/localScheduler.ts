@@ -122,7 +122,10 @@ export function generateLocalSchedule(workspace: WorkspaceSnapshot, previous: Pl
         if (!fits) start = available[0];
       }
       const end = start + minutes * minute;
-      blocks.push({ id: stable && Date.parse(stable.startsAt) === start ? stable.id : `local:${task.id}:${index}:${start}`, taskId: task.id, title: task.title, startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(), kind: "study", completed: false, locked: false, sessionIndex: index, location: task.location, reasonCodes: ["feasible_window", style, ...(rawDue < floor ? ["overdue_recovery"] : [])] });
+      let ordinal = index;
+      let id = stable && Date.parse(stable.startsAt) === start ? stable.id : `local:${task.id}:${ordinal}:${start}`;
+      while (blocks.some(block => block.id === id)) id = `local:${task.id}:${++ordinal}:${start}`;
+      blocks.push({ id, taskId: task.id, title: task.title, startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(), kind: "study", completed: false, locked: false, sessionIndex: index, location: task.location, reasonCodes: ["feasible_window", style, ...(rawDue < floor ? ["overdue_recovery"] : [])] });
       occupied.push({ start:start - gap, end: end + gap });
       cursor = end + gap;
       scheduled += minutes;

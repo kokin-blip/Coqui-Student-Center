@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod auth;
+mod calendar_edits;
 mod academic_intelligence;
 mod ai_providers;
 mod automatic_planning;
@@ -2533,7 +2534,13 @@ fn planner_snapshot(
         let mut date = first;
         while date <= last {
             let weekday = date.weekday().num_days_from_sunday() as i64;
-            if meeting.weekdays.contains(&weekday) && rotation_week_matches(term_start,date,meeting.rotation_interval_weeks,meeting.rotation_offset_weeks) {
+            let date_key = date.to_string();
+            let no_class = workspace.academic_events.iter().any(|event| {
+                event.no_class && event.term_id.as_ref().is_none_or(|id| id == &meeting.term_id)
+                    && event.starts_on.as_str() <= date_key.as_str()
+                    && event.ends_on.as_str() >= date_key.as_str()
+            });
+            if !no_class && meeting.weekdays.contains(&weekday) && rotation_week_matches(term_start,date,meeting.rotation_interval_weeks,meeting.rotation_offset_weeks) {
                 let starts_at = timezone
                     .from_local_datetime(&date.and_time(start_time))
                     .earliest()
@@ -2838,6 +2845,20 @@ fn regenerate_plan_for_trigger(
         .map(|value| value.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
     student_workflows::capture_days(conn, effective)?;
+    let tx = conn.unchecked_transaction()?;
+    let outcome = regenerate_plan_in(&tx, effective, trigger)?;
+    tx.commit()?;
+    Ok(outcome)
+}
+
+const LOCAL_PLAN_RULES_REVISION: &str = "2";
+
+// The caller owns the transaction and captures daily history before editing.
+fn regenerate_plan_in(
+    conn: &Connection,
+    effective: DateTime<Utc>,
+    trigger: planner::PlannerTrigger,
+) -> Result<planner::PlanOutcome> {
     let snapshot = planner_snapshot(conn, effective, trigger.clone())?;
     let outcome = planner::generate(&snapshot).map_err(AppError::Invalid)?;
     let before_blocks = if trigger == planner::PlannerTrigger::ImportApproved {
@@ -2845,25 +2866,27 @@ fn regenerate_plan_for_trigger(
     } else {
         None
     };
-    let tx = conn.unchecked_transaction()?;
-    let now = Utc::now().to_rfc3339();
-    tx.execute(
+    let now = effective.to_rfc3339();
+    conn.execute(
         "UPDATE source_conflicts SET resolved=1,resolved_at=?1,resolution='capacity_recomputed'
          WHERE kind='overload' AND resolved=0",
         params![now],
     )?;
-    tx.execute(
-        "DELETE FROM plan_blocks
-         WHERE task_id IS NOT NULL AND locked=0 AND completed=0 AND started_at IS NULL",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM plan_blocks
-         WHERE task_id IS NULL AND id NOT IN (SELECT id FROM commitments)",
-        [],
-    )?;
+    // Keep rows whose IDs survive generation, including their reminder history.
+    let fixed_ids = snapshot.fixed_constraints.iter().map(|item| item.id.as_str()).collect::<std::collections::HashSet<_>>();
+    let generated_ids = outcome.blocks.iter().map(|item| item.id.as_str()).collect::<std::collections::HashSet<_>>();
+    for block in all_plan_blocks(conn)? {
+        let replaceable = if block.task_id.is_some() {
+            !block.locked && !block.completed && block.started_at.is_none()
+        } else {
+            !fixed_ids.contains(block.id.as_str())
+        };
+        if replaceable && !generated_ids.contains(block.id.as_str()) {
+            conn.execute("DELETE FROM plan_blocks WHERE id=?1", [&block.id])?;
+        }
+    }
     for commitment in &snapshot.fixed_constraints {
-        tx.execute(
+        conn.execute(
             "INSERT INTO plan_blocks(
                id,task_id,starts_at,ends_at,title,kind,completed,locked,started_at,
                session_index,location,reason_codes
@@ -2882,7 +2905,7 @@ fn regenerate_plan_for_trigger(
         )?;
     }
     for block in &outcome.blocks {
-        tx.execute(
+        conn.execute(
             "INSERT INTO plan_blocks(
                id,task_id,starts_at,ends_at,title,kind,completed,locked,started_at,
                session_index,location,reason_codes
@@ -2904,7 +2927,7 @@ fn regenerate_plan_for_trigger(
         )?;
     }
     for conflict in &outcome.overload_conflicts {
-        tx.execute(
+        conn.execute(
             "INSERT INTO source_conflicts(
                id,description,resolved,kind,entity_type,entity_id,detected_at
              ) VALUES(?1,?2,0,'overload','task',?3,?4)
@@ -2929,7 +2952,7 @@ fn regenerate_plan_for_trigger(
             ],
         )?;
     }
-    tx.execute(
+    conn.execute(
         "INSERT INTO settings(key,value) VALUES('plan_capacity',?1)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         params![serde_json::to_string(&outcome.capacity)
@@ -2937,19 +2960,20 @@ fn regenerate_plan_for_trigger(
     )?;
     for (key, value) in [
         ("local_plan_generated_at", effective.to_rfc3339()),
+        ("local_plan_rules_revision", LOCAL_PLAN_RULES_REVISION.into()),
         ("local_plan_conflicts", serde_json::to_string(&outcome.overload_conflicts).map_err(|error| AppError::Background(error.to_string()))?),
     ] {
-        tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])?;
+        conn.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])?;
     }
     if let Some(before_blocks) = before_blocks {
-        let after_blocks = all_plan_blocks(&tx)?;
+        let after_blocks = all_plan_blocks(conn)?;
         let token = Uuid::new_v4().to_string();
-        let imported_assignments = tx.query_row(
+        let imported_assignments = conn.query_row(
             "SELECT COUNT(*) FROM tasks WHERE completed=0 AND source_candidate_id IS NOT NULL",
             [],
             |row| row.get::<_, i64>(0),
         )?;
-        let assessments = tx.query_row(
+        let assessments = conn.query_row(
             "SELECT COUNT(*) FROM tasks WHERE completed=0 AND source_candidate_id IS NOT NULL
              AND task_kind IN ('exam','midterm','final','test','quiz')",
             [],
@@ -2993,16 +3017,15 @@ fn regenerate_plan_for_trigger(
                     .map_err(|error| AppError::Background(error.to_string()))?,
             ),
         ] {
-            tx.execute(
+            conn.execute(
                 "INSERT INTO settings(key,value) VALUES(?1,?2)
                  ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 params![key, value],
             )?;
         }
     } else {
-        invalidate_generated_plan_undo(&tx)?;
+        invalidate_generated_plan_undo(conn)?;
     }
-    tx.commit()?;
     Ok(outcome)
 }
 
@@ -3021,7 +3044,7 @@ fn ensure_fresh_local_plan(conn: &Connection, now: DateTime<Utc>) -> Result<()> 
     let expired = if let Some(last) = last {
         conn.query_row("SELECT EXISTS(SELECT 1 FROM plan_blocks WHERE task_id IS NOT NULL AND completed=0 AND locked=0 AND started_at IS NULL AND datetime(starts_at)>=datetime(?1) AND datetime(starts_at)<datetime(?2))", params![last.to_rfc3339(), now.to_rfc3339()], |row| row.get::<_,bool>(0))?
     } else { true };
-    if last.is_none_or(|time| time.with_timezone(&timezone).date_naive() != now.with_timezone(&timezone).date_naive()) || expired {
+    if db_setting(conn, "local_plan_rules_revision", "") != LOCAL_PLAN_RULES_REVISION || last.is_none_or(|time| time.with_timezone(&timezone).date_naive() != now.with_timezone(&timezone).date_naive()) || expired {
         regenerate_plan_for_trigger(conn, Some(now.with_timezone(&Local)), planner::PlannerTrigger::Initial)?;
     }
     Ok(())
@@ -3648,20 +3671,21 @@ fn set_plan_block_lock(
     dashboard(&conn, &state.ocr)
 }
 
-#[derive(Serialize,Deserialize)]
-#[serde(rename_all="camelCase")]
-struct CalendarUndo { block_id:String,starts_at:String,ends_at:String,locked:bool }
-
 #[tauri::command]
-fn move_plan_block(state:tauri::State<AppState>,block_id:String,starts_at:String,ends_at:String)->Result<Dashboard>{
-    state.require_unlocked()?;let starts=parse_utc(&starts_at).ok_or_else(||AppError::Invalid("calendar start is invalid".into()))?;let ends=parse_utc(&ends_at).ok_or_else(||AppError::Invalid("calendar end is invalid".into()))?;let minutes=(ends-starts).num_minutes();if starts<Utc::now()-chrono::Duration::minutes(1)||!(5..=480).contains(&minutes){return Err(AppError::Invalid("calendar block must be 5–480 minutes in the future".into()));}
-    let conn=state.db.lock().unwrap();require_onboarded(&conn)?;let previous=conn.query_row("SELECT starts_at,ends_at,locked FROM plan_blocks WHERE id=?1 AND task_id IS NOT NULL AND completed=0",params![block_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?!=0))).optional()?.ok_or_else(||AppError::Invalid("only unfinished study blocks can be moved".into()))?;
-    let overlaps=conn.query_row("SELECT EXISTS(SELECT 1 FROM plan_blocks WHERE id!=?1 AND completed=0 AND datetime(starts_at)<datetime(?3) AND datetime(ends_at)>datetime(?2))",params![block_id,starts_at,ends_at],|row|row.get::<_,i64>(0))?!=0;if overlaps{return Err(AppError::Invalid("that time overlaps another class, commitment, or study block".into()));}
-    let undo=CalendarUndo{block_id:block_id.clone(),starts_at:previous.0,ends_at:previous.1,locked:previous.2};conn.execute("INSERT INTO settings(key,value) VALUES('calendar_undo',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![serde_json::to_string(&undo).map_err(|error|AppError::Background(error.to_string()))?])?;conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=1,reason_codes='[\"manual_calendar_move\"]' WHERE id=?1",params![block_id,starts.to_rfc3339(),ends.to_rfc3339()])?;invalidate_generated_plan_undo(&conn)?;mutation(&conn,"plan_block",&block_id,"moved","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Study block moved and locked. Undo is available from Calendar.".into()))
+fn move_plan_block(state: tauri::State<AppState>, block_id: String, starts_at: String, ends_at: String) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let conn = state.db.lock().unwrap();
+    calendar_edits::move_block(&conn, &block_id, &starts_at, &ends_at, Utc::now())?;
+    dashboard_with_notice(&conn, &state.ocr, Some("Study block moved and locked. Undo is available from Calendar.".into()))
 }
 
 #[tauri::command]
-fn undo_calendar_change(state:tauri::State<AppState>)->Result<Dashboard>{state.require_unlocked()?;let conn=state.db.lock().unwrap();let raw=conn.query_row("SELECT value FROM settings WHERE key='calendar_undo'",[],|row|row.get::<_,String>(0)).optional()?.ok_or_else(||AppError::Invalid("there is no calendar change to undo".into()))?;let undo:CalendarUndo=serde_json::from_str(&raw).map_err(|_|AppError::Invalid("saved calendar undo is invalid".into()))?;let changed=conn.execute("UPDATE plan_blocks SET starts_at=?2,ends_at=?3,locked=?4 WHERE id=?1 AND completed=0",params![undo.block_id,undo.starts_at,undo.ends_at,i64::from(undo.locked)])?;if changed!=1{return Err(AppError::Invalid("the moved block is no longer available".into()));}conn.execute("DELETE FROM settings WHERE key='calendar_undo'",[])?;invalidate_generated_plan_undo(&conn)?;mutation(&conn,"plan_block",&undo.block_id,"move_undone","{}")?;dashboard_with_notice(&conn,&state.ocr,Some("Calendar change undone.".into()))}
+fn undo_calendar_change(state: tauri::State<AppState>) -> Result<Dashboard> {
+    state.require_unlocked()?;
+    let conn = state.db.lock().unwrap();
+    calendar_edits::undo(&conn, Utc::now())?;
+    dashboard_with_notice(&conn, &state.ocr, Some("Calendar change undone.".into()))
+}
 
 fn undo_generated_plan_in(conn: &Connection, token: &str) -> Result<()> {
     let raw = conn

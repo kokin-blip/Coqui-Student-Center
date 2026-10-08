@@ -1797,9 +1797,10 @@ for (const block of browserSeed.blocks) {
 let browserPlanFingerprint = "";
 let browserPlanGeneratedAt = 0;
 let browserSchedulingConflicts: SchedulingConflict[] = [];
+const browserSchedulingFingerprint = () => JSON.stringify([browserWorkspace.profile?.timezone, browserWorkspace.tasks, browserWorkspace.preferences, browserWorkspace.availability, browserWorkspace.commitments, browserWorkspace.classMeetings, browserWorkspace.academicEvents, browserWorkspace.rhythmRules, browserWorkspace.terms, browserWorkspace.courses]);
 function refreshBrowserPlan(force = false) {
   const now = new Date();
-  const fingerprint = JSON.stringify([browserWorkspace.profile, browserWorkspace.tasks, browserWorkspace.preferences, browserWorkspace.availability, browserWorkspace.commitments, browserWorkspace.classMeetings, browserWorkspace.academicEvents, browserWorkspace.rhythmRules]);
+  const fingerprint = browserSchedulingFingerprint();
   const expired = browserSeed.blocks.some(block => block.taskId && !block.completed && !block.locked && !block.startedAt && Date.parse(block.startsAt) >= browserPlanGeneratedAt && Date.parse(block.startsAt) < now.getTime());
   const dayChanged = browserPlanGeneratedAt && dayKey(new Date(browserPlanGeneratedAt), browserSeed.timezone) !== dayKey(now, browserSeed.timezone);
   // Committed reference captures keep their authored fixture until an input changes.
@@ -1940,25 +1941,70 @@ export async function setPlanBlockLock(blockId: string, locked: boolean) {
   }
   return call<Dashboard>("set_plan_block_lock", { blockId, locked });
 }
-export async function movePlanBlock(
-  blockId: string,
-  startsAt: string,
-  endsAt: string,
-) {
-  if (!isDesktop()) {
-    browserSeed.blocks = browserSeed.blocks.map((block) =>
-      block.id === blockId
-        ? { ...block, startsAt, endsAt, locked: true }
-        : block,
-    );
-    return structuredClone(browserSeed);
+type BrowserCalendarState = {
+  blocks: PlanBlock[];
+  conflicts: Dashboard["conflicts"];
+  nextAction: Dashboard["nextAction"];
+  planDate: string;
+  schedulingConflicts: SchedulingConflict[];
+  generatedAt: number;
+  fingerprint: string;
+};
+let browserCalendarUndo: { before: BrowserCalendarState; after: BrowserCalendarState } | null = null;
+function captureBrowserCalendar(): BrowserCalendarState {
+  return structuredClone({ blocks: browserSeed.blocks, conflicts: browserSeed.conflicts.filter(item => item.kind === "overload"), nextAction: browserSeed.nextAction, planDate: browserSeed.planDate, schedulingConflicts: browserSchedulingConflicts, generatedAt: browserPlanGeneratedAt, fingerprint: browserSchedulingFingerprint() });
+}
+function restoreBrowserCalendar(state: BrowserCalendarState) {
+  browserSeed.blocks = structuredClone(state.blocks);
+  browserSeed.conflicts = [...browserSeed.conflicts.filter(item => item.kind !== "overload"), ...structuredClone(state.conflicts)];
+  browserSeed.nextAction = structuredClone(state.nextAction);
+  browserSeed.planDate = state.planDate;
+  browserSchedulingConflicts = structuredClone(state.schedulingConflicts);
+  browserPlanGeneratedAt = state.generatedAt;
+  browserPlanFingerprint = state.fingerprint;
+}
+export async function movePlanBlock(blockId: string, startsAt: string, endsAt: string) {
+  if (isDesktop()) return call<Dashboard>("move_plan_block", { blockId, startsAt, endsAt });
+  const start = Date.parse(startsAt), end = Date.parse(endsAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < Date.now() - 60_000 || end - start < 5 * 60_000 || end - start >= 481 * 60_000) {
+    throw new Error("calendar block must be 5–480 minutes in the future");
   }
-  return call<Dashboard>("move_plan_block", { blockId, startsAt, endsAt });
+  refreshBrowserPlan();
+  const block = browserSeed.blocks.find(item => item.id === blockId);
+  if (!block?.taskId || block.completed || block.startedAt) throw new Error("only unfinished, unstarted study blocks can be moved");
+  if (browserSeed.blocks.some(item => item.id !== blockId && !item.completed && Date.parse(item.startsAt) < end && Date.parse(item.endsAt) > start)) {
+    throw new Error("that time overlaps another class, commitment, or study block");
+  }
+  const before = captureBrowserCalendar();
+  try {
+    browserSeed.blocks = browserSeed.blocks.map(item => item.id === blockId ? { ...item, startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(), locked: true, reasonCodes: ["manual_calendar_move"] } : item);
+    refreshBrowserPlan(true);
+    browserCalendarUndo = { before, after: captureBrowserCalendar() };
+  } catch (error) {
+    restoreBrowserCalendar(before);
+    throw error;
+  }
+  return structuredClone(browserSeed);
 }
 export async function undoCalendarChange() {
-  return isDesktop()
-    ? call<Dashboard>("undo_calendar_change")
-    : structuredClone(browserSeed);
+  if (isDesktop()) return call<Dashboard>("undo_calendar_change");
+  refreshBrowserPlan();
+  const undo = browserCalendarUndo;
+  if (!undo) throw new Error("there is no calendar change to undo");
+  if (JSON.stringify(captureBrowserCalendar()) !== JSON.stringify(undo.after)) {
+    throw new Error("Your schedule changed after this calendar edit. Undo would overwrite newer work.");
+  }
+  // Retaining an unchanged historical session does not resurrect it.
+  const restoresElapsedSession = undo.before.blocks.some(block =>
+    block.taskId && !block.completed && !block.startedAt && Date.parse(block.startsAt) < Date.now()
+    && !undo.after.blocks.some(current => JSON.stringify(current) === JSON.stringify(block))
+  );
+  if (restoresElapsedSession) {
+    throw new Error("The previous plan contains an elapsed study session and can no longer be restored.");
+  }
+  restoreBrowserCalendar(undo.before);
+  browserCalendarUndo = null;
+  return structuredClone(browserSeed);
 }
 export async function undoGeneratedPlan(token: string) {
   if (!isDesktop()) {

@@ -298,6 +298,9 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
         .filter(|task| task.completed)
         .map(|task| (task.id.clone(), floor))
         .collect::<BTreeMap<_, _>>();
+    let mut reserved_ids = snapshot.existing_blocks.iter()
+        .filter(|block| block.completed || block.locked || block.started)
+        .map(|block| block.id.clone()).collect::<BTreeSet<_>>();
     let mut blocks = Vec::new();
     let mut conflicts = Vec::new();
     while !pending.is_empty() {
@@ -418,11 +421,19 @@ pub fn generate_ordered(snapshot: &PlannerSnapshot, order: &[String]) -> Result<
                 });
                 break;
             };
-            let id = stable
+            let mut id = stable
                 .iter()
                 .find(|(_, old_start, old_end)| *old_start == start && *old_end == end)
                 .map(|(id, _, _)| id.clone())
                 .unwrap_or_else(|| stable_session_id(&task.id, index, start));
+            // A manually moved block keeps its ID, which encodes its original
+            // start. A replacement at that start must not overwrite it.
+            let mut ordinal = index;
+            while reserved_ids.contains(&id) {
+                ordinal += 1;
+                id = stable_session_id(&task.id, ordinal, start);
+            }
+            reserved_ids.insert(id.clone());
             let mut reasons = reasons;
             reasons.push(snapshot.preferences.scheduling_style.as_str().to_string());
             if task.overdue {
