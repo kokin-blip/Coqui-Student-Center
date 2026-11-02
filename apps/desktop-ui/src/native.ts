@@ -130,7 +130,7 @@ export type CanvasConnection = {
   nextEligibleRefreshAt?: string;
   pendingCandidates: number;
 };
-export type AiProviderId = "openai" | "anthropic" | "gemini";
+export type AiProviderId = "chatgpt" | "openai" | "anthropic" | "gemini";
 export type AiProviderStatus = {
   provider: AiProviderId;
   connected: boolean;
@@ -140,6 +140,10 @@ export type AiProviderStatus = {
   capabilities: string[];
   lastCheckedAt?: string;
   disclosureUrl: string;
+  accountLabel?: string | null;
+  availableModels?: { id: string; name: string }[];
+  accounts?: { id: string; label: string }[];
+  activeAccountId?: string | null;
 };
 export type RhythmRuleKind="work"|"commute"|"recurring_obligation"|"meal"|"exercise"|"avoid"|"protected_free_time";
 export type RhythmRuleInput={kind:RhythmRuleKind;weekday:number;startsAtLocal:string;endsAtLocal:string;label:string};
@@ -2720,13 +2724,15 @@ export async function disconnectCanvasCalendar(connectionId: string) {
   return call<Dashboard>("disconnect_canvas_calendar", { connectionId });
 }
 let browserAiProviders: AiProviderStatus[] = (
-  ["openai", "anthropic", "gemini"] as AiProviderId[]
+  ["chatgpt", "openai", "anthropic", "gemini"] as AiProviderId[]
 ).map((provider) => ({
   provider,
   connected: false,
   healthy: false,
   model:
-    provider === "openai"
+    provider === "chatgpt"
+      ? ""
+      : provider === "openai"
       ? "gpt-5.4-mini-2026-03-17"
       : provider === "anthropic"
         ? "claude-sonnet-5"
@@ -2745,7 +2751,9 @@ let browserAiProviders: AiProviderStatus[] = (
     "practice_test",
   ],
   disclosureUrl:
-    provider === "openai"
+    provider === "chatgpt"
+      ? "https://openai.com/policies/privacy-policy/"
+      : provider === "openai"
       ? "https://openai.com/policies/api-data-usage-policies/"
       : provider === "anthropic"
         ? "https://privacy.claude.com/en/articles/7996868-how-long-do-you-store-my-organization-s-data"
@@ -2756,12 +2764,28 @@ export async function listAiProviders() {
     ? call<AiProviderStatus[]>("list_ai_providers")
     : structuredClone(browserAiProviders);
 }
+export async function connectChatgpt(accountId: string | undefined, ageConfirmed: boolean) {
+  if (!isDesktop()) throw new Error("ChatGPT sign-in is available in the Coqui desktop app. Open the desktop app to connect your subscription.");
+  const providers = await call<AiProviderStatus[]>("connect_chatgpt", { accountId, ageConfirmed });
+  window.dispatchEvent(new Event("coqui-planning-settings"));
+  return providers;
+}
+export async function cancelChatgptLogin() {
+  if (isDesktop()) await call<void>("cancel_chatgpt_login");
+}
+export async function setChatgptModel(model: string) {
+  if (!isDesktop()) throw new Error("Connect ChatGPT in the Coqui desktop app first.");
+  const providers = await call<AiProviderStatus[]>("set_chatgpt_model", { model });
+  window.dispatchEvent(new Event("coqui-planning-settings"));
+  return providers;
+}
 export async function saveAiProviderKey(
   provider: AiProviderId,
   key: string,
   model: string | undefined,
   ageConfirmed: boolean,
 ) {
+  if (provider === "chatgpt") throw new Error("Use Continue with ChatGPT to connect your subscription.");
   if (!isDesktop()) {
     if (!ageConfirmed || key.trim().length < 20)
       throw new Error("Confirm your age and enter a valid API key.");

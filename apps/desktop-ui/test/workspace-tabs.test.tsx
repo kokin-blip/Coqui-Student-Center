@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { StudentCenter } from "../src/StudentCenter";
 
 // ?demo puts native.ts into its browser workspace mode with onboarding already
@@ -8,6 +8,8 @@ import { StudentCenter } from "../src/StudentCenter";
 beforeEach(() => {
   window.history.replaceState({}, "", "/?demo");
 });
+
+afterEach(() => vi.useRealTimers());
 
 // The interface boots through an async bootstrap, and jsdom is slow enough that
 // the default 1s query timeout expires before the nav renders.
@@ -35,6 +37,10 @@ describe("Work and Courses are focused destinations", () => {
   });
 
   test("Calendar supports keyboard move and resize alternatives", async () => {
+    // Keep the editable fixture sessions ahead of the clock and away from the
+    // afternoon commitment, regardless of when this release check runs.
+    const morning = new Date(); morning.setHours(8, 0, 0, 0);
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(morning);
     const user = userEvent.setup();
     render(<StudentCenter />);
     await openTab(/^Calendar$/);
@@ -47,7 +53,7 @@ describe("Work and Courses are focused destinations", () => {
     const originalMoveLabel = movable.getAttribute("aria-label");
     movable.focus();
     await user.keyboard("{ArrowDown}");
-    expect(movable.getAttribute("aria-label")).not.toBe(originalMoveLabel);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Read Chapter 6: Social Influence.*35 minutes/ }).getAttribute("aria-label")).not.toBe(originalMoveLabel));
 
     const resizable = screen.getByRole("button", {
       name: /Draft research paper introduction.*45 minutes.*flexible/,

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -28,10 +28,12 @@ beforeEach(() => {
 
 test("first successful Settings connection prompts; a failed connection does not", async () => {
   fixture.ready = false;
+  const providers = await native.listAiProviders();
   const connect = vi.spyOn(native, "saveAiProviderKey").mockRejectedValueOnce(new Error("Invalid provider key")).mockImplementationOnce(async () => { fixture.ready = true; window.dispatchEvent(new Event("coqui-planning-settings")); return []; });
   const user = userEvent.setup();
-  render(<><AiSettings aiProviders={[]} setAiProviders={vi.fn()} close={vi.fn()} setToast={vi.fn()} /><AutomaticPlanning refreshKey="initial" /></>);
-  await user.type(await screen.findByLabelText("API key"), "fixture-key-with-twenty-characters");
+  render(<><AiSettings aiProviders={providers} setAiProviders={vi.fn()} close={vi.fn()} setToast={vi.fn()} /><AutomaticPlanning refreshKey="initial" /></>);
+  await user.click(within((await screen.findByText("OpenAI", { exact: true })).closest("article")!).getByRole("button", { name: "Configure" }));
+  await user.type(screen.getByLabelText("API key"), "fixture-key-with-twenty-characters");
   await user.click(screen.getByLabelText(/I am 18 or older/));
   await user.click(screen.getByRole("button", { name: "Validate and connect" }));
   await screen.findByText(/Invalid provider key/); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

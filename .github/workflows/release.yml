@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    # The macOS-only RC is packaged and uploaded manually; do not build Windows for it.
-    tags: ["v*", "!v0.13.0-rc.1"]
+    # The macOS-only RCs are packaged and uploaded manually; do not build Windows for them.
+    tags: ["v*", "!v0.13.0-rc.1", "!v0.13.0-rc.8"]
   workflow_dispatch:
     inputs:
       tag:

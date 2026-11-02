@@ -127,7 +127,7 @@ export function SettingsView({
             <SettingsAction
               icon={<Brain />}
               title="AI providers"
-              detail="OpenAI, Anthropic, and Gemini bring-your-own-key settings"
+              detail="ChatGPT subscription and OpenAI, Anthropic, or Gemini API keys"
               onClick={onAi}
             />
           </div>

@@ -293,7 +293,7 @@ export type AiStructureRequest = z.infer<typeof AiStructureRequest>;
 export type AiCandidate = z.infer<typeof AiCandidate>;
 export type AiStructureResult = z.infer<typeof AiStructureResult>;
 
-export const AiProviderId = z.enum(["openai", "anthropic", "gemini"]);
+export const AiProviderId = z.enum(["chatgpt", "openai", "anthropic", "gemini"]);
 export type AiProviderId = z.infer<typeof AiProviderId>;
 
 export const AiCapability = z.enum([
@@ -329,11 +329,15 @@ export const AiProviderStatus = z.object({
   capabilities: z.array(AiCapability),
   lastCheckedAt: z.string().datetime().optional(),
   disclosureUrl: z.string().url(),
+  accountLabel: z.string().nullable().optional(),
+  availableModels: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+  accounts: z.array(z.object({ id: z.string(), label: z.string() })).optional(),
+  activeAccountId: z.string().nullable().optional(),
 });
 export type AiProviderStatus = z.infer<typeof AiProviderStatus>;
 
 export const AiRoutingPreference = z.object({
-  order: z.array(AiProviderId).length(3),
+  order: z.array(AiProviderId).length(4).refine(order => new Set(order).size === 4, "Include each provider exactly once"),
 });
 export type AiRoutingPreference = z.infer<typeof AiRoutingPreference>;
 

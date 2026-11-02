@@ -1,6 +1,6 @@
 import { workflowApi, defaultCheckinSettings } from "../src/features/student/workflowApi";
 import axe from "axe-core";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as native from "../src/native";
@@ -146,7 +146,9 @@ test.each([
   const close = vi.fn();
   const user = userEvent.setup();
   render(<AiSettings aiProviders={providers} setAiProviders={vi.fn()} close={close} setToast={vi.fn()} />);
-  await user.type(await screen.findByLabelText("API key"), "synthetic-draft-key");
+  const openai = (await screen.findByText("OpenAI", { exact: true })).closest("article")!;
+  await user.click(within(openai).getByRole("button", { name: "Configure" }));
+  await user.type(screen.getByLabelText("API key"), "synthetic-draft-key");
   const model = screen.getByLabelText("Model");
   const initialModel = (model as HTMLInputElement).value;
   const trigger = screen.getByRole("button", { name: `${name} setup tutorial` });
@@ -203,10 +205,9 @@ test("AI settings require age/billing consent and clear the submitted secret eve
       setToast={vi.fn()}
     />,
   );
-  await user.type(
-    await screen.findByLabelText("API key"),
-    "synthetic-provider-key-for-test",
-  );
+  const openai = (await screen.findByText("OpenAI", { exact: true })).closest("article")!;
+  await user.click(within(openai).getByRole("button", { name: "Configure" }));
+  await user.type(screen.getByLabelText("API key"), "synthetic-provider-key-for-test");
   const connect = screen.getByRole("button", { name: "Validate and connect" });
   expect(connect).toBeDisabled();
   await user.click(screen.getByRole("checkbox", { name: /I am 18 or older/ }));
@@ -217,6 +218,71 @@ test("AI settings require age/billing consent and clear the submitted secret eve
   expect(screen.getByLabelText("API key")).toHaveValue("");
   expect(save).toHaveBeenCalledOnce();
   expect(save.mock.calls[0][3]).toBe(true);
+});
+
+test("ChatGPT is the primary connector and sign-in requires account consent without an API key", async () => {
+  const providers = await native.listAiProviders();
+  expect(providers[0].provider).toBe("chatgpt");
+  vi.spyOn(native, "listAiProviders").mockResolvedValue(providers);
+  vi.spyOn(native, "getAiUsage").mockResolvedValue([]);
+  const connected = providers.map(p => p.provider === "chatgpt" ? { ...p, connected: true, healthy: true, model: "account-model", activeAccountId: "oaiapp_fixture" } : p);
+  const login = vi.spyOn(native, "connectChatgpt").mockResolvedValue(connected);
+  const saveKey = vi.spyOn(native, "saveAiProviderKey");
+  const update = vi.fn(); const toast = vi.fn();
+  const user = userEvent.setup();
+  render(<AiSettings aiProviders={providers} setAiProviders={update} close={vi.fn()} setToast={toast} />);
+  const signIn = await screen.findByRole("button", { name: "Continue with ChatGPT" });
+  expect(signIn).toBeDisabled();
+  expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /I am 18 or older/ }));
+  await user.click(signIn);
+  await waitFor(() => expect(update).toHaveBeenLastCalledWith(connected));
+  expect(login).toHaveBeenCalledWith(undefined, true);
+  expect(saveKey).not.toHaveBeenCalled();
+  expect(toast).toHaveBeenCalledWith("ChatGPT connected as your primary connector.");
+});
+
+test("pending ChatGPT sign-in can be cancelled without reporting success", async () => {
+  const providers = await native.listAiProviders();
+  vi.spyOn(native, "listAiProviders").mockResolvedValue(providers);
+  vi.spyOn(native, "getAiUsage").mockResolvedValue([]);
+  let fail!: (reason: Error) => void;
+  vi.spyOn(native, "connectChatgpt").mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+  const cancel = vi.spyOn(native, "cancelChatgptLogin").mockResolvedValue();
+  const toast = vi.fn(); const user = userEvent.setup();
+  render(<AiSettings aiProviders={providers} setAiProviders={vi.fn()} close={vi.fn()} setToast={toast} />);
+  await screen.findByRole("button", { name: "Continue with ChatGPT" });
+  await user.click(screen.getByRole("checkbox", { name: /I am 18 or older/ }));
+  await user.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
+  const button = screen.getByRole("button", { name: "Cancel sign-in" });
+  expect(button).toBeEnabled();
+  await user.click(button); expect(cancel).toHaveBeenCalledOnce();
+  await act(async () => fail(new Error("ChatGPT sign-in was cancelled.")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("sign-in was cancelled");
+  expect(toast).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled();
+});
+
+test("ChatGPT settings show the active registration and only its available models", async () => {
+  const providers = (await native.listAiProviders()).map(p => p.provider === "chatgpt" ? {
+    ...p, connected: true, healthy: true, model: "model-a", activeAccountId: "oaiapp_one", accountLabel: "Student · one",
+    accounts: [{ id: "oaiapp_one", label: "Student · one" }, { id: "oaiapp_two", label: "Student · two" }],
+    availableModels: [{ id: "model-a", name: "Model A" }, { id: "model-b", name: "Model B" }],
+  } : p);
+  vi.spyOn(native, "listAiProviders").mockResolvedValue(providers);
+  vi.spyOn(native, "getAiUsage").mockResolvedValue([]);
+  const change = vi.spyOn(native, "setChatgptModel").mockResolvedValue(providers);
+  const login = vi.spyOn(native, "connectChatgpt").mockResolvedValue(providers);
+  const user = userEvent.setup();
+  render(<AiSettings aiProviders={providers} setAiProviders={vi.fn()} close={vi.fn()} setToast={vi.fn()} />);
+  const account = await screen.findByLabelText("ChatGPT account");
+  expect(account).toHaveValue("oaiapp_one");
+  await user.selectOptions(screen.getByLabelText("ChatGPT model"), "model-b");
+  expect(change).toHaveBeenCalledWith("model-b");
+  await user.selectOptions(account, "oaiapp_two");
+  await user.click(screen.getByRole("checkbox", { name: /I am 18 or older/ }));
+  await user.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
+  expect(login).toHaveBeenCalledWith("oaiapp_two", true);
 });
 
 const archive: native.BackupPreview = {

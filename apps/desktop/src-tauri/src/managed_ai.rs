@@ -10,9 +10,9 @@ const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 pub enum ManagedAiError {
     #[error("an AI provider is not configured in this build")]
     NotConfigured,
-    #[error("Coqui could not save or read the API key in the OS credential vault. Unlock the vault or allow Coqui access, then reconnect the provider")]
+    #[error("Coqui could not save or read AI credentials in the OS credential vault. Unlock the vault or allow Coqui access, then reconnect the provider")]
     Credential,
-    #[error("AI provider rejected the API key")]
+    #[error("AI provider rejected the credentials")]
     Unauthorized,
     #[error("AI provider input is invalid: {0}")]
     InvalidInput(String),
@@ -26,6 +26,8 @@ pub enum ManagedAiError {
     Rejected(u16),
     #[error("the AI provider returned an invalid review response; local data was not changed")]
     InvalidResponse,
+    #[error("{0}")]
+    Chatgpt(String),
 }
 
 pub type Result<T> = std::result::Result<T, ManagedAiError>;
@@ -191,12 +193,16 @@ pub(crate) fn validate_input(
     locale: &str,
     image: Option<&AiImage>,
 ) -> Result<()> {
-    let excerpt_chars = excerpt.chars().count();
     if access_token.len() < 32 || access_token.len() > 16_384 {
         return Err(ManagedAiError::InvalidInput(
             "the account session is invalid".into(),
         ));
     }
+    validate_content(excerpt, locale, image)
+}
+
+pub(crate) fn validate_content(excerpt: &str, locale: &str, image: Option<&AiImage>) -> Result<()> {
+    let excerpt_chars = excerpt.chars().count();
     if excerpt.trim().is_empty()
         || excerpt.trim() != excerpt
         || excerpt_chars > MAX_EXCERPT_CHARS

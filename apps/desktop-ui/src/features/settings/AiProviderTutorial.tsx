@@ -2,6 +2,18 @@ import { Modal } from "../../components/Modal";
 import type { AiProviderId } from "../../native";
 
 export const providerGuides = {
+  chatgpt: {
+    name: "ChatGPT",
+    availability: "Use your ChatGPT subscription, subject to account eligibility and usage limits.",
+    account: "Choose Continue with ChatGPT in Coqui. Sign in and approve Coqui’s access in your system browser.",
+    key: "Allow ChatGPT plan usage when prompted, then return to Coqui. No API key is needed.",
+    keyUrl: "https://developers.openai.com/siwc/token-sharing-open-source/sign-in",
+    keyLabel: "Read the ChatGPT sign-in guide",
+    billing: "Requests use the allowance you authorize for Coqui. Review your app limits and any credit permissions in ChatGPT Settings → Usage.",
+    billingUrl: "https://chatgpt.com/settings/usage",
+    billingLabel: "Manage ChatGPT usage and app access",
+    docsUrl: "https://developers.openai.com/siwc/token-sharing-open-source",
+  },
   gemini: {
     name: "Google Gemini",
     availability: "Free tier available for eligible models, within usage limits.",
@@ -57,12 +69,12 @@ export function AiProviderTutorial({ provider, close }: { provider: AiProviderId
     <Modal title={`${guide.name} setup tutorial`} subtitle={guide.availability} close={close} className="ai-provider-tutorial">
       <ol className="ai-tutorial-steps">
         <li><h3>Sign in to your provider</h3><p>{guide.account}</p><a href={guide.keyUrl} target="_blank" rel="noreferrer">{guide.keyLabel} (opens in a new tab)</a></li>
-        <li><h3>Create and copy your API key</h3><p>{guide.key}</p></li>
+        <li><h3>{provider === "chatgpt" ? "Authorize plan usage" : "Create and copy your API key"}</h3><p>{guide.key}</p></li>
         <li><h3>Check free access and billing</h3><p>{guide.billing}</p><a href={guide.billingUrl} target="_blank" rel="noreferrer">{guide.billingLabel} (opens in a new tab)</a></li>
-        <li><h3>Connect in Coqui</h3><p>Close this tutorial and choose Configure on the {guide.name} card. Paste your key into API key, use a model available to your account, confirm the age and billing acknowledgment, then choose Validate and connect.</p></li>
+        <li><h3>Connect in Coqui</h3>{provider === "chatgpt" ? <p>Confirm the age and account acknowledgment, then choose Continue with ChatGPT. After sign-in, choose an available model. ChatGPT becomes your primary connector; you can change the provider order at any time.</p> : <p>Close this tutorial and choose Configure on the {guide.name} card. Paste your key into API key, use a model available to your account, confirm the age and billing acknowledgment, then choose Validate and connect.</p>}</li>
       </ol>
-      <p className="field-help">Keep your key private. In the desktop app, Coqui saves it in your OS credential vault. If validation fails, check your key, model access, quota, and credit balance.</p>
-      <a href={guide.docsUrl} target="_blank" rel="noreferrer">Official key setup guide (opens in a new tab)</a>
+      <p className="field-help">{provider === "chatgpt" ? "Coqui stores your ChatGPT credentials in the OS credential vault. You can disconnect in Coqui or revoke access in ChatGPT Settings → Usage." : <>Keep your key private. In the desktop app, Coqui saves it in your OS credential vault. If validation fails, check your key, model access, quota, and credit balance.</>}</p>
+      <a href={guide.docsUrl} target="_blank" rel="noreferrer">{provider === "chatgpt" ? "Official ChatGPT connection guide" : "Official key setup guide"} (opens in a new tab)</a>
       <div className="modal-actions"><button className="outline" onClick={close}>Back to provider settings</button></div>
     </Modal>
   );

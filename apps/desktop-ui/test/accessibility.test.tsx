@@ -42,7 +42,7 @@ test("every nested Settings page is reachable and passes automated accessibility
   await screen.findByRole("heading", { name: "Settings", exact: true }, { timeout: 8000 });
   const sections = [
     [/Canvas Calendar-link/, "Connect Canvas"],
-    [/AI providers OpenAI/, "AI providers"],
+    [/AI providers ChatGPT subscription/, "AI providers"],
     [/Account & sync Optional/, "Optional Student Center account"],
     [/Backup & recovery Portable/, "Encrypted backups"],
     [/Privacy & security App lock/, "App lock"],

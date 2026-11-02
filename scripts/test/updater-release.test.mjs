@@ -78,7 +78,7 @@ test("updater manifest refuses an unsigned artifact", async () => {
 
 test("unsigned prereleases publish only after both packaged desktop lanes", async () => {
   const workflow = await readFile(".github/workflows/release.yml", "utf8");
-  assert.match(workflow, /tags: \["v\*", "!v0\.13\.0-rc\.1"\]/);
+  assert.match(workflow, /tags: \["v\*", "!v0\.13\.0-rc\.1", "!v0\.13\.0-rc\.8"\]/);
   assert.match(workflow, /release_mode:[\s\S]*default: unsigned/);
   assert.match(workflow, /name: Build unsigned installers[\s\S]*npm run desktop:build/);
   assert.match(workflow, /publish-unsigned:\n\s+needs: build-packages/);

@@ -4,6 +4,7 @@ mod auth;
 mod calendar_edits;
 mod academic_intelligence;
 mod ai_providers;
+mod chatgpt;
 mod automatic_planning;
 mod backup;
 mod canvas;
@@ -729,6 +730,10 @@ struct AiProviderStatus {
     capabilities: Vec<String>,
     last_checked_at: Option<String>,
     disclosure_url: String,
+    account_label: Option<String>,
+    available_models: Vec<chatgpt::Model>,
+    accounts: Vec<chatgpt::Account>,
+    active_account_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -5381,7 +5386,8 @@ fn reset_local_database(state: &AppState) -> Result<()> {
         }
     }
     for provider in ai_providers::ProviderId::ALL {
-        let _ = ai_providers::remove_key(provider);
+        if provider == ai_providers::ProviderId::Chatgpt { let _ = chatgpt::forget_all(); }
+        else { let _ = ai_providers::remove_key(provider); }
     }
     Ok(())
 }
@@ -8138,7 +8144,12 @@ fn ai_capability_name(capability: managed_ai::AiCapability) -> &'static str {
 fn ai_provider_order(conn: &Connection) -> Vec<ai_providers::ProviderId> {
     let saved = conn.query_row("SELECT value FROM settings WHERE key='ai_provider_order'", [], |row| row.get::<_, String>(0)).ok();
     let parsed = saved.and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok()).unwrap_or_default();
-    let mut order = parsed.into_iter().filter_map(|value| value.parse().ok()).collect::<Vec<_>>();
+    let mut order = Vec::new();
+    for provider in parsed.into_iter().filter_map(|value| value.parse().ok()) {
+        if !order.contains(&provider) { order.push(provider); }
+    }
+    // Existing three-provider preferences gain ChatGPT as their primary once.
+    if !order.contains(&ai_providers::ProviderId::Chatgpt) { order.insert(0, ai_providers::ProviderId::Chatgpt); }
     for provider in ai_providers::ProviderId::ALL { if !order.contains(&provider) { order.push(provider); } }
     order
 }
@@ -8178,7 +8189,7 @@ fn ai_capability_requirements(capability: managed_ai::AiCapability) -> AiCapabil
 
 fn ai_provider_features(provider: ai_providers::ProviderId) -> AiProviderFeatures {
     match provider {
-        ai_providers::ProviderId::Openai => AiProviderFeatures { text:true, images:true, structured_output:true, streaming:true, context_tokens:128_000 },
+        ai_providers::ProviderId::Chatgpt | ai_providers::ProviderId::Openai => AiProviderFeatures { text:true, images:true, structured_output:true, streaming:true, context_tokens:128_000 },
         ai_providers::ProviderId::Anthropic | ai_providers::ProviderId::Gemini => AiProviderFeatures { text:true, images:true, structured_output:true, streaming:true, context_tokens:1_000_000 },
     }
 }
@@ -8210,7 +8221,7 @@ fn resolve_ai_provider(conn: &Connection, capability: managed_ai::AiCapability) 
             Err(error) => return Err(error.into()),
         }
     }
-    Err(AppError::Invalid("Connect OpenAI, Anthropic, or Gemini in Settings before using AI".into()))
+    Err(AppError::Invalid("Connect ChatGPT, OpenAI, Anthropic, or Gemini in Settings before using AI".into()))
 }
 
 fn all_ai_capabilities() -> Vec<String> {
@@ -8233,10 +8244,52 @@ fn persist_ai_health(conn: &Connection, provider: ai_providers::ProviderId, heal
 }
 
 #[tauri::command]
+async fn connect_chatgpt(app: tauri::AppHandle, state: tauri::State<'_, AppState>, account_id: Option<String>, age_confirmed: bool) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    if !age_confirmed { return Err(AppError::Invalid("Confirm that you are 18 or older before connecting ChatGPT".into())); }
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let model = chatgpt::connect(account_id,
+            |url| app.opener().open_url(url, None::<&str>).map_err(|_| managed_ai::ManagedAiError::Chatgpt("Coqui could not open your browser. Continue with ChatGPT to try again.".into())),
+            || state.require_unlocked().is_ok())?;
+        state.require_unlocked()?;
+        let db = state.db.lock().unwrap();
+        let tx = db.unchecked_transaction()?;
+        let mut order = ai_provider_order(&tx);
+        order.retain(|p| *p != ai_providers::ProviderId::Chatgpt);
+        order.insert(0, ai_providers::ProviderId::Chatgpt);
+        tx.execute("INSERT INTO settings(key,value) VALUES('ai_provider_order',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(&order).unwrap()])?;
+        if let Some(model) = &model {
+            tx.execute("INSERT INTO settings(key,value) VALUES('ai_model_chatgpt',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [model])?;
+        }
+        persist_ai_health(&tx, ai_providers::ProviderId::Chatgpt, model.is_some())?;
+        tx.commit()?; drop(db);
+        list_ai_provider_statuses(&state)
+    }).await.map_err(|error| AppError::Background(error.to_string()))?
+}
+
+#[tauri::command]
+fn cancel_chatgpt_login(state: tauri::State<AppState>) -> Result<()> {
+    state.require_unlocked()?;
+    chatgpt::cancel_login(); Ok(())
+}
+
+#[tauri::command]
+fn set_chatgpt_model(state: tauri::State<AppState>, model: String) -> Result<Vec<AiProviderStatus>> {
+    state.require_unlocked()?;
+    let (_, _, models, _) = chatgpt::accounts()?;
+    if !models.iter().any(|m| m.id == model) { return Err(AppError::Invalid("Choose a model available to your ChatGPT account".into())); }
+    let db = state.db.lock().unwrap();
+    db.execute("INSERT INTO settings(key,value) VALUES('ai_model_chatgpt',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [model])?;
+    drop(db); list_ai_provider_statuses(&state)
+}
+
+#[tauri::command]
 async fn save_ai_provider_key(state: tauri::State<'_, AppState>, provider: String, key: String, model: Option<String>, age_confirmed: bool) -> Result<Vec<AiProviderStatus>> {
     state.require_unlocked()?;
     if !age_confirmed { return Err(AppError::Invalid("Confirm that you are 18 or older before connecting an AI provider".into())); }
     let provider: ai_providers::ProviderId = provider.parse()?;
+    if provider == ai_providers::ProviderId::Chatgpt { return Err(AppError::Invalid("Use Continue with ChatGPT to connect a subscription".into())); }
     let model = model.filter(|value| !value.trim().is_empty()).map(|value| value.trim().to_owned());
     if model.as_ref().is_some_and(|value| value.len() > 200) { return Err(AppError::Invalid("model is too long".into())); }
     let state = state.inner().clone();
@@ -8258,11 +8311,12 @@ fn list_ai_provider_statuses(state: &AppState) -> Result<Vec<AiProviderStatus>> 
     let db = state.db.lock().unwrap();
     Ok(ai_provider_order(&db).into_iter().map(|provider| {
         let key = ai_providers::optional_key(provider)?;
-        let suffix = key.as_ref().map(|value| value.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>());
+        let (accounts, active_account_id, available_models, account_label) = if provider == ai_providers::ProviderId::Chatgpt { chatgpt::accounts()? } else { (Vec::new(),None,Vec::new(),None) };
+        let suffix = key.as_ref().filter(|_| provider != ai_providers::ProviderId::Chatgpt).map(|value| value.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>());
         let healthy = db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_healthy_{}", provider.as_str())], |row| row.get::<_, String>(0)).ok().as_deref() == Some("true");
         Ok(AiProviderStatus { provider:provider.as_str().into(), connected:key.is_some(), healthy:key.is_some() && healthy, model:ai_model(&db,provider),
             masked_key:suffix.map(|value| format!("••••{value}")), capabilities:all_ai_capabilities(),
-            last_checked_at:db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}",provider.as_str())], |row| row.get(0)).ok(), disclosure_url:provider.disclosure_url().into() })
+            last_checked_at:db.query_row("SELECT value FROM settings WHERE key=?1", params![format!("ai_checked_{}",provider.as_str())], |row| row.get(0)).ok(), disclosure_url:provider.disclosure_url().into(), account_label, available_models, accounts, active_account_id })
     }).collect::<Result<Vec<_>>>()?)
 }
 
@@ -8280,19 +8334,23 @@ async fn test_ai_provider(state: tauri::State<'_, AppState>, provider: String) -
 }
 
 #[tauri::command]
-fn remove_ai_provider(state: tauri::State<AppState>, provider: String) -> Result<Vec<AiProviderStatus>> {
+async fn remove_ai_provider(state: tauri::State<'_, AppState>, provider: String) -> Result<Vec<AiProviderStatus>> {
     state.require_unlocked()?;
     let provider: ai_providers::ProviderId = provider.parse()?;
-    ai_providers::remove_key(provider)?;
-    let db = state.db.lock().unwrap(); persist_ai_health(&db, provider, false)?; drop(db);
-    list_ai_provider_statuses(&state)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = ai_providers::remove_key(provider);
+        let db = state.db.lock().unwrap(); persist_ai_health(&db, provider, false)?; drop(db);
+        result?;
+        list_ai_provider_statuses(&state)
+    }).await.map_err(|error| AppError::Background(error.to_string()))?
 }
 
 #[tauri::command]
 fn set_ai_provider_order(state: tauri::State<AppState>, order: Vec<String>) -> Result<Vec<AiProviderStatus>> {
     state.require_unlocked()?;
     let parsed = order.iter().map(|value| value.parse::<ai_providers::ProviderId>()).collect::<std::result::Result<Vec<_>,_>>()?;
-    if parsed.len()!=3 || parsed.iter().collect::<std::collections::HashSet<_>>().len()!=3 { return Err(AppError::Invalid("provider order must contain each provider exactly once".into())); }
+    if parsed.len()!=ai_providers::ProviderId::ALL.len() || parsed.iter().collect::<std::collections::HashSet<_>>().len()!=ai_providers::ProviderId::ALL.len() { return Err(AppError::Invalid("provider order must contain each provider exactly once".into())); }
     let db=state.db.lock().unwrap();
     db.execute("INSERT INTO settings(key,value) VALUES('ai_provider_order',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![serde_json::to_string(&order).unwrap_or_default()])?;
     drop(db); list_ai_provider_statuses(&state)
@@ -8489,6 +8547,7 @@ fn ai_error_category(error: &managed_ai::ManagedAiError) -> &'static str {
         managed_ai::ManagedAiError::Rejected(400) => "rejected_400",
         managed_ai::ManagedAiError::Rejected(_) => "rejected",
         managed_ai::ManagedAiError::InvalidResponse => "invalid_response",
+        managed_ai::ManagedAiError::Chatgpt(_) => "chatgpt",
     }
 }
 
@@ -10870,7 +10929,8 @@ fn install_staged_profile(state: &AppState, staged: backup::StagedArchive) -> Re
         credential_targets.dedup();
         remove_integration_credentials(&credential_targets)?;
         for provider in ai_providers::ProviderId::ALL {
-            ai_providers::remove_key(provider)?;
+            if provider == ai_providers::ProviderId::Chatgpt { chatgpt::forget_all()?; }
+            else { ai_providers::remove_key(provider)?; }
         }
         automatic_planning::clear_restore_authorization(&replacement)?;
         fs::remove_file(&journal_path)?;
@@ -11208,6 +11268,9 @@ fn main() {
             automatic_planning::apply_automatic_planning,
             automatic_planning::discard_automatic_planning,
             list_ai_providers,
+            connect_chatgpt,
+            cancel_chatgpt_login,
+            set_chatgpt_model,
             save_ai_provider_key,
             test_ai_provider,
             remove_ai_provider,
@@ -11477,11 +11540,18 @@ mod tests {
         assert_eq!(
             ai_provider_order(&conn),
             vec![
+                ai_providers::ProviderId::Chatgpt,
                 ai_providers::ProviderId::Gemini,
                 ai_providers::ProviderId::Anthropic,
                 ai_providers::ProviderId::Openai,
             ],
         );
+        conn.execute("UPDATE settings SET value=?1 WHERE key='ai_provider_order'", [r#"["gemini","chatgpt","openai","anthropic"]"#]).unwrap();
+        assert_eq!(ai_provider_order(&conn)[0], ai_providers::ProviderId::Gemini);
+        conn.execute("UPDATE settings SET value=?1 WHERE key='ai_provider_order'", [r#"["gemini","gemini","unknown"]"#]).unwrap();
+        let repaired = ai_provider_order(&conn);
+        assert_eq!(repaired[0], ai_providers::ProviderId::Chatgpt);
+        assert_eq!(repaired.len(), ai_providers::ProviderId::ALL.len());
         assert_eq!(
             ai_model(&conn, ai_providers::ProviderId::Openai),
             ai_providers::ProviderId::Openai.default_model(),
@@ -11684,6 +11754,9 @@ mod tests {
             "apply_automatic_planning",
             "discard_automatic_planning",
             "list_ai_providers",
+            "connect_chatgpt",
+            "cancel_chatgpt_login",
+            "set_chatgpt_model",
             "save_ai_provider_key",
             "test_ai_provider",
             "remove_ai_provider",

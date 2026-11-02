@@ -3118,6 +3118,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonwebtoken"
+version = "9.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+dependencies = [
+ "base64 0.22.1",
+ "js-sys",
+ "ring",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4632,6 +4645,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -5448,7 +5462,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "student-center"
-version = "0.13.0-rc.7"
+version = "0.13.0-rc.8"
 dependencies = [
  "age",
  "argon2",
@@ -5463,6 +5477,7 @@ dependencies = [
  "iana-time-zone",
  "ical",
  "infer 0.22.0",
+ "jsonwebtoken",
  "keyring",
  "libloading 0.8.9",
  "pdf-extract",

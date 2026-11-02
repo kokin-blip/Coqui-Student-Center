@@ -318,11 +318,14 @@ mod tests {
 
     #[test]
     fn undo_retains_unchanged_elapsed_locked_sessions() {
-        let (_dir,conn,now,_task,block)=fixture(60);
+        let (_dir,conn,now,task,_block)=fixture(60);
         let historical = insert_task(&conn,"Missed locked session",30,None,None).unwrap();
         conn.execute("INSERT INTO plan_blocks(id,task_id,starts_at,ends_at,title,kind,locked,reason_codes) VALUES('historical',?1,'2026-10-04T17:00:00Z','2026-10-04T17:30:00Z','Missed locked session','study',1,'[]')", [&historical]).unwrap();
         regenerate_plan_for_trigger(&conn,Some(now.with_timezone(&Local)),planner::PlannerTrigger::Initial).unwrap();
         let before=all_plan_blocks(&conn).unwrap();
+        // Regeneration can replace a flexible block when the new task changes
+        // its slot. Exercise the current block rather than a stale identifier.
+        let block=before.iter().find(|b|b.task_id.as_deref()==Some(&task)).unwrap();
         move_block(&conn,&block.id,"2026-10-05T12:00:00Z","2026-10-05T13:00:00Z",now).unwrap();
         undo(&conn,now).unwrap();
         assert_eq!(all_plan_blocks(&conn).unwrap(),before);

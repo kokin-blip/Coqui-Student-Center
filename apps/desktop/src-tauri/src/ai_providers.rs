@@ -11,13 +11,14 @@ const MAX_GROUNDED_SOURCE_CHARS: usize = 60_000;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
-pub enum ProviderId { Openai, Anthropic, Gemini }
+pub enum ProviderId { Chatgpt, Openai, Anthropic, Gemini }
 
 impl ProviderId {
-    pub const ALL: [Self; 3] = [Self::Openai, Self::Anthropic, Self::Gemini];
-    pub fn as_str(self) -> &'static str { match self { Self::Openai => "openai", Self::Anthropic => "anthropic", Self::Gemini => "gemini" } }
-    pub fn default_model(self) -> &'static str { match self { Self::Openai => "gpt-5.4-mini-2026-03-17", Self::Anthropic => "claude-sonnet-5", Self::Gemini => "gemini-3.7-flash" } }
+    pub const ALL: [Self; 4] = [Self::Chatgpt, Self::Openai, Self::Anthropic, Self::Gemini];
+    pub fn as_str(self) -> &'static str { match self { Self::Chatgpt => "chatgpt", Self::Openai => "openai", Self::Anthropic => "anthropic", Self::Gemini => "gemini" } }
+    pub fn default_model(self) -> &'static str { match self { Self::Chatgpt => "", Self::Openai => "gpt-5.4-mini-2026-03-17", Self::Anthropic => "claude-sonnet-5", Self::Gemini => "gemini-3.7-flash" } }
     pub fn disclosure_url(self) -> &'static str { match self {
+        Self::Chatgpt => "https://openai.com/policies/privacy-policy/",
         Self::Openai => "https://openai.com/policies/api-data-usage-policies/",
         Self::Anthropic => "https://privacy.claude.com/en/articles/7996868-how-long-do-you-store-my-organization-s-data",
         Self::Gemini => "https://ai.google.dev/gemini-api/terms",
@@ -27,7 +28,7 @@ impl ProviderId {
 impl std::str::FromStr for ProviderId {
     type Err = ManagedAiError;
     fn from_str(value: &str) -> Result<Self, Self::Err> { match value {
-        "openai" => Ok(Self::Openai), "anthropic" => Ok(Self::Anthropic), "gemini" => Ok(Self::Gemini),
+        "chatgpt" => Ok(Self::Chatgpt), "openai" => Ok(Self::Openai), "anthropic" => Ok(Self::Anthropic), "gemini" => Ok(Self::Gemini),
         _ => Err(ManagedAiError::InvalidInput("AI provider is invalid".into())),
     }}
 }
@@ -37,6 +38,7 @@ pub fn credential_entry(provider: ProviderId) -> Result<keyring::Entry, keyring:
 }
 
 pub fn save_key(provider: ProviderId, key: Zeroizing<String>) -> Result<(), ManagedAiError> {
+    if provider == ProviderId::Chatgpt { return Err(ManagedAiError::InvalidInput("Use Continue with ChatGPT to connect a subscription".into())); }
     validate_key(&key)?;
     credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.set_password(&key).map_err(|_| ManagedAiError::Credential)?;
     // Use a new entry: reporting success requires a read from the OS vault,
@@ -51,6 +53,7 @@ fn verify_saved_key(expected: &str, stored: Result<String, keyring::Error>) -> R
 }
 
 pub fn load_key(provider: ProviderId) -> Result<Zeroizing<String>, ManagedAiError> {
+    if provider == ProviderId::Chatgpt { return crate::chatgpt::credential()?.ok_or(ManagedAiError::NotConfigured); }
     let key = credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.get_password().map(Zeroizing::new).map_err(|error| match error {
         keyring::Error::NoEntry => ManagedAiError::NotConfigured,
         _ => ManagedAiError::Credential,
@@ -68,10 +71,19 @@ pub fn optional_key(provider: ProviderId) -> Result<Option<Zeroizing<String>>, M
 }
 
 pub fn remove_key(provider: ProviderId) -> Result<(), ManagedAiError> {
+    if provider == ProviderId::Chatgpt { return crate::chatgpt::disconnect(); }
     match credential_entry(provider).map_err(|_| ManagedAiError::Credential)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(_) => Err(ManagedAiError::Credential),
     }
+}
+
+fn validate_credential(provider: ProviderId, key: &str) -> Result<(), ManagedAiError> {
+    if provider == ProviderId::Chatgpt {
+        if key.starts_with("oaiapp_") && key.len() <= 200 { return Ok(()); }
+        return Err(ManagedAiError::NotConfigured);
+    }
+    validate_key(key)
 }
 
 fn validate_key(key: &str) -> Result<(), ManagedAiError> {
@@ -88,9 +100,11 @@ fn client() -> Result<Client, ManagedAiError> {
 }
 
 pub fn test_connection(provider: ProviderId, key: &str) -> Result<(), ManagedAiError> {
-    validate_key(key)?;
+    if provider == ProviderId::Chatgpt { return crate::chatgpt::test_connection(key); }
+    validate_credential(provider, key)?;
     let client = client()?;
     let response = match provider {
+        ProviderId::Chatgpt => unreachable!(),
         ProviderId::Openai => client.get("https://api.openai.com/v1/models").bearer_auth(key).send(),
         ProviderId::Anthropic => client.get("https://api.anthropic.com/v1/models").header("x-api-key", key).header("anthropic-version", "2023-06-01").send(),
         ProviderId::Gemini => client.get("https://generativelanguage.googleapis.com/v1beta/models").header("x-goog-api-key", key).send(),
@@ -107,12 +121,13 @@ pub fn request(
     locale: &str,
     image: Option<&AiImage>,
 ) -> Result<AiResponse, ManagedAiError> {
-    validate_key(key)?;
-    managed_ai::validate_input(key, excerpt, locale, image)?;
+    validate_credential(provider, key)?;
+    managed_ai::validate_content(excerpt, locale, image)?;
     if model.trim().is_empty() || model.len() > 200 { return Err(ManagedAiError::InvalidInput("model is invalid".into())); }
     let prompt = prompt(capability, excerpt, locale);
     let schema = response_schema();
     let response = match provider {
+        ProviderId::Chatgpt => request_chatgpt(key, model, &prompt, image, &schema)?,
         ProviderId::Openai => request_openai(key, model, &prompt, image, &schema)?,
         ProviderId::Anthropic => request_anthropic(key, model, &prompt, image, &schema)?,
         ProviderId::Gemini => request_gemini(key, model, &prompt, image, &schema)?,
@@ -157,9 +172,9 @@ pub struct WritingFeedbackResult { pub suggestions:Vec<WritingSuggestion>, pub u
 struct WritingFeedbackBody { suggestions:Vec<WritingSuggestion> }
 
 pub fn request_writing_feedback(provider:ProviderId,key:&str,model:&str,draft:&str,profile_snippets:&[String],kinds:&[String])->Result<WritingFeedbackResult,ManagedAiError>{
-    validate_key(key)?;if draft.trim().is_empty()||draft.chars().count()>20_000||profile_snippets.len()>20||profile_snippets.iter().any(|value|value.trim().is_empty()||value.chars().count()>500)||kinds.is_empty()||kinds.len()>5||kinds.iter().any(|value|!matches!(value.as_str(),"grammar"|"structure"|"specificity"|"shortening"|"brainstorm")){return Err(ManagedAiError::InvalidInput("scholarship writing request is invalid".into()));}
+    validate_credential(provider, key)?;if draft.trim().is_empty()||draft.chars().count()>20_000||profile_snippets.len()>20||profile_snippets.iter().any(|value|value.trim().is_empty()||value.chars().count()>500)||kinds.is_empty()||kinds.len()>5||kinds.iter().any(|value|!matches!(value.as_str(),"grammar"|"structure"|"specificity"|"shortening"|"brainstorm")){return Err(ManagedAiError::InvalidInput("scholarship writing request is invalid".into()));}
     let prompt=format!("Review a scholarship essay without inventing experiences, achievements, identity, finances, or facts. Return small optional diffs only. originalQuote must be an exact non-empty substring of DRAFT. replacement must preserve the student's facts and voice. supportingProfileQuotes may only contain exact strings from PROFILE_SNIPPETS. If support is absent, suggest a question or structural edit without adding facts. Requested kinds: {}. DRAFT_JSON={} PROFILE_SNIPPETS_JSON={}",kinds.join(","),serde_json::to_string(draft).map_err(|_|ManagedAiError::InvalidInput("draft is invalid".into()))?,serde_json::to_string(profile_snippets).map_err(|_|ManagedAiError::InvalidInput("profile snippets are invalid".into()))?);
-    let schema=writing_feedback_schema();let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let schema=writing_feedback_schema();let (value,usage)=match provider{ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     Ok(WritingFeedbackResult{suggestions:validate_writing_feedback_value(value,draft,profile_snippets)?,usage})
 }
 
@@ -174,7 +189,7 @@ struct ScheduleAnalysisBody { findings:Vec<crate::semester_analysis::AnalysisFin
 fn schedule_analysis_schema()->Value { json!({"type":"object","additionalProperties":false,"properties":{"findings":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","maxLength":160},"detail":{"type":"string","maxLength":1500},"evidenceIds":{"type":"array","minItems":1,"maxItems":6,"items":{"type":"string"}}},"required":["title","detail","evidenceIds"]}}},"required":["findings"]}) }
 
 pub fn request_schedule_analysis(provider:ProviderId,key:&str,model:&str,facts_json:&str,goals_json:&str,roadmap_id:Option<&str>,roadmap_excerpt:Option<&str>,roadmap_format:Option<&str>,rating_evidence:Option<&str>)->Result<(Vec<crate::semester_analysis::AnalysisFinding>,AiUsage),ManagedAiError>{
-    validate_key(key)?;
+    validate_credential(provider, key)?;
     if facts_json.len()>30_000||goals_json.len()>6_000||roadmap_excerpt.is_some_and(|value|value.len()>12_000)||rating_evidence.is_some_and(|value|value.len()>1000){return Err(ManagedAiError::InvalidInput("schedule analysis input is too long".into()));}
     let facts:Value=serde_json::from_str(facts_json).map_err(|_|ManagedAiError::InvalidInput("schedule facts are invalid".into()))?;
     let goals:Value=serde_json::from_str(goals_json).map_err(|_|ManagedAiError::InvalidInput("planner goals are invalid".into()))?;
@@ -183,7 +198,7 @@ pub fn request_schedule_analysis(provider:ProviderId,key:&str,model:&str,facts_j
     if rating_evidence.is_some(){allowed.push("screenshot_rating".into());}
     let prompt=format!("Explain this student's proposed schedule using only the supplied evidence. This is advisory, not a degree audit or enrollment decision. Do not invent prerequisites, degree rules, grades, health facts, professor facts, or missing data. Treat any screenshot rating as unverified, low-weight context and never as a feasibility measure. An unsequenced checksheet does not prescribe term order. Return at most 6 concise findings, each citing one or more exact evidence IDs from ALLOWED_IDS. State uncertainties and useful advisor questions. FACTS_JSON={} GOALS_JSON={} ROADMAP_ID_JSON={} ROADMAP_FORMAT_JSON={} ROADMAP_EXCERPT_JSON={} SCREENSHOT_RATING_JSON={} ALLOWED_IDS_JSON={}",facts,goals,json!(roadmap_id),json!(roadmap_format),json!(roadmap_excerpt),json!(rating_evidence),json!(allowed));
     let schema=schedule_analysis_schema();
-    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let (value,usage)=match provider{ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let body:ScheduleAnalysisBody=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
     if body.findings.len()>6||body.findings.iter().any(|finding|finding.title.trim().is_empty()||finding.title.len()>160||finding.detail.trim().is_empty()||finding.detail.len()>1500||finding.evidence_ids.is_empty()||finding.evidence_ids.iter().any(|id|!allowed.contains(id))){return Err(ManagedAiError::InvalidResponse);}
     Ok((body.findings,usage))
@@ -200,10 +215,10 @@ pub struct RhythmRule { pub kind:String,pub weekday:i64,pub starts_at_local:Stri
 pub struct RhythmProposal { pub sleep_start:String,pub sleep_end:String,pub max_session_minutes:i64,pub break_minutes:i64,pub availability:Vec<RhythmAvailability>,pub days_off:Vec<i64>,pub protected_time_notes:String,pub rhythm_rules:Vec<RhythmRule>,pub summary:String }
 
 pub fn request_weekly_rhythm(provider:ProviderId,key:&str,model:&str,interview:&str)->Result<(RhythmProposal,AiUsage),ManagedAiError>{
-    validate_key(key)?;if interview.trim().is_empty()||interview.chars().count()>8_000{return Err(ManagedAiError::InvalidInput("weekly rhythm interview is invalid".into()));}
+    validate_credential(provider, key)?;if interview.trim().is_empty()||interview.chars().count()>8_000{return Err(ManagedAiError::InvalidInput("weekly rhythm interview is invalid".into()));}
     let prompt=format!("Structure only the routine the student explicitly volunteered. Do not infer school records, identity, health, or obligations. Return a conservative weekly rhythm proposal for mandatory human review. availability contains preferred study windows. rhythmRules contains recurring times that must remain free of generated study sessions; allowed kinds are work, commute, recurring_obligation, meal, exercise, avoid, and protected_free_time. Local times must be HH:MM and weekdays are 0=Sunday through 6=Saturday. INTERVIEW_JSON={}",serde_json::to_string(interview).map_err(|_|ManagedAiError::InvalidInput("weekly rhythm interview is invalid".into()))?);
     let schema=json!({"type":"object","additionalProperties":false,"properties":{"sleepStart":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"sleepEnd":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"maxSessionMinutes":{"type":"integer","minimum":15,"maximum":240},"breakMinutes":{"type":"integer","minimum":0,"maximum":60},"availability":{"type":"array","maxItems":28,"items":{"type":"object","additionalProperties":false,"properties":{"weekday":{"type":"integer","minimum":0,"maximum":6},"startsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"endsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"}},"required":["weekday","startsAtLocal","endsAtLocal"]}},"daysOff":{"type":"array","uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":6}},"protectedTimeNotes":{"type":"string","maxLength":1000},"rhythmRules":{"type":"array","maxItems":70,"items":{"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","enum":["work","commute","recurring_obligation","meal","exercise","avoid","protected_free_time"]},"weekday":{"type":"integer","minimum":0,"maximum":6},"startsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"endsAtLocal":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"label":{"type":"string","minLength":1,"maxLength":100}},"required":["kind","weekday","startsAtLocal","endsAtLocal","label"]}},"summary":{"type":"string","maxLength":1000}},"required":["sleepStart","sleepEnd","maxSessionMinutes","breakMinutes","availability","daysOff","protectedTimeNotes","rhythmRules","summary"]});
-    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let (value,usage)=match provider{ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let proposal:RhythmProposal=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
     let valid_clock=|value:&str|chrono::NaiveTime::parse_from_str(value,"%H:%M").is_ok();
     if !valid_clock(&proposal.sleep_start)||!valid_clock(&proposal.sleep_end)||proposal.availability.is_empty()||proposal.availability.iter().any(|rule|rule.weekday<0||rule.weekday>6||!valid_clock(&rule.starts_at_local)||!valid_clock(&rule.ends_at_local)||rule.starts_at_local>=rule.ends_at_local)||proposal.days_off.iter().any(|day|*day<0||*day>6)||proposal.rhythm_rules.len()>70||proposal.rhythm_rules.iter().any(|rule|rule.weekday<0||rule.weekday>6||!matches!(rule.kind.as_str(),"work"|"commute"|"recurring_obligation"|"meal"|"exercise"|"avoid"|"protected_free_time")||rule.label.trim().is_empty()||rule.label.chars().count()>100||!valid_clock(&rule.starts_at_local)||!valid_clock(&rule.ends_at_local)||rule.starts_at_local>=rule.ends_at_local)||!(15..=240).contains(&proposal.max_session_minutes)||!(0..=60).contains(&proposal.break_minutes){return Err(ManagedAiError::InvalidResponse);}
@@ -227,17 +242,17 @@ fn automatic_planning_prompt(facts:&Value)->String {
 pub fn request_automatic_plan(provider:ProviderId,key:&str,model:&str,facts:&Value)->Result<(crate::automatic_planning::Suggestion,AiUsage),ManagedAiError> {
     let schema=automatic_planning_schema();
     let prompt=automatic_planning_prompt(facts);
-    let (value,usage)=match provider {ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let (value,usage)=match provider {ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let suggestion=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
     Ok((suggestion,usage))
 }
 
 pub fn request_study_rerank(provider:ProviderId,key:&str,model:&str,target_title:&str,candidates:&[StudyRerankCandidate])->Result<(Vec<String>,AiUsage),ManagedAiError>{
-    validate_key(key)?;
+    validate_credential(provider, key)?;
     if target_title.trim().is_empty()||target_title.chars().count()>500||!(2..=5).contains(&candidates.len())||candidates.iter().any(|item|item.title.chars().count()>500||item.topics.len()>20||item.topics.iter().any(|topic|topic.chars().count()>100)){return Err(ManagedAiError::InvalidInput("study rerank input is invalid".into()));}
     let prompt=format!("Order these course-approved study materials by semantic relevance to the target. Use only the supplied titles, types, and topics. Return each candidate ID exactly once. Do not infer document contents. TARGET_JSON={} CANDIDATES_JSON={}",serde_json::to_string(target_title).map_err(|_|ManagedAiError::InvalidInput("study rerank input is invalid".into()))?,serde_json::to_string(candidates).map_err(|_|ManagedAiError::InvalidInput("study rerank input is invalid".into()))?);
     let schema=json!({"type":"object","additionalProperties":false,"properties":{"rankedIds":{"type":"array","minItems":candidates.len(),"maxItems":candidates.len(),"items":{"type":"string"}}},"required":["rankedIds"]});
-    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let (value,usage)=match provider{ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let ranked=value.get("rankedIds").and_then(Value::as_array).ok_or(ManagedAiError::InvalidResponse)?.iter().map(|value|value.as_str().map(str::to_owned).ok_or(ManagedAiError::InvalidResponse)).collect::<Result<Vec<_>,_>>()?;
     validate_study_rerank_order(&ranked,candidates)?;
     Ok((ranked,usage))
@@ -258,11 +273,11 @@ pub struct FundingProfileSuggestion { pub field:String,pub quote:String }
 pub struct FundingProfileProposal { pub suggestions:Vec<FundingProfileSuggestion> }
 
 pub fn request_funding_profile(provider:ProviderId,key:&str,model:&str,interview:&str)->Result<(FundingProfileProposal,AiUsage),ManagedAiError>{
-    validate_key(key)?;
+    validate_credential(provider, key)?;
     if interview.trim().chars().count()<20||interview.chars().count()>4_000{return Err(ManagedAiError::InvalidInput("funding profile interview is invalid".into()));}
     let prompt=format!("Structure only details the student explicitly volunteered for a funding search. Return exact literal quotes from INTERVIEW for suggested fields; never infer citizenship, residency, identity, financial need, GPA, eligibility, or award amount. Do not add facts or normalize quotes. The student must review and edit all suggestions before saving. INTERVIEW_JSON={}",serde_json::to_string(interview).map_err(|_|ManagedAiError::InvalidInput("funding profile interview is invalid".into()))?);
     let schema=json!({"type":"object","additionalProperties":false,"properties":{"suggestions":{"type":"array","maxItems":20,"items":{"type":"object","additionalProperties":false,"properties":{"field":{"type":"string","enum":["school","degree","academicYear","studyLevel","fieldsOfStudy","locations","interests","preferredOpportunityTypes"]},"quote":{"type":"string","maxLength":120}},"required":["field","quote"]}}},"required":["suggestions"]});
-    let (value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let (value,usage)=match provider{ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let proposal:FundingProfileProposal=serde_json::from_value(value).map_err(|_|ManagedAiError::InvalidResponse)?;
     validate_funding_profile_proposal(&proposal,interview)?;
     Ok((proposal,usage))
@@ -285,10 +300,11 @@ pub fn request_grounded(
     question: &str,
     sources: &[GroundedSource],
 ) -> Result<GroundedResult, ManagedAiError> {
-    validate_key(key)?;
+    validate_credential(provider, key)?;
     let prompt = grounded_request_text(capability, question, sources)?;
     let schema = grounded_schema();
     let (value, usage) = match provider {
+        ProviderId::Chatgpt => grounded_chatgpt(key, model, &prompt, &schema)?,
         ProviderId::Openai => grounded_openai(key, model, &prompt, &schema)?,
         ProviderId::Anthropic => grounded_anthropic(key, model, &prompt, &schema)?,
         ProviderId::Gemini => grounded_gemini(key, model, &prompt, &schema)?,
@@ -345,6 +361,22 @@ fn grounded_schema() -> Value {
         },
         "required":["content","unsupported","citations"]
     })
+}
+
+fn grounded_chatgpt(account: &str, model: &str, prompt: &str, schema: &Value) -> Result<(Value,AiUsage), ManagedAiError> {
+    let body=json!({"model":model,"input":[{"role":"user","content":[{"type":"input_text","text":prompt}]}],"text":{"format":{"type":"json_schema","name":"coqui_grounded_study","strict":true,"schema":schema}}});
+    let value=crate::chatgpt::request(account,body)?;
+    let (text,usage)=provider_text_and_usage(ProviderId::Chatgpt,&value)?;
+    Ok((serde_json::from_str(text).map_err(|_|ManagedAiError::InvalidResponse)?,usage))
+}
+
+fn request_chatgpt(account: &str, model: &str, prompt: &str, image: Option<&AiImage>, schema: &Value) -> Result<AiResponse, ManagedAiError> {
+    let mut content=vec![json!({"type":"input_text","text":prompt})];
+    if let Some(image)=image { content.push(json!({"type":"input_image","image_url":format!("data:{};base64,{}",image.mime_type(),image.data())})); }
+    let body=json!({"model":model,"input":[{"role":"user","content":content}],"text":{"format":{"type":"json_schema","name":"coqui_review","strict":true,"schema":schema}}});
+    let value=crate::chatgpt::request(account,body)?;
+    let (text,usage)=provider_text_and_usage(ProviderId::Chatgpt,&value)?;
+    normalized_response(text,model,usage.input_tokens,usage.output_tokens)
 }
 
 fn grounded_openai(key: &str, model: &str, prompt: &str, schema: &Value) -> Result<(Value,AiUsage), ManagedAiError> {
@@ -471,7 +503,7 @@ fn request_gemini_at(endpoint: &str, key: &str, model: &str, prompt: &str, image
 
 fn provider_text_and_usage(provider: ProviderId, value: &Value) -> Result<(&str, AiUsage), ManagedAiError> {
     let (text,input_tokens,output_tokens)=match provider {
-        ProviderId::Openai => (
+        ProviderId::Chatgpt | ProviderId::Openai => (
             value.get("output").and_then(Value::as_array).into_iter().flatten()
                 .flat_map(|item|item.get("content").and_then(Value::as_array).into_iter().flatten())
                 .find_map(|item|item.get("text").and_then(Value::as_str)),
@@ -530,6 +562,13 @@ mod tests {
         sync::mpsc,
         thread,
     };
+
+    #[test]
+    fn subscription_registration_references_are_not_validated_as_bearer_tokens() {
+        let error = request(ProviderId::Chatgpt, "oaiapp_fixture", "account-model", AiCapability::BrainDump, "", "en", None).unwrap_err();
+        assert!(error.to_string().contains("selected excerpt"));
+        assert!(validate_credential(ProviderId::Chatgpt, "not-a-registration").is_err());
+    }
 
     #[test]
     fn study_rerank_accepts_only_a_permutation_of_approved_ids(){
@@ -702,7 +741,7 @@ mod tests {
     fn empty_result_text() -> &'static str { "{\"candidates\":[],\"explanation\":null}" }
     fn grounded_result_text() -> &'static str { "{\"content\":\"Supported\",\"unsupported\":false,\"citations\":[{\"sourceId\":\"s1\",\"locator\":\"page 1\",\"quote\":\"literal\"}]}" }
 
-    #[test] fn provider_ids_and_defaults_are_stable() { for provider in ProviderId::ALL { assert_eq!(provider.as_str().parse::<ProviderId>().unwrap(), provider); assert!(!provider.default_model().is_empty()); } }
+    #[test] fn provider_ids_and_defaults_are_stable() { for provider in ProviderId::ALL { assert_eq!(provider.as_str().parse::<ProviderId>().unwrap(), provider); assert!(provider == ProviderId::Chatgpt || !provider.default_model().is_empty()); } }
     #[test] fn keys_are_bounded_and_never_trimmed() { assert!(validate_key(&"x".repeat(20)).is_ok()); assert!(validate_key(" short key ").is_err()); assert!(validate_key(&"x".repeat(4097)).is_err()); }
     #[test] fn response_schema_is_strict() { let schema=response_schema(); assert_eq!(schema["additionalProperties"], false); assert_eq!(schema["properties"]["candidates"]["items"]["additionalProperties"], false); }
     #[test] fn recorded_provider_fixtures_normalize_text_and_usage() {
@@ -761,7 +800,7 @@ mod tests {
         for (provider,response) in fixtures {
             let (endpoint,request,server)=fixture_server(response);
             let (value,usage)=match provider {
-                ProviderId::Openai=>grounded_openai_at(&endpoint,key,"gpt-fixture","GROUND THIS",&schema),
+                ProviderId::Chatgpt | ProviderId::Openai=>grounded_openai_at(&endpoint,key,"gpt-fixture","GROUND THIS",&schema),
                 ProviderId::Anthropic=>grounded_anthropic_at(&endpoint,key,"claude-fixture","GROUND THIS",&schema),
                 ProviderId::Gemini=>grounded_gemini_at(&endpoint,key,"gemini-fixture","GROUND THIS",&schema),
             }.unwrap();
@@ -808,7 +847,7 @@ mod tests {
         for (provider,response) in fixtures {
             let (endpoint,request,server)=fixture_server(response);
             let (value,usage)=match provider {
-                ProviderId::Openai=>grounded_openai_at(&endpoint,"fixture-key-with-safe-length","fixture",&prompt,&schema),
+                ProviderId::Chatgpt | ProviderId::Openai=>grounded_openai_at(&endpoint,"fixture-key-with-safe-length","fixture",&prompt,&schema),
                 ProviderId::Anthropic=>grounded_anthropic_at(&endpoint,"fixture-key-with-safe-length","fixture",&prompt,&schema),
                 ProviderId::Gemini=>grounded_gemini_at(&endpoint,"fixture-key-with-safe-length","fixture",&prompt,&schema),
             }.unwrap();
@@ -823,11 +862,11 @@ mod tests {
 }
 
 pub fn request_funding_search(provider:ProviderId,key:&str,model:&str,scope:&str)->Result<(Vec<String>,AiUsage),ManagedAiError>{
-    validate_key(key)?;
+    validate_credential(provider, key)?;
     if scope.len()>16000{return Err(ManagedAiError::InvalidInput("Selected evidence is too long".into()));}
     let prompt=format!("Suggest up to 8 concise funding search terms using only these reviewed goals and public opportunity excerpts. Do not infer sensitive identity, decide eligibility, invent opportunities, or draft personal experiences. Return editable search terms only. REVIEWED_SCOPE={scope}");
     let schema=json!({"type":"object","additionalProperties":false,"properties":{"terms":{"type":"array","items":{"type":"string"}}},"required":["terms"]});
-    let(value,usage)=match provider{ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
+    let(value,usage)=match provider{ProviderId::Chatgpt=>grounded_chatgpt(key,model,&prompt,&schema)?,ProviderId::Openai=>grounded_openai(key,model,&prompt,&schema)?,ProviderId::Anthropic=>grounded_anthropic(key,model,&prompt,&schema)?,ProviderId::Gemini=>grounded_gemini(key,model,&prompt,&schema)?};
     let terms=value.get("terms").and_then(|v|v.as_array()).ok_or(ManagedAiError::InvalidResponse)?.iter().map(|v|v.as_str().filter(|s|!s.trim().is_empty()&&s.len()<=120).map(String::from).ok_or(ManagedAiError::InvalidResponse)).collect::<std::result::Result<Vec<_>,_>>()?;
     if terms.len()>8||terms.is_empty(){return Err(ManagedAiError::InvalidResponse);}Ok((terms,usage))
 }

@@ -1,6 +1,6 @@
 import { SchedulingStyleField } from "../features/planning/SchedulingStyleField";
 import { AutomaticPlanning } from "../features/planning/AutomaticPlanning";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -46,6 +46,8 @@ import {
   AcademicTermPreset,
   AiProviderId,
   saveAiProviderKey,
+  connectChatgpt,
+  cancelChatgptLogin,
   requestWeeklyRhythmProposal,
   RhythmRuleKind,
 } from "../native";
@@ -155,8 +157,10 @@ export function OnboardingExperience({
   const [screenshotNotice, setScreenshotNotice] = useState("");
   const [canvasFeedUrl, setCanvasFeedUrl] = useState("");
   const [draggingSchedule, setDraggingSchedule] = useState(false);
-  const [aiProvider, setAiProvider] = useState<AiProviderId>("openai");
+  const [aiProvider, setAiProvider] = useState<AiProviderId>("chatgpt");
   const [aiKey, setAiKey] = useState("");
+  const pendingChatgpt = useRef(false);
+  useEffect(() => () => { if (pendingChatgpt.current) void cancelChatgptLogin().catch(() => {}); }, []);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [rhythmInterview, setRhythmInterview] = useState("");
   const [rhythmConsent,setRhythmConsent]=useState(false);
@@ -566,13 +570,15 @@ export function OnboardingExperience({
           {step === 3 && <>
             <div className="rhythm-mode-grid" role="radiogroup" aria-label="Choose how to build your weekly rhythm">
               <button className={draft.rhythmMode === "manual" ? "selected" : ""} role="radio" aria-checked={draft.rhythmMode === "manual"} onClick={() => update("rhythmMode", "manual")}><Clock3 /><span><strong>Build it myself</strong><small>Set sleep, study windows, breaks, days off, and protected time.</small></span></button>
-              <button className={draft.rhythmMode === "ai-guided" ? "selected" : ""} role="radio" aria-checked={draft.rhythmMode === "ai-guided"} onClick={() => update("rhythmMode", "ai-guided")}><Sparkles /><span><strong>Talk through my week</strong><small>Use your own AI key to structure what you volunteer, then review every rule.</small></span></button>
+              <button className={draft.rhythmMode === "ai-guided" ? "selected" : ""} role="radio" aria-checked={draft.rhythmMode === "ai-guided"} onClick={() => update("rhythmMode", "ai-guided")}><Sparkles /><span><strong>Talk through my week</strong><small>Use ChatGPT or your own AI key to structure what you volunteer, then review every rule.</small></span></button>
             </div>
             {draft.rhythmMode === "ai-guided" && <section className="ai-rhythm-panel" aria-label="AI-guided weekly rhythm">
               {!aiConnected ? <>
-                <div className="form-grid compact"><label className="field">Provider<select value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProviderId)}><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label><label className="field">API key<input type="password" value={aiKey} onChange={(event) => setAiKey(event.target.value)} autoComplete="off" placeholder="Stored in your OS credential vault" /></label></div>
+                <div className="form-grid compact"><label className="field">Provider<select disabled={screenshotBusy} value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProviderId)}><option value="chatgpt">ChatGPT subscription</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label>{aiProvider !== "chatgpt" && <label className="field">API key<input type="password" value={aiKey} onChange={(event) => setAiKey(event.target.value)} autoComplete="off" placeholder="Stored in your OS credential vault" /></label>}</div>
+                {aiProvider === "chatgpt" && <p className="field-help">Sign in in your browser to authorize ChatGPT plan usage. Account eligibility and usage limits apply.</p>}
                 <label className="confirm-row"><input type="checkbox" checked={ageConfirmed} onChange={(event) => setAgeConfirmed(event.target.checked)} /><span><strong>I am 18 or older</strong><small>Your chosen provider receives only this interview. Existing academic records are not included.</small></span></label>
-                <button className="outline" disabled={screenshotBusy || !ageConfirmed || aiKey.trim().length < 20} onClick={async () => { setScreenshotBusy(true); setError(""); try { await saveAiProviderKey(aiProvider, aiKey, undefined, ageConfirmed); setAiConnected(true); setAiKey(""); } catch (next) { setError(String(next)); } finally { setScreenshotBusy(false); } }}><ShieldCheck /> Connect securely</button>
+                <button className="outline" data-oai-siwc-button={aiProvider === "chatgpt" ? "" : undefined} disabled={screenshotBusy || !ageConfirmed || (aiProvider !== "chatgpt" && aiKey.trim().length < 20)} onClick={async () => { setScreenshotBusy(true); setError(""); try { if (aiProvider === "chatgpt") { pendingChatgpt.current = true; const providers = await connectChatgpt(undefined, ageConfirmed); if (!providers.some(p => p.provider === "chatgpt" && p.healthy)) throw new Error("Reconnect ChatGPT to enable plan usage or choose another provider."); } else { await saveAiProviderKey(aiProvider, aiKey, undefined, ageConfirmed); } setAiConnected(true); setAiKey(""); } catch (next) { setError(String(next)); } finally { pendingChatgpt.current = false; setScreenshotBusy(false); } }}><ShieldCheck /> {aiProvider === "chatgpt" ? "Continue with ChatGPT" : "Connect securely"}</button>
+                {screenshotBusy && aiProvider === "chatgpt" && <div role="status"><p>Finish signing in with ChatGPT in your browser.</p><button className="outline" onClick={() => { void cancelChatgptLogin().catch(reason => setError(String(reason))); }}>Cancel sign-in</button></div>}
               </> : <>
                 <label className="field full">Tell Coqui about a typical week<textarea rows={6} value={rhythmInterview} onChange={(event) => setRhythmInterview(event.target.value)} placeholder="I work Tuesday and Thursday evenings, commute 35 minutes, prefer studying before lunch, and keep Sunday free…" /></label>
                 <label className="confirm-row"><input type="checkbox" checked={rhythmConsent} onChange={(event)=>setRhythmConsent(event.target.checked)}/><span><strong>Send only this interview to {aiProvider}</strong><small>No existing profile, courses, assignments, or documents are included.</small></span></label>
