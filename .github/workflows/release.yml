@@ -109,7 +109,7 @@ jobs:
         run: npm run desktop:build -- --config apps/desktop/src-tauri/tauri.release.conf.json ${{ matrix.args }}
       - name: Verify macOS ad-hoc bundle seal
         if: matrix.platform == 'macos-15'
-        run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }}
+        run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }} --require-ocr
       - run: npm run release:checksums -- --github
       - name: Smoke Windows installer
         if: matrix.platform == 'windows-latest'

@@ -3,6 +3,7 @@ import { existsSync, openSync, readSync, closeSync, mkdtempSync, readdirSync, rm
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyRuntime } from "./verify-ocr-runtime.mjs";
 
 // A Tauri bundle whose executables are only linker-signed but whose .app carries
 // no _CodeSignature seal is reported by Gatekeeper as "damaged and cannot be
@@ -47,7 +48,7 @@ function codesign(args) {
   return { ok: result.status === 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
 }
 
-export function verifyBundleSignature({ appPath }) {
+export function verifyBundleSignature({ appPath, requireOcr = false }) {
   const app = resolve(appPath);
   const checks = [];
   const record = (name, passed, detail) => {
@@ -96,12 +97,31 @@ export function verifyBundleSignature({ appPath }) {
     record(`signed: ${binary.slice(app.length + 1)}`, nestedVerification.ok, nestedVerification.output);
   }
 
+  if (requireOcr) {
+    const runtimeRoot = join(app, "Contents/Resources/ocr");
+    const runtime = verifyRuntime({ root: runtimeRoot, target: "macos-arm64", strict: true });
+    record("packaged OCR file integrity", runtime.ready, runtime.ready ? `${runtime.checks.length} pinned files verified` : runtime.error);
+    if (runtime.ready) {
+      // The helper returns before Tauri initialization and never opens a profile.
+      // A valid bundle seal alone cannot detect Hardened Runtime blocking dlopen.
+      const renderer = spawnSync(join(app, "Contents/MacOS/student-center"), [
+        "--student-center-pdf-renderer", "probe", "--library", join(runtimeRoot, "macos-arm64/lib/libpdfium.dylib"),
+      ], { encoding: "utf8", timeout: 15000 });
+      record("packaged PDF renderer loads", renderer.status === 0, renderer.status === 0 ? "PDFium loaded in the signed application" : renderer.stderr?.trim() || renderer.error?.message || "renderer probe failed");
+      const engine = spawnSync(join(runtimeRoot, "macos-arm64/bin/tesseract"), [
+        "--tessdata-dir", join(runtimeRoot, "macos-arm64/tessdata"), "--list-langs",
+      ], { encoding: "utf8", timeout: 15000 });
+      const english = engine.status === 0 && engine.stdout.split(/\r?\n/).includes("eng");
+      record("packaged English OCR starts", english, english ? "Tesseract found eng" : engine.stderr?.trim() || engine.error?.message || "English OCR probe failed");
+    }
+  }
+
   const signed = checks.every((check) => check.passed);
   return {
     app,
     signed,
     checks,
-    error: signed ? undefined : "the macOS bundle is not correctly signed and would be reported as damaged",
+    error: signed ? undefined : "the macOS bundle failed signature or packaged-runtime verification",
   };
 }
 
@@ -119,7 +139,7 @@ export function bundleDirectory({ target }) {
 // Reading it back out of the disk image is not a workaround for that — it is the
 // stronger check, because the DMG is the artifact that actually reaches a
 // student, and nothing else verifies what ended up inside it.
-export function verifyDiskImage({ dmgPath }) {
+export function verifyDiskImage({ dmgPath, requireOcr = false }) {
   const dmg = resolve(dmgPath);
   if (!existsSync(dmg)) {
     return { dmg, signed: false, error: "the DMG was not found", checks: [] };
@@ -139,7 +159,7 @@ export function verifyDiskImage({ dmgPath }) {
     if (!app) {
       return { dmg, signed: false, error: "the DMG contains no .app bundle", checks: [] };
     }
-    return { dmg, ...verifyBundleSignature({ appPath: join(mountPoint, app) }) };
+    return { dmg, ...verifyBundleSignature({ appPath: join(mountPoint, app), requireOcr }) };
   } finally {
     spawnSync("hdiutil", ["detach", mountPoint, "-quiet"], { encoding: "utf8" });
     rmSync(mountPoint, { recursive: true, force: true });
@@ -161,12 +181,13 @@ if (isMain) {
   } else {
     const target = option("--target");
     const appPath = option("--app");
+    const requireOcr = process.argv.includes("--require-ocr");
     const dmgPath = option("--dmg") ?? (appPath ? undefined : findDiskImage({ target }));
     let result;
     if (appPath) {
-      result = verifyBundleSignature({ appPath });
+      result = verifyBundleSignature({ appPath, requireOcr });
     } else if (dmgPath) {
-      result = verifyDiskImage({ dmgPath });
+      result = verifyDiskImage({ dmgPath, requireOcr });
     } else {
       result = { signed: false, error: `no DMG was found under ${join(bundleDirectory({ target }), "dmg")}`, checks: [] };
     }

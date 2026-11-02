@@ -1,10 +1,37 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { bundleDirectory, verifyBundleSignature, verifyDiskImage } from "../verify-macos-signature.mjs";
+
+test("macOS keeps Hardened Runtime with only the PDFium library-loading exception", () => {
+  const config = JSON.parse(readFileSync("apps/desktop/src-tauri/tauri.conf.json", "utf8"));
+  assert.equal(config.bundle.macOS.hardenedRuntime, true);
+  const entitlements = readFileSync(join("apps/desktop/src-tauri", config.bundle.macOS.entitlements), "utf8");
+  assert.deepEqual([...entitlements.matchAll(/<key>([^<]+)<\/key>/g)].map(match => match[1]), ["com.apple.security.cs.disable-library-validation"]);
+  assert.match(entitlements, /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>\s*<true\/>/);
+});
+
+test("the PDFium entitlement permits an ad-hoc library under Hardened Runtime", { skip: process.platform !== "darwin" }, () => {
+  const root = mkdtempSync(join(tmpdir(), "coqui-library-validation-"));
+  try {
+    const library = join(root, "fixture.dylib"), binary = join(root, "probe");
+    writeFileSync(join(root, "fixture.c"), "int fixture(void) { return 7; }\n");
+    writeFileSync(join(root, "probe.c"), '#include <dlfcn.h>\nint main(int argc, char **argv) { if (argc != 2) return 2; void *lib = dlopen(argv[1], RTLD_NOW); if (!lib) return 3; dlclose(lib); return 0; }\n');
+    for (const args of [["-dynamiclib", "-o", library, join(root,"fixture.c")], ["-o", binary, join(root,"probe.c")]]) {
+      const built = spawnSync("cc", args, { encoding: "utf8" });
+      assert.equal(built.status, 0, built.stderr);
+    }
+    const sign = extra => spawnSync("codesign", ["--force", "--sign", "-", "--options", "runtime", ...extra, binary], { encoding: "utf8" });
+    assert.equal(sign([]).status, 0);
+    assert.notEqual(spawnSync(binary, [library]).status, 0, "the fixture must reproduce library validation failure");
+    const signed = sign(["--entitlements", "apps/desktop/src-tauri/Entitlements.plist"]);
+    assert.equal(signed.status, 0, signed.stderr);
+    assert.equal(spawnSync(binary, [library]).status, 0, "the packaged entitlement must permit loading the ad-hoc library");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 // Reproduces the 0.9.0 defect: every Mach-O inside is linker-signed, so the app
 // looks signed, but the bundle itself was never passed to codesign and carries

@@ -108,7 +108,7 @@ jobs:
       # after the tag is already public.
       - name: Enforce macOS signature gate
         if: matrix.platform == 'macos-15'
-        run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }}
+        run: npm run macos:verify-signature -- --target=${{ matrix.rust_target }} --require-ocr
       - run: npm run release:checksums
       - name: Smoke installed Windows package
         if: matrix.platform == 'windows-latest'
